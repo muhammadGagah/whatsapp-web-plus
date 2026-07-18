@@ -51,7 +51,7 @@ const main = {
         return selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
     }
 };
-assert.match(source, /const SCRIPT_VERSION = '2\.6\.60'/);
+assert.match(source, /const SCRIPT_VERSION = '2\.6\.63'/);
 assert.match(source, /applyOwnedMessageRole\(viewport, 'grid'/);
 assert.match(source, /applyOwnedMessageRole\(message, 'gridcell'/);
 assert.match(source, /if \(!applyOwnedMessageRole\(viewport, 'grid'/);
