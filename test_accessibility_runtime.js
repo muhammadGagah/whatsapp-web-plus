@@ -11,8 +11,10 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         findUnreadMessageTarget, applyChatRowDescendantMasks, collectChatBadgeLabels,
         applyChatRowNativeMask, focusChatRow, getPreferredChatRow,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, getRoleFixRoot, scheduleRoleFix,
-        closeAudioPlayerShortcut,
+        closeAudioPlayerShortcut, handleContextMenu, CLEAN_UI_CSS,
+        CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
+        setCleanUi(value) { isCleanUiMode = value; },
         setUnreadTarget(value) { unreadTarget = value; }
     };
     return;
@@ -40,6 +42,7 @@ class Element {
         this.clickHandler = null;
         this.classList = { contains() { return false; } };
         this.style = {};
+        this.textContent = '';
     }
     getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
     get tabIndex() { return this.hasAttribute('tabindex') ? Number(this.getAttribute('tabindex')) : -1; }
@@ -97,7 +100,10 @@ const sandbox = {
     Element, HTMLElement: Element, MutationObserver, document, localStorage, console,
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     navigator: {}, setTimeout, clearTimeout, setInterval() { return 1; }, clearInterval() {},
-    window: { requestAnimationFrame(callback) { scheduledFrames.push(callback); } }
+    window: {
+        requestAnimationFrame(callback) { scheduledFrames.push(callback); },
+        getSelection() { return { toString() { return ''; } }; }
+    }
 };
 
 vm.runInNewContext(source, sandbox);
@@ -507,7 +513,218 @@ selectorResults.set(firstChannelRowSelector, firstChannelRow);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, firstChannelRow);
 
-assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.60'/);
+const messageMain = new Element();
+const messageRow = new Element();
+const menuButton = new Element();
+messageMain.children.push(messageRow);
+messageRow.queryHandler = selector => selector.includes('aria-label="Context menu"') ? menuButton : null;
+selectorResults.set('div#main', messageMain);
+
+const plainTarget = new Element();
+plainTarget.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : null;
+let contextPrevented = false;
+runtime.handleContextMenu({
+    target: plainTarget,
+    preventDefault() { contextPrevented = true; }
+});
+assert.equal(contextPrevented, true);
+assert.equal(menuButton.clickCalls, 1);
+
+const contextLinkChild = new Element();
+contextLinkChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('a[href]') ? new Element() : null);
+contextPrevented = false;
+runtime.handleContextMenu({
+    target: contextLinkChild,
+    preventDefault() { contextPrevented = true; }
+});
+assert.equal(contextPrevented, false);
+assert.equal(menuButton.clickCalls, 1);
+
+const roleLinkChild = new Element();
+roleLinkChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('[role="link"]') ? new Element() : null);
+contextPrevented = false;
+runtime.handleContextMenu({
+    target: roleLinkChild,
+    preventDefault() { contextPrevented = true; }
+});
+assert.equal(contextPrevented, false);
+assert.equal(menuButton.clickCalls, 1);
+
+const imageChild = new Element();
+imageChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('img') ? new Element() : null);
+contextPrevented = false;
+runtime.handleContextMenu({
+    target: imageChild,
+    preventDefault() { contextPrevented = true; }
+});
+assert.equal(contextPrevented, false);
+assert.equal(menuButton.clickCalls, 1);
+
+messageRow.queryHandler = () => null;
+contextPrevented = false;
+runtime.handleContextMenu({
+    target: plainTarget,
+    preventDefault() { contextPrevented = true; }
+});
+assert.equal(contextPrevented, false);
+
+const introPanel = new Element();
+const promo = new Element();
+const titleSpan = new Element();
+const copySpan = new Element();
+const downloadButton = new Element();
+const actionGroup = new Element();
+const actionButtons = ['Send document', 'Add contact', 'Ask Meta AI'].map(text => {
+    const button = new Element();
+    button.textContent = text;
+    return button;
+});
+const encryptionNotice = new Element();
+const encryptionButton = new Element();
+const chatListFallback = new Element();
+titleSpan.textContent = 'Download WhatsApp for Windows';
+copySpan.textContent = 'Get extra features like voice and video calling, screen sharing and more.';
+downloadButton.textContent = 'Download';
+encryptionButton.textContent = 'end-to-end encrypted';
+actionGroup.setAttribute('data-testid', 'intro-panel-empty-state-action-tile-group');
+encryptionNotice.setAttribute('data-testid', 'chatlist-e2e-message');
+promo.children.push(titleSpan, copySpan, downloadButton);
+introPanel.children.push(promo, actionGroup);
+promo.nextElementSibling = actionGroup;
+for (const child of promo.children) child.parentElement = promo;
+promo.parentElement = introPanel;
+actionGroup.parentElement = introPanel;
+actionGroup.children.push(...actionButtons);
+for (const button of actionButtons) button.parentElement = actionGroup;
+encryptionNotice.children.push(encryptionButton);
+encryptionButton.parentElement = encryptionNotice;
+promo.queryHandler = selector => selector === ':scope > button[type="button"]' ? downloadButton : null;
+promo.queryAllHandler = selector => selector === 'span'
+    ? [titleSpan, copySpan]
+    : (selector === 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]' ? [downloadButton] : []);
+introPanel.queryHandler = selector => {
+    if (selector === ':scope > [data-testid="intro-panel-empty-state-action-tile-group"]') return introPanel.children[1];
+    return null;
+};
+selectorResults.set('section[data-testid="intro-panel"]', introPanel);
+selectorResults.set('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]', actionGroup);
+selectorResults.set('#side [data-testid="chatlist-e2e-message"]', encryptionNotice);
+selectorResults.set('[data-testid="chat-list"], [aria-label="Chat list"][role="grid"]', chatListFallback);
+
+runtime.setCleanUi(true);
+assert.equal(runtime.getDesktopAppPromo(), promo);
+const initialCleanUiTargets = runtime.getCleanUiHiddenTargets();
+assert.equal(initialCleanUiTargets.length, 3);
+assert.equal(initialCleanUiTargets[0], promo);
+assert.equal(initialCleanUiTargets[1], actionGroup);
+assert.equal(initialCleanUiTargets[2], encryptionNotice);
+document.activeElement = downloadButton;
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(document.activeElement, navButton);
+for (const target of [promo, actionGroup, encryptionNotice]) {
+    assert.equal(target.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+}
+for (const control of [downloadButton, ...actionButtons, encryptionButton]) {
+    assert.equal(control.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+}
+
+for (const focusedControl of [...actionButtons, encryptionButton]) {
+    runtime.setCleanUi(false);
+    runtime.syncCleanUi();
+    runtime.setCleanUi(true);
+    document.activeElement = focusedControl;
+    assert.equal(runtime.syncCleanUi(), true);
+    assert.equal(document.activeElement, navButton);
+}
+
+runtime.setCleanUi(false);
+runtime.syncCleanUi();
+runtime.setCleanUi(true);
+navButton.focusSucceeds = false;
+document.activeElement = encryptionButton;
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(document.activeElement, chatListFallback);
+navButton.focusSucceeds = true;
+
+runtime.setCleanUi(false);
+runtime.syncCleanUi();
+runtime.setCleanUi(true);
+navButton.focusSucceeds = false;
+chatListFallback.focusSucceeds = false;
+document.activeElement = actionButtons[0];
+assert.equal(runtime.syncCleanUi(), false);
+assert.equal(document.activeElement, actionButtons[0]);
+for (const target of [promo, actionGroup, encryptionNotice]) {
+    assert.equal(target.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+}
+navButton.focusSucceeds = true;
+chatListFallback.focusSucceeds = true;
+
+const unrelatedFocus = new Element();
+document.activeElement = unrelatedFocus;
+runtime.setCleanUi(false);
+assert.equal(runtime.syncCleanUi(), false);
+assert.equal(document.activeElement, unrelatedFocus);
+for (const target of [promo, actionGroup, encryptionNotice]) {
+    assert.equal(target.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+}
+
+copySpan.textContent = 'Unrelated introduction content';
+runtime.setCleanUi(true);
+assert.equal(runtime.getDesktopAppPromo(), null);
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(promo.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+assert.equal(actionGroup.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(encryptionNotice.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+actionButtons[0].textContent = 'Kirim dokumen';
+assert.equal(runtime.getCleanUiHiddenTargets().includes(actionGroup), true);
+copySpan.textContent = 'Get extra features like voice and video calling, screen sharing and more.';
+
+promo.closestHandler = selector => selector.includes('#side') ? promo : null;
+assert.equal(runtime.getDesktopAppPromo(), null);
+promo.closestHandler = null;
+
+promo.queryAllHandler = selector => selector === 'span' ? [titleSpan, copySpan] : [downloadButton, new Element()];
+assert.equal(runtime.getDesktopAppPromo(), null);
+promo.queryAllHandler = selector => selector === 'span'
+    ? [titleSpan, copySpan]
+    : (selector === 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]' ? [downloadButton] : []);
+
+const rerenderedPromo = new Element();
+rerenderedPromo.children.push(titleSpan, copySpan, downloadButton);
+for (const child of rerenderedPromo.children) child.parentElement = rerenderedPromo;
+rerenderedPromo.parentElement = introPanel;
+rerenderedPromo.nextElementSibling = actionGroup;
+rerenderedPromo.queryHandler = promo.queryHandler;
+rerenderedPromo.queryAllHandler = promo.queryAllHandler;
+introPanel.children[0] = rerenderedPromo;
+document.activeElement = unrelatedFocus;
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(rerenderedPromo.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(promo.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+
+const rerenderedActionGroup = new Element();
+const rerenderedEncryptionNotice = new Element();
+rerenderedActionGroup.setAttribute('data-testid', 'intro-panel-empty-state-action-tile-group');
+rerenderedEncryptionNotice.setAttribute('data-testid', 'chatlist-e2e-message');
+rerenderedActionGroup.parentElement = introPanel;
+rerenderedPromo.nextElementSibling = rerenderedActionGroup;
+introPanel.children[1] = rerenderedActionGroup;
+selectorResults.set('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]', rerenderedActionGroup);
+selectorResults.set('#side [data-testid="chatlist-e2e-message"]', rerenderedEncryptionNotice);
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(rerenderedActionGroup.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(rerenderedEncryptionNotice.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(actionGroup.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+assert.equal(encryptionNotice.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+
+assert.doesNotMatch(runtime.CLEAN_UI_CSS, /#side\s*>\s*div:last-child|#pane-side\s*>\s*div:last-child/);
+assert.match(runtime.CLEAN_UI_CSS, new RegExp(`\\[${runtime.CLEAN_UI_HIDDEN_ATTRIBUTE}="true"\\][\\s\\S]*display\\s*:\\s*none`));
+assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1);
+assert.doesNotMatch(runtime.CLEAN_UI_CSS, /outline\s*:\s*none|\[role="tooltip"\]|\[role="tablist"\]/);
+assert.match(runtime.CLEAN_UI_CSS, /:focus-within/);
+
+assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.63'/);
 assert.match(originalSource, /announce\("Audio player closed\."\)/);
 assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
 assert.match(originalSource, /e\.stopImmediatePropagation\(\)/);

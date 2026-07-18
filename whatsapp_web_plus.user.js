@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WhatsApp Web Plus
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.60
+// @version      2.6.63
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @author       Muhammad
 // @match        https://web.whatsapp.com/*
@@ -13,12 +13,15 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.6.60';
+    const SCRIPT_VERSION = '2.6.63';
     const SHORTCUT_RENDER_RETRIES = 12;
     const CHAT_LIST_TOP_FALLBACK_MAX_Y = 1000;
+    const CLEAN_UI_HIDDEN_ATTRIBUTE = 'data-wa-plus-clean-ui-hidden';
 
     const STORAGE_KEYS = Object.freeze({
-        privacy: 'wa-plus-privacy'
+        privacy: 'wa-plus-privacy',
+        cleanUi: 'wa-plus-clean-ui',
+        originalDark: 'wa-plus-original-dark'
     });
 
     const SELECTORS = Object.freeze({
@@ -47,7 +50,8 @@
         chatHidden: 'chat-hidden',
         chatStructure: 'chat-structure',
         messageGrid: 'message-grid',
-        messageCell: 'message-cell'
+        messageCell: 'message-cell',
+        cleanUiHidden: 'clean-ui-hidden'
     });
 
     const CHAT_LABEL_NOISE_RE = Object.freeze({
@@ -71,8 +75,13 @@
 
     const FOCUSABLE_SELECTOR = 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]';
     const CHAT_ROW_NATIVE_TEXT_SELECTOR = '[data-testid="cell-frame-label"], [data-testid="cell-frame-title"], [data-testid="cell-frame-primary-detail"], [data-testid="cell-frame-secondary"], [data-testid="last-msg-status"], [role="gridcell"], [aria-label], [title]';
+    const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [role="grid"]';
+    const DESKTOP_APP_PROMO_TITLE_RE = /^Download WhatsApp for (?:Windows|Mac|macOS)$/i;
+    const DESKTOP_APP_PROMO_COPY_RE = /^Get extra features like voice and video calling, screen sharing and more\.?$/i;
 
     let isPrivacyMode = localStorage.getItem(STORAGE_KEYS.privacy) === 'true';
+    let isCleanUiMode = localStorage.getItem(STORAGE_KEYS.cleanUi) === 'true';
+    let isOriginalDarkMode = localStorage.getItem(STORAGE_KEYS.originalDark) === 'true';
 
     const USAGE_HINT_SUFFIX_RE = /\s+(?:For more options|Untuk opsi|Para lebih|Para m[a\u00e1]s|Pour plus|Per lebih|Per pi[u\u00f9]|F[u\u00fc]r weitere|Para mais|Daha fazla|Voor meer|Untuk mengakses|Untuk selengkapnya|Untuk bantuan)(?:,?\s+(?:press|tekan|prima|appuyez|premere|dr[u\u00fc]cken|pressione|bas[i\u0131]n|druk))\b.*$/i;
     const UNKNOWN_CONTACT_RE = /^(Maybe|Mungkin|Talvez)\b[\s:~,-]*/i;
@@ -344,6 +353,7 @@
     let unreadTarget = null;
     let announcementTimer = null;
     let userAnnouncementUntil = 0;
+    let cleanUiSyncPending = false;
     const ownedAttributes = new WeakMap();
     const ownedElements = new Set();
     const ownedMutationCounts = new WeakMap();
@@ -1065,6 +1075,7 @@
 
             if (mutation.type === 'characterData') {
                 recleanMessageAncestor(mutation.target.parentElement);
+                scheduleCleanUiSync();
                 continue;
             }
 
@@ -1078,6 +1089,7 @@
                     recoverFocusAfterRemoval(node);
                 });
                 recleanMessageAncestor(mutation.target);
+                scheduleCleanUiSync();
             }
         }
     });
@@ -1631,6 +1643,18 @@
             return true;
         }
 
+        if (e.code === 'Digit8') {
+            e.preventDefault();
+            toggleCleanUiMode();
+            return true;
+        }
+
+        if (e.code === 'Digit9') {
+            e.preventDefault();
+            toggleOriginalDarkMode();
+            return true;
+        }
+
         return false;
     }
 
@@ -1708,11 +1732,201 @@
         }
     }
 
+    function handleContextMenu(e) {
+        if (!e.target || !e.target.closest) return;
+
+        const row = e.target.closest('div[role="row"]');
+        if (!row) return;
+
+        const main = document.querySelector(SELECTORS.main);
+        if (!main || !main.contains(row)) return;
+
+        // Preserve the browser menu for links, images, and selected text.
+        if (e.target.closest('a[href], [role="link"], img') || window.getSelection().toString().length > 0) {
+            return;
+        }
+
+        const menuButton = row.querySelector('[role="button"][aria-label="Context menu"]') ||
+            row.querySelector('[role="button"][aria-haspopup="menu"], button[aria-haspopup="menu"]') ||
+            row.querySelector('._ahkm');
+        if (!menuButton) return;
+
+        e.preventDefault();
+        menuButton.click();
+    }
+
+    function toggleStyleSheet(id, cssText, enable) {
+        let style = document.getElementById(id);
+        if (enable) {
+            if (!style) {
+                style = document.createElement('style');
+                style.id = id;
+                style.textContent = cssText;
+                document.head.appendChild(style);
+            }
+        } else {
+            if (style) {
+                style.remove();
+            }
+        }
+    }
+
+    function getDesktopAppPromo() {
+        const panel = document.querySelector('section[data-testid="intro-panel"]');
+        if (!panel || !panel.children) return null;
+        const actionGroup = panel.querySelector(':scope > [data-testid="intro-panel-empty-state-action-tile-group"]');
+        if (!actionGroup) return null;
+
+        for (const candidate of Array.from(panel.children)) {
+            if (!candidate.querySelector || !candidate.querySelectorAll) continue;
+            if (candidate === actionGroup || candidate.nextElementSibling !== actionGroup) continue;
+            if (candidate.closest?.(CLEAN_UI_PROTECTED_SELECTOR) || candidate.querySelector(CLEAN_UI_PROTECTED_SELECTOR)) continue;
+
+            const texts = Array.from(candidate.querySelectorAll('span'))
+                .map(el => normalizeText(el.textContent || ''));
+            const hasTitle = texts.some(text => DESKTOP_APP_PROMO_TITLE_RE.test(text));
+            const hasCopy = texts.some(text => DESKTOP_APP_PROMO_COPY_RE.test(text));
+            const downloadButton = candidate.querySelector(':scope > button[type="button"]');
+            const isDownloadButton = downloadButton &&
+                !downloadButton.disabled &&
+                downloadButton.getAttribute('aria-disabled') !== 'true' &&
+                normalizeText(downloadButton.textContent || '') === 'Download';
+            const focusableCount = candidate.querySelectorAll(FOCUSABLE_SELECTOR).length;
+
+            if (hasTitle && hasCopy && isDownloadButton && focusableCount === 1) return candidate;
+        }
+        return null;
+    }
+
+    function getCleanUiHiddenTargets() {
+        return [
+            getDesktopAppPromo(),
+            document.querySelector('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]'),
+            document.querySelector('#side [data-testid="chatlist-e2e-message"]')
+        ].filter((el, index, targets) => el && targets.indexOf(el) === index);
+    }
+
+    function releaseCleanUiMarkers(keep = new Set()) {
+        for (const el of [...ownedElements]) {
+            const state = ownedAttributes.get(el)?.get(CLEAN_UI_HIDDEN_ATTRIBUTE);
+            if (!state || state.owner !== OWNERS.cleanUiHidden) continue;
+            if (keep.has(el) && el.isConnected) continue;
+            releaseOwnedAttribute(el, CLEAN_UI_HIDDEN_ATTRIBUTE, OWNERS.cleanUiHidden);
+        }
+    }
+
+    function syncCleanUi() {
+        const targets = isCleanUiMode ? getCleanUiHiddenTargets() : [];
+        const keep = new Set(targets);
+        releaseCleanUiMarkers(keep);
+        if (!targets.length) return false;
+
+        if (targets.some(target => target.contains(document.activeElement))) {
+            const fallbacks = [document.querySelector(SELECTORS.navChats), document.querySelector(SELECTORS.chatList)]
+                .filter(el => el && !targets.some(target => target.contains(el)));
+            if (!fallbacks.some(focusItem)) {
+                releaseCleanUiMarkers();
+                return false;
+            }
+        }
+
+        targets.forEach(target => {
+            applyOwnedAttribute(target, CLEAN_UI_HIDDEN_ATTRIBUTE, 'true', OWNERS.cleanUiHidden);
+        });
+        return true;
+    }
+
+    function scheduleCleanUiSync() {
+        if (!isCleanUiMode || cleanUiSyncPending) return;
+        cleanUiSyncPending = true;
+        const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+        schedule(() => {
+            cleanUiSyncPending = false;
+            syncCleanUi();
+        });
+    }
+
+    const CLEAN_UI_CSS = `
+        /* Hide only UI containers identified and owned by this script. */
+        [${CLEAN_UI_HIDDEN_ATTRIBUTE}="true"] {
+            display: none !important;
+        }
+
+        /* Keep chat dropdowns accessible, but reduce visual clutter until pointer or keyboard focus. */
+        [data-testid="chat-list"] > div > div > div > div > div > div > div:last-child > div:last-child > div:last-child > span:last-child {
+            opacity: 0;
+        }
+        [data-testid="chat-list"] > div > div > div > div > div > div:hover > div:last-child > div:last-child > div:last-child > span:last-child,
+        [data-testid="chat-list"] > div > div > div > div > div > div:focus-within > div:last-child > div:last-child > div:last-child > span:last-child {
+            opacity: 1;
+        }
+    `;
+
+    const ORIGINAL_DARK_CSS = `
+        body.dark, body.dark * {
+            --background-default: #111b21 !important;
+            --search-container-background: #111b21 !important;
+            --drawer-background-deep: #111b21 !important;
+            --panel-background-deeper: #111b21 !important;
+            --compose-input-background: #202c33 !important;
+            --compose-input-border: #202c33 !important;
+            --conversation-header-border: #222e35 !important;
+            --conversation-panel-border: #222e35 !important;
+            --dropdown-background: #222e35 !important;
+            --intro-background: #202c33 !important;
+            --reactions-panel-background-color: #222e35 !important;
+            --WDS-background-wash-inset: #202c33 !important;
+            --WDS-background-wash-inset-RGB: 32, 44, 51 !important;
+            --WDS-background-wash-plain: #111b21 !important;
+            --WDS-background-elevated-wash-inset: #202c33 !important;
+            --WDS-surface-default: #111b21 !important;
+            --WDS-surface-emphasized: #202c33 !important;
+            --WDS-surface-elevated-default: #202c33 !important;
+            --WDS-surface-elevated-emphasized: #2a3942 !important;
+            --WDS-content-deemphasized: #85959f !important;
+            --WDS-content-action-default: #aebac1 !important;
+            --WDS-content-disabled: #617079 !important;
+            --WDS-systems-chat-background-wallpaper: #111b21 !important;
+            --WDS-systems-chat-surface-composer: #202c33 !important;
+            --WDS-systems-chat-surface-tray: #111b21 !important;
+            --WDS-systems-bubble-surface-system: #202c33 !important;
+            --WDS-systems-bubble-surface-incoming: #202c33 !important;
+            --WDS-systems-bubble-surface-incoming-RGB: 32, 44, 51 !important;
+            --WDS-systems-bubble-surface-outgoing-RGB: 0, 92, 75 !important;
+            --WDS-systems-bubble-surface-outgoing: #005c4b !important;
+        }
+    `;
+
+    function updateStyleSheets() {
+        syncCleanUi();
+        toggleStyleSheet('wa-plus-clean-ui-styles', CLEAN_UI_CSS, isCleanUiMode);
+        toggleStyleSheet('wa-plus-original-dark-styles', ORIGINAL_DARK_CSS, isOriginalDarkMode);
+    }
+
+    function toggleCleanUiMode() {
+        isCleanUiMode = !isCleanUiMode;
+        localStorage.setItem(STORAGE_KEYS.cleanUi, isCleanUiMode ? 'true' : 'false');
+        const controlsHidden = syncCleanUi();
+        toggleStyleSheet('wa-plus-clean-ui-styles', CLEAN_UI_CSS, isCleanUiMode);
+        announce(isCleanUiMode
+            ? (controlsHidden ? "Clean UI enabled; extra controls hidden." : "Clean UI enabled.")
+            : "Clean UI disabled.");
+    }
+
+    function toggleOriginalDarkMode() {
+        isOriginalDarkMode = !isOriginalDarkMode;
+        localStorage.setItem(STORAGE_KEYS.originalDark, isOriginalDarkMode ? 'true' : 'false');
+        toggleStyleSheet('wa-plus-original-dark-styles', ORIGINAL_DARK_CSS, isOriginalDarkMode);
+        announce(isOriginalDarkMode ? "Original Dark Mode Enabled" : "Original Dark Mode Disabled");
+    }
+
     ensureLiveRegion();
     startCleanupObserver();
+    updateStyleSheets();
     window.addEventListener('keydown', handleShortcuts, true);
     document.addEventListener('focusin', e => rememberFocusedRow(e.target));
     document.addEventListener('mousedown', e => rememberFocusedRow(e.target));
+    document.addEventListener('contextmenu', handleContextMenu, true);
 
     startStatusTracking();
     console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
