@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const originalSource = fs.readFileSync('whatsapp_web_plus.user.js', 'utf8');
+const debugSource = fs.readFileSync('whatsapp_web_plus.debug.js', 'utf8');
 const source = originalSource.replace('    ensureLiveRegion();', `
     globalThis.__runtime = {
         OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute,
@@ -11,7 +12,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         findUnreadMessageTarget, applyChatRowDescendantMasks, collectChatBadgeLabels,
         applyChatRowNativeMask, focusChatRow, getPreferredChatRow,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, getRoleFixRoot, scheduleRoleFix,
-        closeAudioPlayerShortcut, handleContextMenu, CLEAN_UI_CSS,
+        closeAudioPlayerShortcut, CLEAN_UI_CSS,
         CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
         setCleanUi(value) { isCleanUiMode = value; },
@@ -80,6 +81,7 @@ const document = {
     readyState: 'complete',
     activeElement: null,
     body: new Element(),
+    documentElement: { clientWidth: 1024, clientHeight: 768 },
     addEventListener() {},
     getElementById(id) { return id === 'wa-plus-live-region' ? liveRegion : null; },
     querySelector(selector) {
@@ -101,8 +103,7 @@ const sandbox = {
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     navigator: {}, setTimeout, clearTimeout, setInterval() { return 1; }, clearInterval() {},
     window: {
-        requestAnimationFrame(callback) { scheduledFrames.push(callback); },
-        getSelection() { return { toString() { return ''; } }; }
+        requestAnimationFrame(callback) { scheduledFrames.push(callback); }
     }
 };
 
@@ -148,26 +149,17 @@ runtime.restorePrivacyAttributes();
 assert.equal(label.getAttribute('aria-label'), 'Maybe +62 812-3456-7890 latest');
 
 runtime.setPrivacy(false);
-const messageLabel = new Element();
-messageLabel.closestHandler = selector => {
-    if (selector === 'div#main') return main;
-    if (selector.includes('.focusable-list-item') || selector === '[data-testid="conversation-panel-messages"]') return messageLabel;
-    return null;
-};
-assert.equal(runtime.prepareNamedAttribute(messageLabel, 'aria-label', 'Valid For more options content section'), 'Valid For more options content section');
-assert.equal(runtime.prepareNamedAttribute(messageLabel, 'aria-label', 'Message For more options, press Enter'), 'Message');
-
 runtime.setPrivacy(true);
 const ariaLink = new Element();
 ariaLink.setAttribute('role', 'link');
 ariaLink.closestHandler = selector => selector === 'div#main' ? main : null;
-assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', '+62 812-3456-7890'), '+62 812-3456-7890');
 const linkChild = new Element();
 linkChild.closestHandler = selector => {
     if (selector === 'div#main') return main;
     if (selector === 'a[href], [role="link"]') return ariaLink;
     return null;
 };
+assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', '+62 812-3456-7890'), '+62 812-3456-7890');
 assert.equal(runtime.prepareNamedAttribute(linkChild, 'aria-label', '+62 812-3456-7890'), '+62 812-3456-7890');
 runtime.setPrivacy(false);
 
@@ -513,61 +505,6 @@ selectorResults.set(firstChannelRowSelector, firstChannelRow);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, firstChannelRow);
 
-const messageMain = new Element();
-const messageRow = new Element();
-const menuButton = new Element();
-messageMain.children.push(messageRow);
-messageRow.queryHandler = selector => selector.includes('aria-label="Context menu"') ? menuButton : null;
-selectorResults.set('div#main', messageMain);
-
-const plainTarget = new Element();
-plainTarget.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : null;
-let contextPrevented = false;
-runtime.handleContextMenu({
-    target: plainTarget,
-    preventDefault() { contextPrevented = true; }
-});
-assert.equal(contextPrevented, true);
-assert.equal(menuButton.clickCalls, 1);
-
-const contextLinkChild = new Element();
-contextLinkChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('a[href]') ? new Element() : null);
-contextPrevented = false;
-runtime.handleContextMenu({
-    target: contextLinkChild,
-    preventDefault() { contextPrevented = true; }
-});
-assert.equal(contextPrevented, false);
-assert.equal(menuButton.clickCalls, 1);
-
-const roleLinkChild = new Element();
-roleLinkChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('[role="link"]') ? new Element() : null);
-contextPrevented = false;
-runtime.handleContextMenu({
-    target: roleLinkChild,
-    preventDefault() { contextPrevented = true; }
-});
-assert.equal(contextPrevented, false);
-assert.equal(menuButton.clickCalls, 1);
-
-const imageChild = new Element();
-imageChild.closestHandler = selector => selector === 'div[role="row"]' ? messageRow : (selector.includes('img') ? new Element() : null);
-contextPrevented = false;
-runtime.handleContextMenu({
-    target: imageChild,
-    preventDefault() { contextPrevented = true; }
-});
-assert.equal(contextPrevented, false);
-assert.equal(menuButton.clickCalls, 1);
-
-messageRow.queryHandler = () => null;
-contextPrevented = false;
-runtime.handleContextMenu({
-    target: plainTarget,
-    preventDefault() { contextPrevented = true; }
-});
-assert.equal(contextPrevented, false);
-
 const introPanel = new Element();
 const promo = new Element();
 const titleSpan = new Element();
@@ -724,7 +661,7 @@ assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1
 assert.doesNotMatch(runtime.CLEAN_UI_CSS, /outline\s*:\s*none|\[role="tooltip"\]|\[role="tablist"\]/);
 assert.match(runtime.CLEAN_UI_CSS, /:focus-within/);
 
-assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.63'/);
+assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.64'/);
 assert.match(originalSource, /announce\("Audio player closed\."\)/);
 assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
 assert.match(originalSource, /e\.stopImmediatePropagation\(\)/);
@@ -739,5 +676,49 @@ assert.doesNotMatch(originalSource, /setTimeout\(confirmDestination, 100\)|inner
 assert.doesNotMatch(originalSource, /\(e\.ctrlKey && e\.altKey\)|toggleMessageInputShortcut/);
 assert.match(originalSource, /applyOwnedMessageRole\(viewport, 'grid'/);
 assert.match(originalSource, /applyOwnedMessageRole\(message, 'gridcell'/);
+assert.doesNotMatch(originalSource, /context.?menu|icon-down-context|messageMenu|USAGE_HINT_SUFFIX_RE/i);
+assert.doesNotMatch(debugSource, /context.?menu|icon-down-context|messageMenu|USAGE_HINT_SUFFIX_RE/i);
+
+function removeDebugOnlyBlock(sourceText, startMarker, endMarker) {
+    const start = sourceText.indexOf(startMarker);
+    const end = sourceText.indexOf(endMarker, start);
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+    return sourceText.slice(0, start) + sourceText.slice(end);
+}
+
+let normalizedDebugSource = debugSource.replace(
+    '// @namespace    http://tampermonkey.net/',
+    '// @namespace    https://github.com/muhammadGagah/whatsapp-web-plus'
+);
+normalizedDebugSource = removeDebugOnlyBlock(
+    normalizedDebugSource,
+    '    function copyDebugHtmlShortcut() {',
+    '    function focusMessageInputShortcut() {'
+);
+normalizedDebugSource = removeDebugOnlyBlock(
+    normalizedDebugSource,
+    "        if (e.altKey && e.shiftKey && !e.ctrlKey && e.code === 'Digit0') {",
+    "        if (getActiveModal()) return;"
+);
+normalizedDebugSource = normalizedDebugSource.replace(
+    /        if \(e\.repeat \|\| e\.metaKey \|\| e\.getModifierState\('AltGraph'\)\) return;\r?\n        if \(getActiveModal\(\)\) return;/,
+    "        if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal()) return;"
+);
+assert.equal(
+    normalizedDebugSource.replace(/\r\n/g, '\n'),
+    originalSource.replace(/\r\n/g, '\n')
+);
+assert.match(debugSource, /navigator\.clipboard\.writeText\(debugData\)/);
+assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.64'/);
+assert.match(debugSource, /const debugData = document\.documentElement\.outerHTML/);
+assert.doesNotMatch(originalSource, /document\.documentElement\.outerHTML/);
+const debugCaptureBlock = debugSource.slice(
+    debugSource.indexOf('    function copyDebugHtmlShortcut() {'),
+    debugSource.indexOf('    function focusMessageInputShortcut() {')
+);
+assert.match(debugCaptureBlock, /redact before sharing/);
+assert.match(debugSource, /Sensitive chat and contact data included; redact before sharing/);
+assert.match(debugSource, /if \(e\.altKey && e\.shiftKey && !e\.ctrlKey && e\.code === 'Digit0'\) \{\s+e\.preventDefault\(\);\s+copyDebugHtmlShortcut\(\);\s+e\.stopImmediatePropagation\(\);/);
 
 console.log('accessibility runtime checks passed');

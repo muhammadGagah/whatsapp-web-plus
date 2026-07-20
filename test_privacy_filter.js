@@ -51,7 +51,7 @@ const main = {
         return selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
     }
 };
-assert.match(source, /const SCRIPT_VERSION = '2\.6\.63'/);
+assert.match(source, /const SCRIPT_VERSION = '2\.6\.64'/);
 assert.match(source, /applyOwnedMessageRole\(viewport, 'grid'/);
 assert.match(source, /applyOwnedMessageRole\(message, 'gridcell'/);
 assert.match(source, /if \(!applyOwnedMessageRole\(viewport, 'grid'/);
@@ -175,6 +175,18 @@ const bodyPhoneCollisionMessage = {
         return null;
     }
 };
+const mentionBodyMessage = {
+    closest: replyMessage.closest,
+    querySelector(selector) {
+        if (selector === '.copyable-text[data-pre-plain-text]') {
+            return { getAttribute() { return '[10:00, 7/20/2026] +62 812-3333-4444: '; } };
+        }
+        if (selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]') {
+            return { textContent: '@Muhammad halo' };
+        }
+        return null;
+    }
+};
 const voiceMessageWithoutPrePlainText = {
     closest: replyMessage.closest,
     querySelector(selector) {
@@ -228,10 +240,18 @@ assert.equal(
 );
 assert.equal(clean('adepanjabat 081362579858 20:47', 'message'), 'adepanjabat 081362579858 20:47');
 assert.equal(clean('081362579858 hello 20:47', 'message'), '081362579858 hello 20:47');
+assert.equal(
+    clean('System notice: +62 812-3333-4444 joined via invite link', 'message', nonFocusableMessageContent),
+    'System notice: Participant joined via invite link'
+);
 assert.equal(clean('081362579858 online', 'identity'), 'Participant online');
 assert.equal(
     clean('Maybe 081362579858 online', 'identity'),
     'Maybe online'
+);
+assert.equal(
+    clean('Preview https://wa.me/6281233334444', 'identity'),
+    'Preview Participant'
 );
 assert.equal(
     clean('adepanjabat https://wa.me/6281362579858 20:47', 'message'),
@@ -296,6 +316,10 @@ assert.equal(
 assert.equal(
     clean('Maybe Jordel call +1 (249) 878-8863 tomorrow 23:38', 'message', bodyPhoneCollisionMessage),
     'Maybe Jordel call +1 (249) 878-8863 tomorrow 23:38'
+);
+assert.equal(
+    clean('Maybe Contact +62 812-3333-4444 Muhammad halo 10:00', 'message', mentionBodyMessage),
+    'Maybe Contact Muhammad halo 10:00'
 );
 assert.equal(
     clean('+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48', 'message', voiceMessageWithoutPrePlainText),
