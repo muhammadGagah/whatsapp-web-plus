@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WhatsApp Web Plus
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.63
+// @version      2.6.64
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @author       Muhammad
 // @match        https://web.whatsapp.com/*
@@ -13,7 +13,7 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.6.63';
+    const SCRIPT_VERSION = '2.6.64';
     const SHORTCUT_RENDER_RETRIES = 12;
     const CHAT_LIST_TOP_FALLBACK_MAX_Y = 1000;
     const CLEAN_UI_HIDDEN_ATTRIBUTE = 'data-wa-plus-clean-ui-hidden';
@@ -83,7 +83,6 @@
     let isCleanUiMode = localStorage.getItem(STORAGE_KEYS.cleanUi) === 'true';
     let isOriginalDarkMode = localStorage.getItem(STORAGE_KEYS.originalDark) === 'true';
 
-    const USAGE_HINT_SUFFIX_RE = /\s+(?:For more options|Untuk opsi|Para lebih|Para m[a\u00e1]s|Pour plus|Per lebih|Per pi[u\u00f9]|F[u\u00fc]r weitere|Para mais|Daha fazla|Voor meer|Untuk mengakses|Untuk selengkapnya|Untuk bantuan)(?:,?\s+(?:press|tekan|prima|appuyez|premere|dr[u\u00fc]cken|pressione|bas[i\u0131]n|druk))\b.*$/i;
     const UNKNOWN_CONTACT_RE = /^(Maybe|Mungkin|Talvez)\b[\s:~,-]*/i;
     const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g;
     const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)\+?\d{8,16}\b/gi;
@@ -177,7 +176,7 @@
 
     function filterMessageIdentities(text, el) {
         const message = el && el.closest && el.closest('.focusable-list-item');
-        if (!message || !message.querySelector) return text;
+        if (!message || !message.querySelector) return el ? replacePhonesOutsideWebUrls(text) : text;
 
         const copyable = message.querySelector('.copyable-text[data-pre-plain-text]');
         const prePlainText = copyable && copyable.getAttribute('data-pre-plain-text');
@@ -194,7 +193,11 @@
         const metadataSender = (senderMatch && senderMatch[1]) || authorPhone;
         const bodyEl = message.querySelector('.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]');
         const body = bodyEl && (bodyEl.textContent || '').trim();
-        const bodyStart = body ? text.indexOf(body) : -1;
+        const bodyCandidates = body ? [...new Set([body, body.replace(/^@\s*/, '')].filter(Boolean))] : [];
+        const bodyStart = bodyCandidates.reduce((found, candidate) => {
+            if (found >= 0) return found;
+            return text.indexOf(candidate);
+        }, -1);
         const sender = metadataSender || (bodyStart !== 0 ? senderLabel : '');
         const senderStart = sender ? text.indexOf(sender) : -1;
         const inferredUnknownSender = senderStart > 0 && bodyStart > 0 &&
@@ -302,9 +305,6 @@
 
     function prepareNamedAttribute(el, name, value) {
         let raw = cleanString(value, false, el);
-        if (name === 'aria-label' && el.closest && el.closest(`${SELECTORS.conversationMessages} .focusable-list-item`)) {
-            raw = raw.replace(USAGE_HINT_SUFFIX_RE, '').trim();
-        }
         const context = getPrivacyContext(el);
         if (!isPrivacyMode || !context) return raw;
 
@@ -681,7 +681,7 @@
         badges.status.forEach(label => addChatLabelPart(parts, label));
         badges.details.forEach(label => addChatLabelPart(parts, label));
 
-        return cleanString(parts.join(' '), false);
+        return cleanString(parts.join(' '), 'identity');
     }
 
     function applyChatMaskedLabel(el, label) {
@@ -1732,29 +1732,6 @@
         }
     }
 
-    function handleContextMenu(e) {
-        if (!e.target || !e.target.closest) return;
-
-        const row = e.target.closest('div[role="row"]');
-        if (!row) return;
-
-        const main = document.querySelector(SELECTORS.main);
-        if (!main || !main.contains(row)) return;
-
-        // Preserve the browser menu for links, images, and selected text.
-        if (e.target.closest('a[href], [role="link"], img') || window.getSelection().toString().length > 0) {
-            return;
-        }
-
-        const menuButton = row.querySelector('[role="button"][aria-label="Context menu"]') ||
-            row.querySelector('[role="button"][aria-haspopup="menu"], button[aria-haspopup="menu"]') ||
-            row.querySelector('._ahkm');
-        if (!menuButton) return;
-
-        e.preventDefault();
-        menuButton.click();
-    }
-
     function toggleStyleSheet(id, cssText, enable) {
         let style = document.getElementById(id);
         if (enable) {
@@ -1926,7 +1903,6 @@
     window.addEventListener('keydown', handleShortcuts, true);
     document.addEventListener('focusin', e => rememberFocusedRow(e.target));
     document.addEventListener('mousedown', e => rememberFocusedRow(e.target));
-    document.addEventListener('contextmenu', handleContextMenu, true);
 
     startStatusTracking();
     console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
