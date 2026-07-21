@@ -2,7 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const source = fs.readFileSync('whatsapp_web_plus.user.js', 'utf8').replace(
+const scriptPath = process.env.WA_PLUS_SCRIPT || 'whatsapp_web_plus.user.js';
+const source = fs.readFileSync(scriptPath, 'utf8').replace(
     /\}\)\(\);\s*$/,
     'globalThis.__privacyTest = { cleanString, getPrivacyContext, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), seedPrivacyState: rememberPrivacyAttribute }; })();'
 );
@@ -51,7 +52,7 @@ const main = {
         return selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
     }
 };
-assert.match(source, /const SCRIPT_VERSION = '2\.6\.64'/);
+assert.match(source, /const SCRIPT_VERSION = '2\.6\.66'/);
 assert.match(source, /applyOwnedMessageRole\(viewport, 'grid'/);
 assert.match(source, /applyOwnedMessageRole\(message, 'gridcell'/);
 assert.match(source, /if \(!applyOwnedMessageRole\(viewport, 'grid'/);
@@ -122,6 +123,36 @@ const structuredQuoteMessage = {
             return { textContent: '0:42' };
         }
         return replyMessage.querySelector(selector);
+    }
+};
+const multilineQuotedMessage = {
+    closest: replyMessage.closest,
+    querySelector(selector) {
+        if (selector === '.copyable-text[data-pre-plain-text]') {
+            return { getAttribute() { return '[11:14, 7/21/2026] +62 856-4030-6004: '; } };
+        }
+        if (selector === '[data-testid="author"][aria-label]') {
+            return {
+                getAttribute() { return 'Maybe Prima Agus Setiyawan'; },
+                nextElementSibling: { textContent: '+62 856-4030-6004' }
+            };
+        }
+        if (selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]') {
+            return { textContent: 'Yes' };
+        }
+        if (selector === '[data-testid="quoted-message"] [data-testid="author"][aria-label]') {
+            return {
+                getAttribute() { return 'Maybe Fransiska Nadia'; },
+                nextElementSibling: { textContent: '+62 877-7088-0051' }
+            };
+        }
+        if (selector === '[data-testid="quoted-message"] [dir="auto"]') {
+            return { textContent: 'Fransiska Nadia' };
+        }
+        if (selector === '[data-testid="quoted-message"] [data-testid="selectable-text"]') {
+            return { textContent: 'Kontaknya yang ini kan ya ka?\n\n+6285591169006' };
+        }
+        return null;
     }
 };
 const groupMediaMessage = {
@@ -352,6 +383,14 @@ assert.equal(
         structuredQuoteMessage
     ),
     'Maybe rohmansyah replied Well noted to quoted message from Maybe Nohansa Nuh: 0:42 12:16'
+);
+assert.equal(
+    clean(
+        'Maybe Prima Agus Setiyawan replied Yes to quoted message from Maybe Fransiska Nadia +62 877-7088-0051: Kontaknya yang ini kan ya ka? +6285591169006 11:14 For more options, press left or right arrow key to access context menu',
+        'message',
+        multilineQuotedMessage
+    ),
+    'Maybe Prima Agus Setiyawan replied Yes to quoted message from Maybe Fransiska Nadia: Kontaknya yang ini kan ya ka? +6285591169006 11:14 For more options, press left or right arrow key to access context menu'
 );
 
 console.log('privacy filter checks passed');
