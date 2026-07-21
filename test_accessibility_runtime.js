@@ -7,16 +7,24 @@ const debugSource = fs.readFileSync('whatsapp_web_plus.debug.js', 'utf8');
 const source = originalSource.replace('    ensureLiveRegion();', `
     globalThis.__runtime = {
         OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute,
-        isOwnedMutation, prepareNamedAttribute, restorePrivacyAttributes,
+        isMetaAIReply, applyMetaAIMessageName,
+        getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
+        getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
+        queuePassiveAnnouncements, discardPassiveAnnouncements,
+        isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, restorePrivacyAttributes,
         focusItem, handleShortcuts, isShortUnreadText, getNextMessageRow, getChatRowTranslateY,
         findUnreadMessageTarget, applyChatRowDescendantMasks, collectChatBadgeLabels,
         applyChatRowNativeMask, focusChatRow, getPreferredChatRow,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, getRoleFixRoot, scheduleRoleFix,
-        closeAudioPlayerShortcut, CLEAN_UI_CSS,
+        closeAudioPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
         CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
         setCleanUi(value) { isCleanUiMode = value; },
-        setUnreadTarget(value) { unreadTarget = value; }
+        setUnreadTarget(value) { unreadTarget = value; },
+        getChatPulseEnabled() { return isChatPulseEnabled; },
+        getStatusTracking() { return isStatusTracking; },
+        getLastTPressTime() { return lastTPressTime; },
+        getPassiveAnnouncements() { return passiveAnnouncements.map(entry => ({ ...entry })); }
     };
     return;
     ensureLiveRegion();`);
@@ -58,6 +66,7 @@ class Element {
         if (selector === '[data-tab]') return this.hasAttribute('data-tab');
         if (selector === 'div[role="row"]') return this.getAttribute('role') === 'row';
         if (selector === '[data-id]') return this.hasAttribute('data-id');
+        if (selector === '.focusable-list-item') return this.getAttribute('data-focusable-list-item') === 'true';
         return false;
     }
     closest(selector) { return this.closestHandler ? this.closestHandler(selector) : null; }
@@ -92,7 +101,11 @@ const document = {
 documentRef = document;
 
 const localStorage = {
-    values: new Map([['wa-plus-privacy', 'true']]),
+    values: new Map([
+        ['wa-plus-privacy', 'true'],
+        ['wa-plus-automatic-reading', 'true'],
+        ['wa-plus-chat-activity-monitor', 'true']
+    ]),
     getItem(key) { return this.values.get(key) || null; },
     setItem(key, value) { this.values.set(key, value); }
 };
@@ -109,6 +122,8 @@ const sandbox = {
 
 vm.runInNewContext(source, sandbox);
 const runtime = sandbox.__runtime;
+assert.equal(runtime.getChatPulseEnabled(), true);
+assert.equal(runtime.getStatusTracking(), true);
 
 const reactOwned = new Element();
 runtime.applyOwnedAttribute(reactOwned, 'role', 'grid', runtime.OWNERS.messageGrid);
@@ -127,6 +142,306 @@ nativeRole.setAttribute('role', 'feed');
 assert.equal(runtime.applyOwnedMessageRole(nativeRole, 'grid', runtime.OWNERS.messageGrid), false);
 assert.equal(nativeRole.getAttribute('role'), 'feed');
 
+const metaAIReply = new Element();
+const metaAISender = new Element();
+const metaAIBody = new Element();
+const metaAIMetadata = new Element();
+const metaAILink = new Element();
+const metaAIMenu = new Element();
+const metaAIConversation = new Element();
+metaAIReply.setAttribute('aria-label', 'Native focus hint');
+metaAIReply.closestHandler = selector => selector === '[data-testid="conversation-panel-messages"]' ? metaAIConversation : null;
+metaAISender.setAttribute('aria-label', 'Meta AI:');
+metaAISender.closestHandler = () => null;
+metaAIBody.closestHandler = selector => {
+    if (selector === '.focusable-list-item') return metaAIReply;
+    if (selector === '[data-testid="conversation-panel-messages"]') return metaAIConversation;
+    return null;
+};
+metaAILink.setAttribute('href', 'https://example.test/guide');
+metaAILink.setAttribute('aria-label', 'Meta AI official guide');
+metaAILink.setAttribute('tabindex', '0');
+metaAILink.textContent = 'Meta AI official guide';
+metaAIMenu.setAttribute('aria-label', 'Menu for Meta AI reply');
+metaAIMenu.setAttribute('tabindex', '0');
+metaAIMenu.setAttribute('role', 'button');
+metaAIMenu.setAttribute('aria-expanded', 'false');
+metaAIBody.children.push(metaAILink);
+metaAILink.parentElement = metaAIBody;
+metaAIReply.children.push(metaAISender, metaAIBody, metaAIMetadata, metaAIMenu);
+for (const child of metaAIReply.children) child.parentElement = metaAIReply;
+metaAIReply.queryHandler = selector => {
+    if (selector === 'span[aria-label="Meta AI:"]') return metaAISender;
+    if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return metaAIBody;
+    if (selector === '[data-testid="msg-meta"]') return metaAIMetadata;
+    return null;
+};
+assert.equal(runtime.isMetaAIReply(metaAIReply), true);
+assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
+assert.equal(metaAIReply.hasAttribute('aria-label'), false);
+assert.equal(metaAIReply.getAttribute('aria-labelledby'), [metaAISender, metaAIBody, metaAIMetadata].map(el => el.getAttribute('id')).join(' '));
+assert.equal(metaAILink.getAttribute('href'), 'https://example.test/guide');
+assert.equal(metaAILink.getAttribute('aria-label'), 'Meta AI official guide');
+assert.equal(metaAILink.getAttribute('tabindex'), '0');
+assert.equal(metaAILink.textContent, 'Meta AI official guide');
+assert.equal(metaAIMenu.getAttribute('aria-label'), 'Menu for Meta AI reply');
+assert.equal(metaAIMenu.getAttribute('tabindex'), '0');
+assert.equal(metaAIMenu.getAttribute('role'), 'button');
+assert.equal(metaAIMenu.getAttribute('aria-expanded'), 'false');
+assert.equal(metaAIMenu.hasAttribute('id'), false);
+assert.equal(runtime.isOwnedMutation(metaAIBody, 'id'), true);
+assert.equal(runtime.isOwnedMutation(metaAIReply, 'aria-labelledby'), true);
+metaAIBody.setAttribute('id', 'react-body-id');
+assert.equal(runtime.handleAttributeMutation({ target: metaAIBody, attributeName: 'id' }), metaAIConversation);
+metaAIReply.setAttribute('aria-labelledby', 'react-labelled-by');
+assert.equal(runtime.handleAttributeMutation({ target: metaAIReply, attributeName: 'aria-labelledby' }), metaAIConversation);
+assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
+assert.equal(metaAIReply.getAttribute('aria-labelledby').split(' ')[1], 'react-body-id');
+metaAIReply.setAttribute('aria-label', 'Replacement focus hint');
+assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
+assert.equal(metaAIReply.hasAttribute('aria-label'), false);
+metaAIReply.queryHandler = () => null;
+assert.equal(runtime.applyMetaAIMessageName(metaAIReply), false);
+assert.equal(metaAIReply.getAttribute('aria-label'), 'Replacement focus hint');
+assert.equal(metaAIReply.getAttribute('aria-labelledby'), 'react-labelled-by');
+assert.equal(metaAISender.hasAttribute('id'), false);
+assert.equal(metaAIBody.getAttribute('id'), 'react-body-id');
+assert.equal(metaAIMetadata.hasAttribute('id'), false);
+
+const ordinaryMessage = new Element();
+ordinaryMessage.setAttribute('aria-label', 'Alice Hello 18:53 Read');
+assert.equal(runtime.applyMetaAIMessageName(ordinaryMessage), false);
+assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Alice Hello 18:53 Read');
+
+const ordinaryConversation = new Element();
+const ordinaryMenu = new Element();
+ordinaryMenu.setAttribute('role', 'button');
+ordinaryMenu.setAttribute('aria-label', 'Open message options');
+ordinaryMessage.setAttribute('data-focusable-list-item', 'true');
+ordinaryMessage.closestHandler = selector => selector === '[data-testid="conversation-panel-messages"]' ? ordinaryConversation : null;
+ordinaryMessage.queryHandler = selector => selector === '[data-testid="icon-down-context"][role="button"][aria-label]' ? ordinaryMenu : null;
+runtime.setPrivacy(false);
+assert.equal(
+    runtime.prepareNamedAttribute(
+        ordinaryMessage,
+        'aria-label',
+        'Alice Hello 18:53 Read For more options, press left or right arrow key to access context menu'
+    ),
+    'Alice Hello 18:53 Read'
+);
+assert.equal(runtime.prepareNamedAttribute(ordinaryMenu, 'aria-label', 'Open message options'), 'Open message options');
+
+const linkedMessage = new Element();
+linkedMessage.setAttribute('data-focusable-list-item', 'true');
+linkedMessage.closestHandler = ordinaryMessage.closestHandler;
+linkedMessage.queryHandler = ordinaryMessage.queryHandler;
+assert.equal(
+    runtime.prepareNamedAttribute(
+        linkedMessage,
+        'aria-label',
+        'Alice See https://example.test/options 18:54 Delivered For more options, press left or right arrow key to access context menu'
+    ),
+    'Alice See https://example.test/options 18:54 Delivered'
+);
+
+const pulseStatus = new Element();
+pulseStatus.setAttribute('aria-label', 'Delivered');
+const pulseBody = new Element();
+pulseBody.textContent = 'test';
+const pulseMessage = new Element();
+pulseMessage.attributes.set(
+    'aria-label',
+    'You test 15:54 Delivered For more options, press left or right arrow key to access context menu'
+);
+pulseMessage.queryHandler = selector => {
+    if (selector === '[data-testid="msg-meta"] [aria-label]') return pulseStatus;
+    if (selector === '[data-testid="msg-container"] [data-testid="selectable-text"]') return pulseBody;
+    return null;
+};
+assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Delivered');
+assert.equal(runtime.getChatPulseSummary(pulseMessage), 'You test 15:54 Delivered');
+pulseStatus.setAttribute('aria-label', 'Pending');
+assert.equal(runtime.getChatPulseStatus(pulseMessage), '');
+
+const metadataOnlyMessage = new Element();
+metadataOnlyMessage.attributes.set('aria-label', '15:54 Sent');
+metadataOnlyMessage.queryHandler = () => null;
+assert.equal(runtime.getChatPulseSummary(metadataOnlyMessage), '');
+const renderedBody = new Element();
+renderedBody.textContent = 'Rendered message body';
+metadataOnlyMessage.attributes.set('aria-label', 'You Rendered message body 15:54 Sent');
+metadataOnlyMessage.queryHandler = selector =>
+    selector === '[data-testid="msg-container"] [data-testid="selectable-text"]' ? renderedBody : null;
+assert.equal(runtime.getChatPulseSummary(metadataOnlyMessage), 'You Rendered message body 15:54 Sent');
+
+const metaPulseSender = new Element();
+metaPulseSender.setAttribute('aria-label', 'Meta AI:');
+metaPulseSender.closestHandler = () => null;
+const metaPulseBody = new Element();
+metaPulseBody.textContent = 'Thinking';
+const metaPulseMetadata = new Element();
+metaPulseMetadata.textContent = '16:29';
+const metaPulseMessage = new Element();
+metaPulseMessage.setAttribute('aria-label', 'Meta AI is thinking');
+let metaPulseFinished = false;
+metaPulseMessage.queryHandler = selector => {
+    if (selector === 'span[aria-label="Meta AI:"]' || selector === 'span[aria-label$=":"]') return metaPulseSender;
+    if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return metaPulseBody;
+    if (selector === '[data-testid="msg-meta"]') return metaPulseFinished ? metaPulseMetadata : null;
+    return null;
+};
+assert.equal(runtime.getChatPulseSummary(metaPulseMessage), '');
+metaPulseBody.textContent = 'Final Meta answer';
+metaPulseFinished = true;
+assert.equal(runtime.getChatPulseSummary(metaPulseMessage), 'Meta AI: Final Meta answer 16:29');
+
+const pulseEntry = (id, summary, status) => ({ id, summary, status });
+const reconcilePulse = (chatTitle, entries) => Array.from(runtime.reconcileChatPulseEntries(chatTitle, entries));
+runtime.setChatPulseBaseline('Alice', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
+assert.deepEqual(
+    reconcilePulse('Alice', [
+        pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
+        pulseEntry('m2', 'Alice second 15:55', '')
+    ]),
+    ['Alice second 15:55']
+);
+assert.deepEqual(
+    reconcilePulse('Alice', [
+        pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
+        pulseEntry('m2', 'Alice second 15:55', '')
+    ]),
+    ['Message status: Delivered']
+);
+assert.deepEqual(
+    reconcilePulse('Alice', [
+        pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
+        pulseEntry('m2', 'Alice second 15:55', '')
+    ]),
+    []
+);
+assert.deepEqual(
+    reconcilePulse('Alice', [pulseEntry('old-1', 'Historical message', '')]),
+    []
+);
+assert.deepEqual(
+    reconcilePulse('Alice', [
+        pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
+        pulseEntry('m2', 'Alice second 15:55', '')
+    ]),
+    []
+);
+assert.deepEqual(
+    reconcilePulse('Alice', [
+        pulseEntry('m2', 'Alice second 15:55', ''),
+        pulseEntry('m3', 'You third 15:56 Sent', 'Sent')
+    ]),
+    ['You third 15:56 Sent']
+);
+runtime.setChatPulseBaseline('Alice', [pulseEntry('m4', 'You pending 15:57', '')]);
+assert.deepEqual(
+    reconcilePulse('Alice', [pulseEntry('m4', 'You pending 15:57 Sent', 'Sent')]),
+    ['Message status: Sent']
+);
+assert.deepEqual(
+    reconcilePulse('Bob', [pulseEntry('b1', 'Bob old message', '')]),
+    []
+);
+
+runtime.setChatPulseBaseline('History', [
+    pulseEntry('m10', 'Recent ten', ''),
+    pulseEntry('m11', 'Recent eleven', '')
+]);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m1', 'Old one', ''),
+    pulseEntry('m2', 'Old two', '')
+]), []);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m2', 'Old two', ''),
+    pulseEntry('m3', 'Old three', ''),
+    pulseEntry('m4', 'Old four', '')
+]), []);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m10', 'Recent ten', ''),
+    pulseEntry('m11', 'Recent eleven', '')
+]), []);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m11', 'Recent eleven', ''),
+    pulseEntry('m12', 'Actually new', '')
+]), ['Actually new']);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m12', 'Actually new', ''),
+    pulseEntry('m13', '', '')
+]), []);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m12', 'Actually new', ''),
+    pulseEntry('m13', 'Rendered later', '')
+]), ['Rendered later']);
+
+runtime.queuePassiveAnnouncements('pulse', ['Unmasked queued message']);
+runtime.queuePassiveAnnouncements('activity', ['Alice is typing']);
+runtime.discardPassiveAnnouncements('pulse');
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'Alice is typing' }]
+);
+runtime.discardPassiveAnnouncements('activity');
+
+const typingRow = new Element();
+const typingSecondary = new Element();
+const typingIndicator = new Element();
+const typingTitleContainer = new Element();
+const typingTitle = new Element();
+typingRow.setAttribute('aria-selected', 'true');
+typingRow.queryHandler = selector => {
+    if (selector === '[data-testid="cell-frame-secondary"]') return typingSecondary;
+    if (selector === '[data-testid="cell-frame-title"]') return typingTitleContainer;
+    return null;
+};
+typingSecondary.queryHandler = selector => selector === '[title], [aria-label]' ? typingIndicator : null;
+typingTitleContainer.queryHandler = selector => selector === '[title]' ? typingTitle : null;
+typingTitle.setAttribute('title', 'Achi Yandrika');
+typingIndicator.setAttribute('title', '~\u202fShaun Oliver is typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing…');
+typingIndicator.setAttribute('title', '~ Shaun Oliver and Budi are typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver and Budi are typing…');
+typingIndicator.setAttribute('title', 'Last message preview');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '');
+typingIndicator.removeAttribute('title');
+typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('title', 'typing…');
+typingIndicator.setAttribute('aria-label', 'typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Achi Yandrika is typing…');
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'Achi Yandrika is typing…' }]
+);
+typingTitle.setAttribute('title', 'Bob');
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'Bob is typing…' }]
+);
+runtime.discardPassiveAnnouncements('activity');
+typingIndicator.setAttribute('title', 'Last message preview');
+typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'Shaun Oliver is typing...' }]
+);
+typingIndicator.setAttribute('aria-label', 'Last message preview');
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+typingIndicator.setAttribute('title', '~ Budi is typing…');
+document.activeElement = typingRow;
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+document.activeElement = null;
+
+runtime.setPrivacy(true);
 const main = new Element();
 const conversation = new Element();
 const label = new Element();
@@ -213,6 +528,50 @@ runtime.handleShortcuts(modalBlocked);
 assert.equal(modalBlocked.prevented, false);
 assert.equal(modalBlocked.immediateStopped, false);
 selectorResults.clear();
+
+const retryMain = new Element();
+retryMain.queryHandler = selector => selector.includes('[data-testid="conversation-panel-messages"]') ? new Element() : null;
+selectorResults.set('div#main', retryMain);
+document.activeElement = null;
+runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' }));
+assert.equal(scheduledFrames.length, 1);
+selectorResults.set('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]', new Element());
+scheduledFrames.shift()();
+assert.equal(document.activeElement, null);
+selectorResults.clear();
+
+event = makeEvent({ altKey: true, shiftKey: true, code: 'KeyL' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(localStorage.getItem('wa-plus-automatic-reading'), 'false');
+event = makeEvent({ altKey: true, shiftKey: true, code: 'KeyL' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(localStorage.getItem('wa-plus-automatic-reading'), 'true');
+
+const firstAltT = makeEvent({ altKey: true, code: 'KeyT' });
+const interruptedAltT = makeEvent({ code: 'Space' });
+const restartedAltT = makeEvent({ altKey: true, code: 'KeyT' });
+const secondAltT = makeEvent({ altKey: true, code: 'KeyT' });
+runtime.handleShortcuts(firstAltT);
+assert.ok(runtime.getLastTPressTime() > 0);
+runtime.handleShortcuts(interruptedAltT);
+assert.equal(runtime.getLastTPressTime(), 0);
+runtime.handleShortcuts(restartedAltT);
+assert.ok(runtime.getLastTPressTime() > 0);
+runtime.handleShortcuts(secondAltT);
+assert.equal(firstAltT.prevented, true);
+assert.equal(firstAltT.immediateStopped, true);
+assert.equal(interruptedAltT.prevented, false);
+assert.equal(interruptedAltT.immediateStopped, false);
+assert.equal(restartedAltT.prevented, true);
+assert.equal(restartedAltT.immediateStopped, true);
+assert.equal(secondAltT.prevented, true);
+assert.equal(secondAltT.immediateStopped, true);
+assert.equal(runtime.getLastTPressTime(), 0);
+assert.equal(localStorage.getItem('wa-plus-chat-activity-monitor'), 'false');
 
 event = makeEvent({ altKey: true, code: 'Digit1', target: new Element() });
 runtime.handleShortcuts(event);
@@ -400,6 +759,24 @@ assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, latestMessage);
 assert.equal(latestMessageRow.scrollIntoViewCalls, 1);
+
+activeMain.children.push(latestMessageContainer, composer);
+latestMessageContainer.parentElement = activeMain;
+composer.parentElement = activeMain;
+selectorResults.set('div#main footer div[contenteditable="true"]', composer);
+latestMessageContainer.children.push(latestMessageRow);
+latestMessageRow.parentElement = latestMessageContainer;
+latestMessageRow.children.push(latestMessage);
+latestMessage.parentElement = latestMessageRow;
+latestMessage.closestHandler = selector => selector === 'div[role="row"]' ? latestMessageRow : null;
+runtime.rememberFocusedRow(latestMessage);
+document.activeElement = composer;
+event = makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' });
+runtime.handleShortcuts(event);
+assert.equal(document.activeElement, latestMessage);
+assert.equal(latestMessageRow.scrollIntoViewCalls, 2);
+runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' }));
+assert.equal(document.activeElement, composer);
 
 const header = new Element();
 const headerSpacer = new Element();
@@ -661,7 +1038,13 @@ assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1
 assert.doesNotMatch(runtime.CLEAN_UI_CSS, /outline\s*:\s*none|\[role="tooltip"\]|\[role="tablist"\]/);
 assert.match(runtime.CLEAN_UI_CSS, /:focus-within/);
 
-assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.64'/);
+assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.66'/);
+assert.match(originalSource, /const ALT_T_DOUBLE_PRESS_MS = 300/);
+assert.match(originalSource, /Automatic reading of messages is enabled/);
+assert.match(originalSource, /Automatic reading of new messages is disabled/);
+assert.match(originalSource, /automaticReading: 'wa-plus-automatic-reading'/);
+assert.match(originalSource, /chatActivity: 'wa-plus-chat-activity-monitor'/);
+assert.match(originalSource, /\[data-testid="cell-frame-secondary"\]/);
 assert.match(originalSource, /announce\("Audio player closed\."\)/);
 assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
 assert.match(originalSource, /e\.stopImmediatePropagation\(\)/);
@@ -676,8 +1059,22 @@ assert.doesNotMatch(originalSource, /setTimeout\(confirmDestination, 100\)|inner
 assert.doesNotMatch(originalSource, /\(e\.ctrlKey && e\.altKey\)|toggleMessageInputShortcut/);
 assert.match(originalSource, /applyOwnedMessageRole\(viewport, 'grid'/);
 assert.match(originalSource, /applyOwnedMessageRole\(message, 'gridcell'/);
-assert.doesNotMatch(originalSource, /context.?menu|icon-down-context|messageMenu|USAGE_HINT_SUFFIX_RE/i);
-assert.doesNotMatch(debugSource, /context.?menu|icon-down-context|messageMenu|USAGE_HINT_SUFFIX_RE/i);
+assert.match(originalSource, /function isMetaAIReply/);
+assert.match(originalSource, /MESSAGE_CONTEXT_INSTRUCTION_RE/);
+assert.match(originalSource, /\.focusable-list-item/);
+assert.match(originalSource, /icon-down-context/);
+assert.match(originalSource, /MESSAGE_DELIVERY_STATUS_RANK/);
+assert.match(originalSource, /\[data-testid\^="conv-msg-"\]\[data-id\]/);
+assert.doesNotMatch(originalSource, /chatPulseLastMessageId/);
+assert.match(originalSource, /chatPulseTailId/);
+assert.match(originalSource, /queuePassiveAnnouncements\('activity'/);
+assert.match(originalSource, /if \(isPrivacyMode\) discardPassiveAnnouncements\('pulse'\)/);
+const altTShortcutBlock = originalSource.slice(
+    originalSource.indexOf('    function handleAltTShortcut() {'),
+    originalSource.indexOf('    function getActiveModal() {')
+);
+assert.doesNotMatch(altTShortcutBlock, /setTimeout/);
+assert.match(altTShortcutBlock, /announceChatHeaderShortcut\(\)/);
 
 function removeDebugOnlyBlock(sourceText, startMarker, endMarker) {
     const start = sourceText.indexOf(startMarker);
@@ -710,7 +1107,7 @@ assert.equal(
     originalSource.replace(/\r\n/g, '\n')
 );
 assert.match(debugSource, /navigator\.clipboard\.writeText\(debugData\)/);
-assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.64'/);
+assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.66'/);
 assert.match(debugSource, /const debugData = document\.documentElement\.outerHTML/);
 assert.doesNotMatch(originalSource, /document\.documentElement\.outerHTML/);
 const debugCaptureBlock = debugSource.slice(

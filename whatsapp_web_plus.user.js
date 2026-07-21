@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WhatsApp Web Plus
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.64
+// @version      2.6.66
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @author       Muhammad
 // @match        https://web.whatsapp.com/*
@@ -13,15 +13,18 @@
 (function () {
     'use strict';
 
-    const SCRIPT_VERSION = '2.6.64';
+    const SCRIPT_VERSION = '2.6.66';
     const SHORTCUT_RENDER_RETRIES = 12;
+    const ALT_T_DOUBLE_PRESS_MS = 300;
     const CHAT_LIST_TOP_FALLBACK_MAX_Y = 1000;
     const CLEAN_UI_HIDDEN_ATTRIBUTE = 'data-wa-plus-clean-ui-hidden';
 
     const STORAGE_KEYS = Object.freeze({
         privacy: 'wa-plus-privacy',
         cleanUi: 'wa-plus-clean-ui',
-        originalDark: 'wa-plus-original-dark'
+        originalDark: 'wa-plus-original-dark',
+        automaticReading: 'wa-plus-automatic-reading',
+        chatActivity: 'wa-plus-chat-activity-monitor'
     });
 
     const SELECTORS = Object.freeze({
@@ -51,6 +54,7 @@
         chatStructure: 'chat-structure',
         messageGrid: 'message-grid',
         messageCell: 'message-cell',
+        metaAIMessageName: 'meta-ai-message-name',
         cleanUiHidden: 'clean-ui-hidden'
     });
 
@@ -78,10 +82,31 @@
     const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [role="grid"]';
     const DESKTOP_APP_PROMO_TITLE_RE = /^Download WhatsApp for (?:Windows|Mac|macOS)$/i;
     const DESKTOP_APP_PROMO_COPY_RE = /^Get extra features like voice and video calling, screen sharing and more\.?$/i;
+    const MESSAGE_CONTEXT_INSTRUCTION_RE = /\s*For more options,\s*press left or right arrow key to access context menu\.?\s*$/i;
+    const MESSAGE_DELIVERY_STATUS_RE = /^(?:Sent|Delivered|Read)$/i;
+    const CHAT_TYPING_RE = /\btyping(?:…|\.\.\.)?$/i;
+    const CHAT_GENERIC_TYPING_RE = /^typing(?:…|\.\.\.)?$/i;
+    const MESSAGE_DELIVERY_STATUS_RANK = Object.freeze({ Sent: 1, Delivered: 2, Read: 3 });
+    const MESSAGE_TEXT_CONTENT_SELECTOR = '[data-testid="msg-container"] [data-testid="selectable-text"]';
+    const MESSAGE_MEDIA_CONTENT_SELECTOR = [
+        '[data-testid="msg-container"] img[alt]',
+        '[data-testid="msg-container"] video',
+        '[data-testid="msg-container"] audio',
+        '[data-testid="msg-container"] a[href]',
+        '[data-testid="msg-container"] [data-testid*="audio"]',
+        '[data-testid="msg-container"] [data-testid*="document"]',
+        '[data-testid="msg-container"] [data-testid*="image"]',
+        '[data-testid="msg-container"] [data-testid*="video"]',
+        '[data-testid="msg-container"] [data-testid*="sticker"]',
+        '[data-testid="msg-container"] [data-testid*="poll"]',
+        '[data-testid="msg-container"] [data-testid*="location"]',
+        '[data-testid="msg-container"] [data-testid*="contact"]'
+    ].join(', ');
 
     let isPrivacyMode = localStorage.getItem(STORAGE_KEYS.privacy) === 'true';
     let isCleanUiMode = localStorage.getItem(STORAGE_KEYS.cleanUi) === 'true';
     let isOriginalDarkMode = localStorage.getItem(STORAGE_KEYS.originalDark) === 'true';
+    let metaAIMessageNameId = 0;
 
     const UNKNOWN_CONTACT_RE = /^(Maybe|Mungkin|Talvez)\b[\s:~,-]*/i;
     const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g;
@@ -192,7 +217,7 @@
             .replace(/:\s*$/, '').trim();
         const metadataSender = (senderMatch && senderMatch[1]) || authorPhone;
         const bodyEl = message.querySelector('.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]');
-        const body = bodyEl && (bodyEl.textContent || '').trim();
+        const body = bodyEl && normalizeText(bodyEl.textContent || '');
         const bodyCandidates = body ? [...new Set([body, body.replace(/^@\s*/, '')].filter(Boolean))] : [];
         const bodyStart = bodyCandidates.reduce((found, candidate) => {
             if (found >= 0) return found;
@@ -221,7 +246,7 @@
         const quotedSenderEl = message.querySelector('[data-testid="quoted-message"] [dir="auto"]');
         const quotedSender = quotedSenderEl && (quotedSenderEl.textContent || '').trim();
         const quotedBodyEl = message.querySelector('[data-testid="quoted-message"] [data-testid="selectable-text"]');
-        const quotedBody = quotedBodyEl && (quotedBodyEl.textContent || '').trim();
+        const quotedBody = quotedBodyEl && normalizeText(quotedBodyEl.textContent || '');
         const quotedBodyStart = quotedBody ? text.lastIndexOf(quotedBody) : text.length;
         const quotedSenderCandidates = [...new Set([
             quotedAuthor && quotedAuthorPhone && `${quotedAuthor} ${quotedAuthorPhone}`,
@@ -303,8 +328,21 @@
         attributes.set(name, { raw, masked });
     }
 
+    function hasDirectMetaAISender(message) {
+        if (!message || !message.querySelector) return false;
+        const sender = message.querySelector('span[aria-label="Meta AI:"]');
+        return !!sender && !sender.closest('[data-testid="quoted-message"]');
+    }
+
     function prepareNamedAttribute(el, name, value) {
         let raw = cleanString(value, false, el);
+        if (name === 'aria-label' &&
+            el.matches?.('.focusable-list-item') &&
+            el.closest?.(SELECTORS.conversationMessages) &&
+            !hasDirectMetaAISender(el) &&
+            el.querySelector?.('[data-testid="icon-down-context"][role="button"][aria-label]')) {
+            raw = raw.replace(MESSAGE_CONTEXT_INSTRUCTION_RE, '').trim();
+        }
         const context = getPrivacyContext(el);
         if (!isPrivacyMode || !context) return raw;
 
@@ -345,8 +383,19 @@
 
     onDomReady(function() {
 
+    let isStatusTracking = localStorage.getItem(STORAGE_KEYS.chatActivity) === 'true';
     let lastStatusFull = '';
+    let lastTypingActivity = '';
     let statusInterval = null;
+    let lastTPressTime = 0;
+    let isChatPulseEnabled = localStorage.getItem(STORAGE_KEYS.automaticReading) === 'true';
+    let chatPulseChatTitle = '';
+    let chatPulseTailId = '';
+    let chatPulseSeenIds = new Set();
+    let chatPulseStatuses = new Map();
+    let chatPulseSyncPending = false;
+    let passiveAnnouncementTimer = null;
+    let passiveAnnouncements = [];
     let lastFocusedChatRowNode = null;
     let lastFocusedMessageNode = null;
     let lastFocusedMessageId = '';
@@ -695,6 +744,34 @@
         ) || null;
     }
 
+    function isMetaAIReply(message) {
+        return hasDirectMetaAISender(message) &&
+            !!message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text');
+    }
+
+    function getMetaAIMessageNameId(el) {
+        const existingId = el.getAttribute('id');
+        if (existingId) return existingId;
+        const id = `wa-plus-meta-ai-name-${++metaAIMessageNameId}`;
+        applyOwnedAttribute(el, 'id', id, OWNERS.metaAIMessageName);
+        return id;
+    }
+
+    function applyMetaAIMessageName(message) {
+        if (!isMetaAIReply(message)) {
+            releaseOwnedWithin(message, OWNERS.metaAIMessageName);
+            return false;
+        }
+        const labelledElements = [
+            message.querySelector('span[aria-label="Meta AI:"]'),
+            message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text'),
+            message.querySelector('[data-testid="msg-meta"]')
+        ].filter(Boolean);
+        applyOwnedAttribute(message, 'aria-label', null, OWNERS.metaAIMessageName);
+        applyOwnedAttribute(message, 'aria-labelledby', labelledElements.map(getMetaAIMessageNameId).join(' '), OWNERS.metaAIMessageName);
+        return true;
+    }
+
     function applyOwnedMessageRole(el, role, owner) {
         let state = ownedAttributes.get(el)?.get('role');
         if (state && state.owner === owner && el.getAttribute('role') !== state.appliedValue) {
@@ -721,9 +798,28 @@
         const container = main && main.querySelector(SELECTORS.conversationMessages);
         const viewport = getMessageGridViewport(container);
         const active = !!viewport && isChatMainActive(main);
+        const messages = active
+            ? Array.from(viewport.querySelectorAll('div[role="row"] .focusable-list-item'))
+            : [];
+        const metaAIReplies = new Set(messages.filter(isMetaAIReply));
+
+        const staleMetaAIMessageNames = new Set();
+        for (const el of [...ownedElements]) {
+            const attributes = ownedAttributes.get(el);
+            if (![...(attributes || new Map()).values()].some(state => state.owner === OWNERS.metaAIMessageName)) continue;
+            if (!el.isConnected) {
+                ownedAttributes.delete(el);
+                ownedElements.delete(el);
+                continue;
+            }
+            const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
+            if (!message || !metaAIReplies.has(message)) staleMetaAIMessageNames.add(message || el);
+        }
+        staleMetaAIMessageNames.forEach(message => releaseOwnedWithin(message, OWNERS.metaAIMessageName));
 
         releaseMessageRoles(OWNERS.messageGrid, el => active && el === viewport);
-        releaseMessageRoles(OWNERS.messageCell, el => active && viewport.contains(el) && el.matches('.focusable-list-item[aria-label]'));
+        releaseMessageRoles(OWNERS.messageCell, el => active && viewport.contains(el) &&
+            (metaAIReplies.has(el) || el.matches('.focusable-list-item[aria-label]')));
 
         if (!active) return;
 
@@ -731,7 +827,9 @@
             releaseMessageRoles(OWNERS.messageCell, () => false);
             return;
         }
-        viewport.querySelectorAll('div[role="row"] .focusable-list-item[aria-label]').forEach(message => {
+        messages.forEach(message => {
+            if (!message.hasAttribute('aria-label') && !metaAIReplies.has(message)) return;
+            if (metaAIReplies.has(message)) applyMetaAIMessageName(message);
             applyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell);
         });
     }
@@ -980,11 +1078,19 @@
     function handleAttributeMutation(mutation) {
         const el = mutation.target;
         const attrName = mutation.attributeName;
+        const previousOwner = ownedAttributes.get(el)?.get(attrName)?.owner;
         if (isOwnedMutation(el, attrName)) return null;
 
         if (attrName === 'aria-label' || attrName === 'title') {
             cleanNamedAttribute(el, attrName);
             return attrName === 'aria-label' ? getRoleFixRoot(el) : null;
+        }
+
+        if (attrName === 'aria-labelledby' || attrName === 'id') {
+            const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
+            return previousOwner === OWNERS.metaAIMessageName || isMetaAIReply(message)
+                ? getRoleFixRoot(el)
+                : null;
         }
 
         if (attrName === 'data-pre-plain-text') {
@@ -1092,6 +1198,7 @@
                 scheduleCleanUiSync();
             }
         }
+        scheduleChatPulseSync();
     });
 
     function cleanNamedAttribute(el, attrName) {
@@ -1126,7 +1233,7 @@
                 subtree: true,
                 characterData: true,
                 attributes: true,
-                attributeFilter: ['aria-label', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
+                attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
             });
             cleanElementAttributes(document.body);
             const chatList = fixAccessibilityRoles(document.body);
@@ -1150,10 +1257,9 @@
         return liveRegion;
     }
 
-    function announce(text, passive = false) {
+    function announce(text) {
         if (!text) return;
-        if (passive && Date.now() < userAnnouncementUntil) return;
-        if (!passive) userAnnouncementUntil = Date.now() + 3000;
+        userAnnouncementUntil = Date.now() + 3000;
         const liveRegion = ensureLiveRegion();
         clearTimeout(announcementTimer);
         liveRegion.textContent = '';
@@ -1161,6 +1267,177 @@
             liveRegion.textContent = text;
             announcementTimer = setTimeout(() => { liveRegion.textContent = ''; }, 3000);
         }, 0);
+    }
+
+    function getChatPulseStatus(message) {
+        if (!message || !message.querySelector) return '';
+        const statusEl = message.querySelector('[data-testid="msg-meta"] [aria-label]');
+        const status = cleanString(statusEl?.getAttribute('aria-label') || '', false);
+        return MESSAGE_DELIVERY_STATUS_RE.test(status) ? status : '';
+    }
+
+    function getChatPulseSummary(message) {
+        if (!message || !message.querySelector) return '';
+        const isMetaMessage = hasDirectMetaAISender(message);
+        const body = isMetaMessage
+            ? message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text')
+            : message.querySelector(MESSAGE_TEXT_CONTENT_SELECTOR);
+        const bodyText = cleanString(body?.textContent || '', false);
+        const mediaContent = message.querySelector(MESSAGE_MEDIA_CONTENT_SELECTOR);
+        const metadata = message.querySelector('[data-testid="msg-meta"]');
+        if (isMetaMessage ? (!bodyText || !metadata) : (!bodyText && !mediaContent)) return '';
+
+        const nativeLabel = cleanString(message.getAttribute('aria-label') || '', false);
+        if (!isMetaMessage && nativeLabel) return nativeLabel.replace(MESSAGE_CONTEXT_INSTRUCTION_RE, '').trim();
+
+        const parts = [];
+        const sender = message.querySelector('span[aria-label$=":"]');
+        [sender?.getAttribute('aria-label'), bodyText, metadata?.textContent, getChatPulseStatus(message)]
+            .forEach(part => {
+                const value = cleanString(part || '', false);
+                if (value && !parts.includes(value)) parts.push(value);
+            });
+        return parts.join(' ');
+    }
+
+    function getChatPulseEntries() {
+        const container = document.querySelector(SELECTORS.conversationMessages);
+        if (!container) return [];
+        return Array.from(container.querySelectorAll('[data-testid^="conv-msg-"][data-id]')).map(wrapper => {
+            const message = wrapper.matches?.('.focusable-list-item')
+                ? wrapper
+                : wrapper.querySelector('.focusable-list-item');
+            return message && {
+                id: wrapper.getAttribute('data-id'),
+                summary: getChatPulseSummary(message),
+                status: getChatPulseStatus(message)
+            };
+        }).filter(entry => entry && entry.id);
+    }
+
+    function setChatPulseBaseline(chatTitle, entries) {
+        chatPulseChatTitle = chatTitle;
+        chatPulseTailId = entries.length ? entries[entries.length - 1].id : '';
+        chatPulseSeenIds = new Set(entries.map(entry => entry.id));
+        chatPulseStatuses = new Map(entries.map(entry => [entry.id, entry.status]));
+    }
+
+    function captureChatPulseBaseline() {
+        setChatPulseBaseline(getCurrentChatTitle(), getChatPulseEntries());
+    }
+
+    function schedulePassiveAnnouncements() {
+        if (passiveAnnouncementTimer !== null || !passiveAnnouncements.length) return;
+        const delay = Math.max(25, userAnnouncementUntil - Date.now() + 25);
+        passiveAnnouncementTimer = setTimeout(() => {
+            passiveAnnouncementTimer = null;
+            if (Date.now() < userAnnouncementUntil) {
+                schedulePassiveAnnouncements();
+                return;
+            }
+            const ready = passiveAnnouncements.filter(entry =>
+                (entry.source === 'pulse' && isChatPulseEnabled) ||
+                (entry.source === 'activity' && isStatusTracking));
+            passiveAnnouncements = [];
+            ready.sort((a, b) => (a.source === 'pulse' ? 0 : 1) - (b.source === 'pulse' ? 0 : 1));
+            if (ready.length) announce(ready.map(entry => entry.text).join('. '));
+        }, delay);
+    }
+
+    function queuePassiveAnnouncements(source, announcements) {
+        if (!announcements.length) return;
+        if (source === 'activity') {
+            passiveAnnouncements = passiveAnnouncements.filter(entry => entry.source !== 'activity');
+        }
+        passiveAnnouncements.push(...announcements.map(text => ({ source, text })));
+        schedulePassiveAnnouncements();
+    }
+
+    function discardPassiveAnnouncements(source) {
+        passiveAnnouncements = passiveAnnouncements.filter(entry => entry.source !== source);
+        if (passiveAnnouncementTimer !== null) clearTimeout(passiveAnnouncementTimer);
+        passiveAnnouncementTimer = null;
+        schedulePassiveAnnouncements();
+    }
+
+    function reconcileChatPulseEntries(chatTitle, entries) {
+        if (!chatTitle || chatTitle !== chatPulseChatTitle) {
+            setChatPulseBaseline(chatTitle, entries);
+            return [];
+        }
+
+        const tailIndex = chatPulseTailId
+            ? entries.findIndex(entry => entry.id === chatPulseTailId)
+            : -1;
+        const canDetectAppend = (!chatPulseTailId && chatPulseSeenIds.size === 0) || tailIndex >= 0;
+        const candidates = canDetectAppend
+            ? entries.slice(tailIndex + 1).filter(entry => !chatPulseSeenIds.has(entry.id))
+            : [];
+        const newEntries = [];
+        for (const entry of candidates) {
+            if (!entry.summary) break;
+            newEntries.push(entry);
+        }
+        const newIds = new Set(newEntries.map(entry => entry.id));
+        const pendingIds = new Set(candidates.slice(newEntries.length).map(entry => entry.id));
+        const announcements = newEntries.map(entry => entry.summary).filter(Boolean);
+        const receiptCounts = new Map();
+
+        entries.forEach(entry => {
+            if (pendingIds.has(entry.id)) return;
+            const hadStatus = chatPulseStatuses.has(entry.id);
+            const previousStatus = chatPulseStatuses.get(entry.id) || '';
+            const previousRank = MESSAGE_DELIVERY_STATUS_RANK[previousStatus] || 0;
+            const nextRank = MESSAGE_DELIVERY_STATUS_RANK[entry.status] || 0;
+            if (!newIds.has(entry.id) && hadStatus && nextRank > previousRank) {
+                receiptCounts.set(entry.status, (receiptCounts.get(entry.status) || 0) + 1);
+            }
+            chatPulseSeenIds.add(entry.id);
+            if (!hadStatus || nextRank >= previousRank) chatPulseStatuses.set(entry.id, entry.status);
+        });
+
+        if (newEntries.length) chatPulseTailId = newEntries[newEntries.length - 1].id;
+
+        receiptCounts.forEach((count, status) => {
+            announcements.push(count === 1
+                ? `Message status: ${status}`
+                : `${count} messages status: ${status}`);
+        });
+        return announcements;
+    }
+
+    function syncChatPulse() {
+        if (!isChatPulseEnabled) return;
+        queuePassiveAnnouncements('pulse', reconcileChatPulseEntries(
+            getCurrentChatTitle(),
+            getChatPulseEntries()
+        ));
+    }
+
+    function scheduleChatPulseSync() {
+        if (!isChatPulseEnabled || chatPulseSyncPending) return;
+        chatPulseSyncPending = true;
+        const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 50));
+        schedule(() => {
+            chatPulseSyncPending = false;
+            syncChatPulse();
+        });
+    }
+
+    function toggleChatPulse() {
+        isChatPulseEnabled = !isChatPulseEnabled;
+        localStorage.setItem(STORAGE_KEYS.automaticReading, isChatPulseEnabled ? 'true' : 'false');
+        if (isChatPulseEnabled) captureChatPulseBaseline();
+        else {
+            chatPulseChatTitle = '';
+            chatPulseTailId = '';
+            chatPulseSeenIds.clear();
+            chatPulseStatuses.clear();
+            discardPassiveAnnouncements('pulse');
+        }
+        announce(isChatPulseEnabled
+            ? 'Automatic reading of messages is enabled'
+            : 'Automatic reading of new messages is disabled');
     }
 
     function hasRenderedBox(el) {
@@ -1336,10 +1613,52 @@
         return text;
     }
 
+    function stopStatusTracking() {
+        if (statusInterval) clearInterval(statusInterval);
+        statusInterval = null;
+        lastStatusFull = '';
+        lastTypingActivity = '';
+    }
+
+    function getSelectedChatTypingActivity(rows = getChatListRows()) {
+        const row = getSelectedChatRow(rows);
+        const secondary = row?.querySelector('[data-testid="cell-frame-secondary"]');
+        const indicator = secondary?.querySelector('[title], [aria-label]');
+        const values = [indicator?.getAttribute('title'), indicator?.getAttribute('aria-label'), indicator?.textContent];
+        for (const value of values) {
+            const text = cleanString(value || '', false).replace(/^Maybe\s+/i, '').replace(/^~\s*/, '');
+            if (!CHAT_TYPING_RE.test(text)) continue;
+            if (!CHAT_GENERIC_TYPING_RE.test(text)) return text;
+            const title = getChatRowTitle(row);
+            return title ? `${title} is ${text}` : text;
+        }
+        return '';
+    }
+
+    function syncSelectedChatTypingActivity(rows = getChatListRows()) {
+        const row = getSelectedChatRow(rows);
+        const typingActivity = getSelectedChatTypingActivity(rows);
+        const rowFocused = row && row.contains(document.activeElement);
+        if (!typingActivity || rowFocused) {
+            if (lastTypingActivity || rowFocused) discardPassiveAnnouncements('activity');
+        } else if (typingActivity && typingActivity !== lastTypingActivity) {
+            queuePassiveAnnouncements('activity', [typingActivity]);
+        }
+        lastTypingActivity = typingActivity;
+        return typingActivity;
+    }
+
     function startStatusTracking() {
         if (statusInterval) clearInterval(statusInterval);
 
+        const infoBtn = getHeaderInfoButton();
+        lastStatusFull = infoBtn ? (infoBtn.innerText || infoBtn.textContent || '') : '';
+        lastTypingActivity = getSelectedChatTypingActivity();
+
         statusInterval = setInterval(() => {
+            if (!isStatusTracking) return;
+            const typingActivity = syncSelectedChatTypingActivity();
+
             const infoBtn = getHeaderInfoButton();
             if (!infoBtn) return;
 
@@ -1354,17 +1673,28 @@
                     const status = lines.slice(1).join(' ').trim();
                     const prevStatus = prevLines.slice(1).join(' ').trim();
 
-                    if (status && status !== prevStatus) {
+                    if (!typingActivity && status && status !== prevStatus) {
                         const focused = document.activeElement;
                         const isHeaderFocused = focused === infoBtn || infoBtn.contains(focused);
                         if (!isParticipantList(status) && !isHeaderFocused) {
-                            announce(status, true);
+                            queuePassiveAnnouncements('activity', [status]);
                         }
                     }
                 }
                 lastStatusFull = fullText;
             }
         }, 1500);
+    }
+
+    function toggleStatusTracking() {
+        isStatusTracking = !isStatusTracking;
+        localStorage.setItem(STORAGE_KEYS.chatActivity, isStatusTracking ? 'true' : 'false');
+        if (isStatusTracking) startStatusTracking();
+        else {
+            stopStatusTracking();
+            discardPassiveAnnouncements('activity');
+        }
+        announce(isStatusTracking ? 'Chat activity monitor on' : 'Chat activity monitor off');
     }
 
     function getSelectedChatRow(rows) {
@@ -1586,14 +1916,31 @@
     }
 
     function focusMessageInputShortcut() {
+        const input = document.querySelector(SELECTORS.messageInput);
+        if (input && (document.activeElement === input || input.contains(document.activeElement))) {
+            const main = document.querySelector(SELECTORS.main);
+            const messageContainer = main && (main.querySelector(SELECTORS.conversationMessages) || main);
+            const remembered = lastFocusedMessageNode?.isConnected && main?.contains(lastFocusedMessageNode)
+                ? lastFocusedMessageNode
+                : findMessageById(messageContainer, lastFocusedMessageId);
+            const row = remembered && (remembered.closest('div[role="row"]') || remembered);
+            if (focusItem(getBestInnerFocusElement(row))) {
+                row.scrollIntoView({ block: 'nearest' });
+            } else {
+                focusLastMessageShortcut();
+            }
+            return;
+        }
+
         const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
         const tryFocus = (attempt) => {
-            const input = document.querySelector(SELECTORS.messageInput);
-            if (input && focusItem(input)) return;
+            if (getActiveModal()) return;
+            const currentInput = document.querySelector(SELECTORS.messageInput);
+            if (currentInput && focusItem(currentInput)) return;
             if (attempt < SHORTCUT_RENDER_RETRIES && isChatMainActive()) {
                 schedule(() => tryFocus(attempt + 1));
             } else {
-                announce(input ? "Message box is not ready" : "Message box is not open");
+                announce(currentInput ? "Message box is not ready" : "Message box is not open");
             }
         };
         tryFocus(1);
@@ -1608,6 +1955,17 @@
 
         const headerBtn = getHeaderInfoButton();
         announce(headerBtn ? truncateList(headerBtn.innerText || headerBtn.textContent || "No title found") : "Chat title not found");
+    }
+
+    function handleAltTShortcut() {
+        const now = Date.now();
+        if (lastTPressTime && now - lastTPressTime < ALT_T_DOUBLE_PRESS_MS) {
+            lastTPressTime = 0;
+            toggleStatusTracking();
+            return;
+        }
+        lastTPressTime = now;
+        announceChatHeaderShortcut();
     }
 
     function getActiveModal() {
@@ -1634,6 +1992,13 @@
         if (e.code === 'KeyN') {
             e.preventDefault();
             togglePrivacyMode();
+            return true;
+        }
+
+        if (e.code === 'KeyL') {
+            e.preventDefault();
+            lastTPressTime = 0;
+            toggleChatPulse();
             return true;
         }
 
@@ -1666,7 +2031,7 @@
             Digit2: focusLastMessageShortcut,
             Digit3: jumpToUnreadShortcut,
             Digit0: closeAudioPlayerShortcut,
-            KeyT: announceChatHeaderShortcut
+            KeyT: handleAltTShortcut
         };
 
         const handler = shortcuts[e.code];
@@ -1678,6 +2043,9 @@
     }
 
     function handleShortcuts(e) {
+        const isAltT = e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && e.code === 'KeyT';
+        const isModifierKey = /^(?:Alt|Control|Shift|Meta)(?:Left|Right)$/.test(e.code);
+        if (!isAltT && !isModifierKey) lastTPressTime = 0;
         if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal()) return;
         if (handleNavShortcut(e) || handleAltShortcut(e)) {
             e.stopImmediatePropagation();
@@ -1697,6 +2065,7 @@
 
     function togglePrivacyMode() {
         isPrivacyMode = !isPrivacyMode;
+        if (isPrivacyMode) discardPassiveAnnouncements('pulse');
         localStorage.setItem(STORAGE_KEYS.privacy, isPrivacyMode ? 'true' : 'false');
         const enabled = isPrivacyMode;
         const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
@@ -1824,7 +2193,6 @@
     }
 
     const CLEAN_UI_CSS = `
-        /* Hide only UI containers identified and owned by this script. */
         [${CLEAN_UI_HIDDEN_ATTRIBUTE}="true"] {
             display: none !important;
         }
@@ -1900,11 +2268,12 @@
     ensureLiveRegion();
     startCleanupObserver();
     updateStyleSheets();
+    if (isStatusTracking) startStatusTracking();
+    if (isChatPulseEnabled) captureChatPulseBaseline();
     window.addEventListener('keydown', handleShortcuts, true);
     document.addEventListener('focusin', e => rememberFocusedRow(e.target));
     document.addEventListener('mousedown', e => rememberFocusedRow(e.target));
 
-    startStatusTracking();
     console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
 
     });
