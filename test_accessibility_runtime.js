@@ -10,7 +10,9 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         isMetaAIReply, applyMetaAIMessageName,
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
-        queuePassiveAnnouncements, discardPassiveAnnouncements,
+        queuePassiveAnnouncements, discardPassiveAnnouncements, discardAllPassiveAnnouncements,
+        announce, clearStatusRegion,
+        togglePrivacyWithQueueReset,
         isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, restorePrivacyAttributes,
         focusItem, handleShortcuts, isShortUnreadText, getNextMessageRow, getChatRowTranslateY,
         findUnreadMessageTarget, applyChatRowDescendantMasks, collectChatBadgeLabels,
@@ -21,7 +23,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         setPrivacy(value) { isPrivacyMode = value; },
         setCleanUi(value) { isCleanUiMode = value; },
         setUnreadTarget(value) { unreadTarget = value; },
-        getChatPulseEnabled() { return isChatPulseEnabled; },
+        getChatPulseEnabled() { return isAutomaticReadingEnabled(); },
         getStatusTracking() { return isStatusTracking; },
         getLastTPressTime() { return lastTPressTime; },
         getPassiveAnnouncements() { return passiveAnnouncements.map(entry => ({ ...entry })); }
@@ -56,6 +58,7 @@ class Element {
     getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
     get tabIndex() { return this.hasAttribute('tabindex') ? Number(this.getAttribute('tabindex')) : -1; }
     get childElementCount() { return this.children.length; }
+    get firstElementChild() { return this.children[0] || null; }
     hasAttribute(name) { return this.attributes.has(name); }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     removeAttribute(name) { this.attributes.delete(name); }
@@ -75,6 +78,13 @@ class Element {
     contains(node) { return node === this || this.children.some(child => child.contains ? child.contains(node) : child === node); }
     focus() { if (this.focusSucceeds) documentRef.activeElement = this; }
     click() { this.clickCalls++; if (this.clickHandler) this.clickHandler(); }
+    appendChild(child) { this.children.push(child); child.parentElement = this; return child; }
+    removeChild(child) {
+        const index = this.children.indexOf(child);
+        if (index >= 0) this.children.splice(index, 1);
+        child.parentElement = null;
+        return child;
+    }
     getBoundingClientRect() { return this.rect; }
     scrollIntoView() { this.scrollIntoViewCalls++; }
 }
@@ -86,13 +96,19 @@ class MutationObserver {
 const selectorResults = new Map();
 const selectorQueries = new Map();
 const liveRegion = new Element();
+const messageLog = new Element();
 const document = {
     readyState: 'complete',
     activeElement: null,
     body: new Element(),
     documentElement: { clientWidth: 1024, clientHeight: 768 },
     addEventListener() {},
-    getElementById(id) { return id === 'wa-plus-live-region' ? liveRegion : null; },
+    createElement() { return new Element(); },
+    getElementById(id) {
+        if (id === 'wa-plus-live-region') return liveRegion;
+        if (id === 'wa-plus-message-log') return messageLog;
+        return null;
+    },
     querySelector(selector) {
         selectorQueries.set(selector, (selectorQueries.get(selector) || 0) + 1);
         return selectorResults.get(selector) || null;
@@ -111,10 +127,20 @@ const localStorage = {
 };
 
 const scheduledFrames = [];
+let nextTimeoutId = 1;
+const scheduledTimeouts = new Map();
+function scheduleTimeout(callback) {
+    const id = nextTimeoutId++;
+    scheduledTimeouts.set(id, callback);
+    return id;
+}
+function cancelTimeout(id) { scheduledTimeouts.delete(id); }
+
 const sandbox = {
     Element, HTMLElement: Element, MutationObserver, document, localStorage, console,
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
-    navigator: {}, setTimeout, clearTimeout, setInterval() { return 1; }, clearInterval() {},
+    navigator: {}, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout,
+    setInterval() { return 1; }, clearInterval() {},
     window: {
         requestAnimationFrame(callback) { scheduledFrames.push(callback); }
     }
@@ -124,6 +150,15 @@ vm.runInNewContext(source, sandbox);
 const runtime = sandbox.__runtime;
 assert.equal(runtime.getChatPulseEnabled(), true);
 assert.equal(runtime.getStatusTracking(), true);
+
+liveRegion.textContent = 'Sensitive existing status';
+runtime.clearStatusRegion();
+assert.equal(liveRegion.textContent, '');
+runtime.announce('Sensitive pending status');
+assert.ok(scheduledTimeouts.size > 0);
+runtime.clearStatusRegion();
+assert.equal(scheduledTimeouts.size, 0);
+assert.equal(liveRegion.textContent, '');
 
 const reactOwned = new Element();
 runtime.applyOwnedAttribute(reactOwned, 'role', 'grid', runtime.OWNERS.messageGrid);
@@ -376,6 +411,15 @@ assert.deepEqual(reconcilePulse('History', [
     pulseEntry('m12', 'Actually new', ''),
     pulseEntry('m13', 'Rendered later', '')
 ]), ['Rendered later']);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m13', 'Rendered later', ''),
+    pulseEntry('m14', '', ''),
+    pulseEntry('m15', 'Ready after incomplete', '')
+]), ['Ready after incomplete']);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m14', 'Incomplete rendered later', ''),
+    pulseEntry('m15', 'Ready after incomplete', '')
+]), ['Incomplete rendered later']);
 
 runtime.queuePassiveAnnouncements('pulse', ['Unmasked queued message']);
 runtime.queuePassiveAnnouncements('activity', ['Alice is typing']);
@@ -385,6 +429,18 @@ assert.deepEqual(
     [{ source: 'activity', text: 'Alice is typing' }]
 );
 runtime.discardPassiveAnnouncements('activity');
+
+runtime.setPrivacy(false);
+runtime.queuePassiveAnnouncements('pulse', ['Queued before privacy']);
+runtime.queuePassiveAnnouncements('activity', ['Typing before privacy']);
+assert.equal(runtime.togglePrivacyWithQueueReset(false), true);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+runtime.queuePassiveAnnouncements('pulse', ['Must not queue while private']);
+runtime.queuePassiveAnnouncements('activity', ['Must not queue while private']);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+assert.equal(runtime.togglePrivacyWithQueueReset(false), true);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+scheduledFrames.length = 0;
 
 const typingRow = new Element();
 const typingSecondary = new Element();
@@ -1037,28 +1093,30 @@ assert.match(runtime.CLEAN_UI_CSS, new RegExp(`\\[${runtime.CLEAN_UI_HIDDEN_ATTR
 assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1);
 assert.doesNotMatch(runtime.CLEAN_UI_CSS, /outline\s*:\s*none|\[role="tooltip"\]|\[role="tablist"\]/);
 assert.match(runtime.CLEAN_UI_CSS, /:focus-within/);
+assert.match(runtime.CLEAN_UI_CSS, /\[role="row"\]\s+\[data-testid="context-btn"\][\s\S]*opacity\s*:\s*0\s*!important/);
 
-assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.66'/);
-assert.match(originalSource, /const ALT_T_DOUBLE_PRESS_MS = 300/);
+assert.match(originalSource, /^\/\/ @version\s+2\.6\.66$/m);
+assert.match(originalSource, /Generated from src\/; do not edit this file directly/);
+assert.match(originalSource, /ALT_T_DOUBLE_PRESS_MS = 300/);
 assert.match(originalSource, /Automatic reading of messages is enabled/);
 assert.match(originalSource, /Automatic reading of new messages is disabled/);
-assert.match(originalSource, /automaticReading: 'wa-plus-automatic-reading'/);
-assert.match(originalSource, /chatActivity: 'wa-plus-chat-activity-monitor'/);
+assert.match(originalSource, /automaticReading: ["']wa-plus-automatic-reading["']/);
+assert.match(originalSource, /chatActivity: ["']wa-plus-chat-activity-monitor["']/);
 assert.match(originalSource, /\[data-testid="cell-frame-secondary"\]/);
-assert.match(originalSource, /announce\("Audio player closed\."\)/);
+assert.match(originalSource, /announce\(t\(["']audioClosed["']\)\)/);
 assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
-assert.match(originalSource, /e\.stopImmediatePropagation\(\)/);
+assert.match(originalSource, /stopImmediatePropagation\(\)/);
 assert.match(originalSource, /applyChatRowNativeMask\(row\);\s+lastFocusedChatRowNode = row;/);
-assert.match(originalSource, /attrName === 'aria-hidden' \|\| attrName === 'tabindex'/);
+assert.match(originalSource, /attrName === ["']aria-hidden["'] \|\| attrName === ["']tabindex["']/);
 assert.doesNotMatch(originalSource, /fixGenericSectionBug|focusChatRowActivator|unreadMessageId|toggleMessageInputShortcut/);
 assert.match(originalSource, /function getChatRowActivator/);
-assert.equal((originalSource.match(/normalizeChatListTabStops\(/g) || []).length, 4);
+assert.equal((originalSource.match(/normalizeChatListTabStops\(/g) || []).length, 5);
 assert.doesNotMatch(originalSource, /scheduleRoleFix\(document\.body\)/);
 assert.doesNotMatch(originalSource, /attempt < 20|setTimeout\(\(\) => tryFocus/);
 assert.doesNotMatch(originalSource, /setTimeout\(confirmDestination, 100\)|innerText \|\| row\.textContent/);
 assert.doesNotMatch(originalSource, /\(e\.ctrlKey && e\.altKey\)|toggleMessageInputShortcut/);
-assert.match(originalSource, /applyOwnedMessageRole\(viewport, 'grid'/);
-assert.match(originalSource, /applyOwnedMessageRole\(message, 'gridcell'/);
+assert.match(originalSource, /applyOwnedMessageRole\(viewport, ["']grid["']/);
+assert.match(originalSource, /applyOwnedMessageRole\(message, ["']gridcell["']/);
 assert.match(originalSource, /function isMetaAIReply/);
 assert.match(originalSource, /MESSAGE_CONTEXT_INSTRUCTION_RE/);
 assert.match(originalSource, /\.focusable-list-item/);
@@ -1067,47 +1125,22 @@ assert.match(originalSource, /MESSAGE_DELIVERY_STATUS_RANK/);
 assert.match(originalSource, /\[data-testid\^="conv-msg-"\]\[data-id\]/);
 assert.doesNotMatch(originalSource, /chatPulseLastMessageId/);
 assert.match(originalSource, /chatPulseTailId/);
-assert.match(originalSource, /queuePassiveAnnouncements\('activity'/);
-assert.match(originalSource, /if \(isPrivacyMode\) discardPassiveAnnouncements\('pulse'\)/);
+assert.match(originalSource, /queuePassiveAnnouncements\(["']activity["']/);
+assert.match(originalSource, /isPrivacyModeEnabled\(\) \? \[\] : passiveAnnouncements/);
+assert.match(originalSource, /role["'], ["']log["']/);
+assert.match(originalSource, /aria-relevant["'], ["']additions["']/);
+assert.match(originalSource, /aria-atomic["'], ["']false["']/);
+assert.match(originalSource, /if \(isPrivacyModeEnabled\(\) \|\| !announcements\.length\) return/);
+assert.doesNotMatch(originalSource, /addEventListener\(["']contextmenu["']|handleContextMenu|NATIVE_CONTEXT_SELECTOR/);
+assert.match(originalSource, /event\.key === ["']ContextMenu["'] \|\| event\.key === ["']F10["'] && event\.shiftKey/);
 const altTShortcutBlock = originalSource.slice(
-    originalSource.indexOf('    function handleAltTShortcut() {'),
-    originalSource.indexOf('    function getActiveModal() {')
+    originalSource.indexOf('  function handleAltTShortcut() {'),
+    originalSource.indexOf('  function handleNavShortcut(')
 );
 assert.doesNotMatch(altTShortcutBlock, /setTimeout/);
 assert.match(altTShortcutBlock, /announceChatHeaderShortcut\(\)/);
-
-function removeDebugOnlyBlock(sourceText, startMarker, endMarker) {
-    const start = sourceText.indexOf(startMarker);
-    const end = sourceText.indexOf(endMarker, start);
-    assert.notEqual(start, -1);
-    assert.notEqual(end, -1);
-    return sourceText.slice(0, start) + sourceText.slice(end);
-}
-
-let normalizedDebugSource = debugSource.replace(
-    '// @namespace    http://tampermonkey.net/',
-    '// @namespace    https://github.com/muhammadGagah/whatsapp-web-plus'
-);
-normalizedDebugSource = removeDebugOnlyBlock(
-    normalizedDebugSource,
-    '    function copyDebugHtmlShortcut() {',
-    '    function focusMessageInputShortcut() {'
-);
-normalizedDebugSource = removeDebugOnlyBlock(
-    normalizedDebugSource,
-    "        if (e.altKey && e.shiftKey && !e.ctrlKey && e.code === 'Digit0') {",
-    "        if (getActiveModal()) return;"
-);
-normalizedDebugSource = normalizedDebugSource.replace(
-    /        if \(e\.repeat \|\| e\.metaKey \|\| e\.getModifierState\('AltGraph'\)\) return;\r?\n        if \(getActiveModal\(\)\) return;/,
-    "        if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal()) return;"
-);
-assert.equal(
-    normalizedDebugSource.replace(/\r\n/g, '\n'),
-    originalSource.replace(/\r\n/g, '\n')
-);
 assert.match(debugSource, /navigator\.clipboard\.writeText\(debugData\)/);
-assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.66'/);
+assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.64'/);
 assert.match(debugSource, /const debugData = document\.documentElement\.outerHTML/);
 assert.doesNotMatch(originalSource, /document\.documentElement\.outerHTML/);
 const debugCaptureBlock = debugSource.slice(

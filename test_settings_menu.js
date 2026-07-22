@@ -148,6 +148,8 @@ const context = {
     HTMLElement: Element,
     setTimeout(callback, delay = 0) { scheduledTimers.push({ callback, delay }); return scheduledTimers.length; },
     clearTimeout() {},
+    setInterval() { return 1; },
+    clearInterval() {},
     console
 };
 vm.runInNewContext(output, context);
@@ -266,6 +268,13 @@ keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement.dataset.action, 'automatic-reading');
 keydown(keyboardEvent({ key: ' ' }));
 assert.equal(storedValues.get('wa-plus-automatic-reading'), 'true');
+assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
+assert.equal(rootMenu.hidden, false);
+
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement.dataset.action, 'chat-activity');
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-chat-activity-monitor'), 'true');
 assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
 assert.equal(rootMenu.hidden, false);
 

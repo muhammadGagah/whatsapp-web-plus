@@ -1,20 +1,32 @@
 import {
+  ALT_T_DOUBLE_PRESS_MS,
+  CHAT_GENERIC_TYPING_RE,
+  CHAT_TYPING_RE,
+  MESSAGE_DELIVERY_STATUS_RANK,
+  MESSAGE_DELIVERY_STATUS_RE,
+  MESSAGE_MEDIA_CONTENT_SELECTOR,
+  MESSAGE_TEXT_CONTENT_SELECTOR,
+  MESSAGE_CONTEXT_INSTRUCTION_RE,
   SELECTORS,
   SHORTCUT_RENDER_RETRIES,
+  STORAGE_KEYS,
   UNREAD_DIVIDER_RE
 } from './config.js';
-import { hasActiveState, togglePrivacyMode } from './privacy.js';
+import { cleanString, hasActiveState, hasDirectMetaAISender, isPrivacyModeEnabled, togglePrivacyMode } from './privacy.js';
 import {
   announce,
-  announceAutomaticMessage,
+  announceMessages,
   applyChatRowNativeMask,
   clearRememberedChatRow,
   clearRememberedMessageRow,
+  clearMessageLog,
+  clearStatusRegion,
   focusChatRow,
   focusItem,
   getActiveModal,
   getBestInnerFocusElement,
   getChatListRows,
+  getChatRowTitle,
   getCurrentChatTitle,
   getHeaderInfoButton,
   getMessageRows,
@@ -22,6 +34,8 @@ import {
   getPreferredChatRow,
   getRememberedFocus,
   getRoleFixRoot,
+  getSelectedChatRow,
+  getUserAnnouncementUntil,
   isChatMainActive,
   isNearChatListTop,
   scheduleRoleFix
@@ -30,42 +44,250 @@ import {
   toggleCleanUiMode,
   toggleOriginalDarkMode
 } from './appearance.js';
-import { isAutomaticReadingEnabled, t } from './settings-state.js';
-import { isSettingsMenuOpen } from './settings-menu.js';
+import {
+  isAutomaticReadingEnabled,
+  readSetting,
+  setAutomaticReading,
+  t,
+  writeSetting
+} from './settings-state.js';
 
 let lastStatusFull = '';
+let lastTypingActivity = '';
 let statusInterval = null;
+let lastTPressTime = 0;
 let unreadTarget = null;
-const announcedMessages = new WeakSet();
+let isStatusTracking = readSetting(STORAGE_KEYS.chatActivity, 'false') === 'true';
+let chatPulseChatTitle = '';
+let chatPulseTailId = '';
+let chatPulseSeenIds = new Set();
+let chatPulseStatuses = new Map();
+let chatPulsePendingIds = new Set();
+let chatPulseSyncPending = false;
+let passiveAnnouncementTimer = null;
+let passiveAnnouncements = [];
 
-function isOutgoingMessage(message) {
-  const row = message.closest?.('div[role="row"]') || message;
-  if (row.querySelector?.('[data-testid="msg-out"]')) return true;
-  const idCarrier = message.closest?.('[data-id]') || row.querySelector?.('[data-id]');
-  return /(?:^|_)true(?:_|$)/.test(idCarrier?.getAttribute('data-id') || '');
+export function getChatPulseStatus(message) {
+  if (!message || !message.querySelector) return '';
+  const statusEl = message.querySelector('[data-testid="msg-meta"] [aria-label]');
+  const status = cleanString(statusEl?.getAttribute('aria-label') || '', false);
+  return MESSAGE_DELIVERY_STATUS_RE.test(status) ? status : '';
 }
 
-export function maybeReadMessage(message) {
-  if (!isAutomaticReadingEnabled() || !message?.isConnected || announcedMessages.has(message)) return false;
-  if (!message.matches?.('.focusable-list-item[aria-label]')) return false;
-  if (!message.closest(SELECTORS.conversationMessages) || isOutgoingMessage(message)) return false;
+export function getChatPulseSummary(message) {
+  if (!message || !message.querySelector) return '';
+  const isMetaMessage = hasDirectMetaAISender(message);
+  const body = isMetaMessage
+    ? message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text')
+    : message.querySelector(MESSAGE_TEXT_CONTENT_SELECTOR);
+  const bodyText = cleanString(body?.textContent || '', false);
+  const mediaContent = message.querySelector(MESSAGE_MEDIA_CONTENT_SELECTOR);
+  const metadata = message.querySelector('[data-testid="msg-meta"]');
+  if (isMetaMessage ? (!bodyText || !metadata) : (!bodyText && !mediaContent)) return '';
 
-  const label = (message.getAttribute('aria-label') || '').trim();
-  if (!label) return false;
-  announcedMessages.add(message);
-  announceAutomaticMessage(label);
+  const nativeLabel = cleanString(message.getAttribute('aria-label') || '', false);
+  if (!isMetaMessage && nativeLabel) return nativeLabel.replace(MESSAGE_CONTEXT_INSTRUCTION_RE, '').trim();
+
+  const parts = [];
+  const sender = message.querySelector('span[aria-label$=":"]');
+  [sender?.getAttribute('aria-label'), bodyText, metadata?.textContent, getChatPulseStatus(message)]
+    .forEach(part => {
+      const value = cleanString(part || '', false);
+      if (value && !parts.includes(value)) parts.push(value);
+    });
+  return parts.join(' ');
+}
+
+export function getChatPulseEntries() {
+  const container = document.querySelector(SELECTORS.conversationMessages);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('[data-testid^="conv-msg-"][data-id]')).map(wrapper => {
+    const message = wrapper.matches?.('.focusable-list-item')
+      ? wrapper
+      : wrapper.querySelector('.focusable-list-item');
+    return message && {
+      id: wrapper.getAttribute('data-id'),
+      summary: getChatPulseSummary(message),
+      status: getChatPulseStatus(message)
+    };
+  }).filter(entry => entry && entry.id);
+}
+
+export function setChatPulseBaseline(chatTitle, entries) {
+  chatPulseChatTitle = chatTitle;
+  chatPulseTailId = entries.length ? entries[entries.length - 1].id : '';
+  chatPulseSeenIds = new Set(entries.map(entry => entry.id));
+  chatPulseStatuses = new Map(entries.map(entry => [entry.id, entry.status]));
+  chatPulsePendingIds.clear();
+}
+
+export function captureChatPulseBaseline() {
+  setChatPulseBaseline(getCurrentChatTitle(), getChatPulseEntries());
+}
+
+function schedulePassiveAnnouncements() {
+  if (passiveAnnouncementTimer !== null || !passiveAnnouncements.length) return;
+  const delay = Math.max(25, getUserAnnouncementUntil() - Date.now() + 25);
+  passiveAnnouncementTimer = setTimeout(() => {
+    passiveAnnouncementTimer = null;
+    if (Date.now() < getUserAnnouncementUntil()) {
+      schedulePassiveAnnouncements();
+      return;
+    }
+    const ready = isPrivacyModeEnabled() ? [] : passiveAnnouncements.filter(entry =>
+      (entry.source === 'pulse' && isAutomaticReadingEnabled()) ||
+      (entry.source === 'activity' && isStatusTracking));
+    passiveAnnouncements = [];
+    ready.sort((a, b) => (a.source === 'pulse' ? 0 : 1) - (b.source === 'pulse' ? 0 : 1));
+    const messageUpdates = ready.filter(entry =>
+      entry.source === 'pulse' && !/^(?:Message|\d+ messages) status:/i.test(entry.text));
+    const briefUpdates = ready.filter(entry => !messageUpdates.includes(entry));
+    if (briefUpdates.length) announce(briefUpdates.map(entry => entry.text).join('. '));
+    if (messageUpdates.length) announceMessages(messageUpdates.map(entry => entry.text));
+  }, delay);
+}
+
+export function queuePassiveAnnouncements(source, announcements) {
+  if (isPrivacyModeEnabled() || !announcements.length) return;
+  if (source === 'activity') {
+    passiveAnnouncements = passiveAnnouncements.filter(entry => entry.source !== 'activity');
+  }
+  passiveAnnouncements.push(...announcements.map(text => ({ source, text })));
+  schedulePassiveAnnouncements();
+}
+
+export function discardPassiveAnnouncements(source) {
+  passiveAnnouncements = passiveAnnouncements.filter(entry => entry.source !== source);
+  if (passiveAnnouncementTimer !== null) clearTimeout(passiveAnnouncementTimer);
+  passiveAnnouncementTimer = null;
+  schedulePassiveAnnouncements();
+}
+
+export function discardAllPassiveAnnouncements() {
+  passiveAnnouncements = [];
+  if (passiveAnnouncementTimer !== null) clearTimeout(passiveAnnouncementTimer);
+  passiveAnnouncementTimer = null;
+}
+
+export function getPassiveAnnouncements() {
+  return passiveAnnouncements.map(entry => ({ ...entry }));
+}
+
+export function reconcileChatPulseEntries(chatTitle, entries) {
+  if (!chatTitle || chatTitle !== chatPulseChatTitle) {
+    setChatPulseBaseline(chatTitle, entries);
+    return [];
+  }
+
+  const tailIndex = chatPulseTailId
+    ? entries.findIndex(entry => entry.id === chatPulseTailId)
+    : -1;
+  const canDetectAppend = (!chatPulseTailId && chatPulseSeenIds.size === 0) || tailIndex >= 0;
+  const appendedCandidates = canDetectAppend
+    ? entries.slice(tailIndex + 1).filter(entry => !chatPulseSeenIds.has(entry.id))
+    : [];
+  const pendingCandidates = entries.filter(entry =>
+    chatPulsePendingIds.has(entry.id) && !chatPulseSeenIds.has(entry.id));
+  const candidates = [...new Map(
+    [...pendingCandidates, ...appendedCandidates].map(entry => [entry.id, entry])
+  ).values()];
+  const newEntries = candidates.filter(entry => !!entry.summary);
+  candidates.forEach(entry => {
+    if (entry.summary) chatPulsePendingIds.delete(entry.id);
+    else chatPulsePendingIds.add(entry.id);
+  });
+  const newIds = new Set(newEntries.map(entry => entry.id));
+  const announcements = newEntries.map(entry => entry.summary).filter(Boolean);
+  const receiptCounts = new Map();
+
+  entries.forEach(entry => {
+    if (chatPulsePendingIds.has(entry.id)) return;
+    const hadStatus = chatPulseStatuses.has(entry.id);
+    const previousStatus = chatPulseStatuses.get(entry.id) || '';
+    const previousRank = MESSAGE_DELIVERY_STATUS_RANK[previousStatus] || 0;
+    const nextRank = MESSAGE_DELIVERY_STATUS_RANK[entry.status] || 0;
+    if (!newIds.has(entry.id) && hadStatus && nextRank > previousRank) {
+      receiptCounts.set(entry.status, (receiptCounts.get(entry.status) || 0) + 1);
+    }
+    chatPulseSeenIds.add(entry.id);
+    if (!hadStatus || nextRank >= previousRank) chatPulseStatuses.set(entry.id, entry.status);
+  });
+
+  if (appendedCandidates.length) chatPulseTailId = appendedCandidates[appendedCandidates.length - 1].id;
+
+  receiptCounts.forEach((count, status) => {
+    announcements.push(count === 1
+      ? `Message status: ${status}`
+      : `${count} messages status: ${status}`);
+  });
+  return announcements;
+}
+
+export function syncChatPulse() {
+  if (!isAutomaticReadingEnabled()) return;
+  if (isPrivacyModeEnabled()) {
+    setChatPulseBaseline(getCurrentChatTitle(), getChatPulseEntries());
+    discardPassiveAnnouncements('pulse');
+    return;
+  }
+  queuePassiveAnnouncements('pulse', reconcileChatPulseEntries(
+    getCurrentChatTitle(),
+    getChatPulseEntries()
+  ));
+}
+
+export function scheduleChatPulseSync() {
+  if (!isAutomaticReadingEnabled() || chatPulseSyncPending) return;
+  chatPulseSyncPending = true;
+  const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 50));
+  schedule(() => {
+    chatPulseSyncPending = false;
+    syncChatPulse();
+  });
+}
+
+export function toggleChatPulse(announceChange = true) {
+  const enabled = !isAutomaticReadingEnabled();
+  if (!setAutomaticReading(enabled)) {
+    if (announceChange) announce(t('saveError'));
+    return false;
+  }
+  if (enabled) captureChatPulseBaseline();
+  else {
+    chatPulseChatTitle = '';
+    chatPulseTailId = '';
+    chatPulseSeenIds.clear();
+    chatPulseStatuses.clear();
+    chatPulsePendingIds.clear();
+    discardPassiveAnnouncements('pulse');
+  }
+  if (announceChange) announce(t(enabled ? 'automaticReadingOn' : 'automaticReadingOff'));
   return true;
 }
 
-export function maybeReadAddedMessages(node) {
-  if (!isAutomaticReadingEnabled() || node?.nodeType !== 1) return;
+function refreshPassiveBaselines() {
+  if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
+  lastTypingActivity = getSelectedChatTypingActivity();
+  const infoBtn = getHeaderInfoButton();
+  lastStatusFull = infoBtn ? (infoBtn.innerText || infoBtn.textContent || '') : '';
+}
+
+export function togglePrivacyWithQueueReset(announceChange = true) {
+  if (!togglePrivacyMode(announce, false)) {
+    if (announceChange) announce(t('saveError'));
+    return false;
+  }
+  const enabled = isPrivacyModeEnabled();
+  discardAllPassiveAnnouncements();
+  clearMessageLog();
+  clearStatusRegion();
+  refreshPassiveBaselines();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   schedule(() => {
-    const messages = node.matches?.('.focusable-list-item[aria-label]')
-      ? [node]
-      : Array.from(node.querySelectorAll?.('.focusable-list-item[aria-label]') || []);
-    messages.forEach(maybeReadMessage);
+    if (isPrivacyModeEnabled() === enabled) refreshPassiveBaselines();
   });
+  if (announceChange) announce(t(enabled ? 'privacyOn' : 'privacyOff'));
+  return true;
 }
 
 export function captureNextRowId(dividerEl) {
@@ -187,14 +409,56 @@ function truncateList(text) {
   return text;
 }
 
+export function stopStatusTracking() {
+  if (statusInterval) clearInterval(statusInterval);
+  statusInterval = null;
+  lastStatusFull = '';
+  lastTypingActivity = '';
+}
+
+export function getSelectedChatTypingActivity(rows = getChatListRows()) {
+  const row = getSelectedChatRow(rows);
+  const secondary = row?.querySelector('[data-testid="cell-frame-secondary"]');
+  const indicator = secondary?.querySelector('[title], [aria-label]');
+  const values = [indicator?.getAttribute('title'), indicator?.getAttribute('aria-label'), indicator?.textContent];
+  for (const value of values) {
+    const text = cleanString(value || '', false).replace(/^Maybe\s+/i, '').replace(/^~\s*/, '');
+    if (!CHAT_TYPING_RE.test(text)) continue;
+    if (!CHAT_GENERIC_TYPING_RE.test(text)) return text;
+    const title = getChatRowTitle(row);
+    return title ? `${title} is ${text}` : text;
+  }
+  return '';
+}
+
+export function syncSelectedChatTypingActivity(rows = getChatListRows()) {
+  const row = getSelectedChatRow(rows);
+  const typingActivity = getSelectedChatTypingActivity(rows);
+  const rowFocused = row && row.contains(document.activeElement);
+  if (!typingActivity || rowFocused) {
+    if (lastTypingActivity || rowFocused) discardPassiveAnnouncements('activity');
+  } else if (typingActivity !== lastTypingActivity) {
+    queuePassiveAnnouncements('activity', [typingActivity]);
+  }
+  lastTypingActivity = typingActivity;
+  return typingActivity;
+}
+
 export function startStatusTracking() {
   if (statusInterval) clearInterval(statusInterval);
 
-  statusInterval = setInterval(() => {
-    const infoBtn = getHeaderInfoButton();
-    if (!infoBtn) return;
+  const infoBtn = getHeaderInfoButton();
+  lastStatusFull = infoBtn ? (infoBtn.innerText || infoBtn.textContent || '') : '';
+  lastTypingActivity = getSelectedChatTypingActivity();
 
-    const fullText = infoBtn.innerText || '';
+  statusInterval = setInterval(() => {
+    if (!isStatusTracking) return;
+    const typingActivity = syncSelectedChatTypingActivity();
+
+    const currentInfoBtn = getHeaderInfoButton();
+    if (!currentInfoBtn) return;
+
+    const fullText = currentInfoBtn.innerText || '';
     if (!fullText) return;
 
     if (fullText !== lastStatusFull) {
@@ -205,15 +469,37 @@ export function startStatusTracking() {
         const status = lines.slice(1).join(' ').trim();
         const prevStatus = prevLines.slice(1).join(' ').trim();
 
-        if (status && status !== prevStatus) {
+        if (!typingActivity && status && status !== prevStatus) {
           const focused = document.activeElement;
-          const isHeaderFocused = focused === infoBtn || infoBtn.contains(focused);
-          if (!isParticipantList(status) && !isHeaderFocused) announce(status, true);
+          const isHeaderFocused = focused === currentInfoBtn || currentInfoBtn.contains(focused);
+          if (!isParticipantList(status) && !isHeaderFocused) {
+            queuePassiveAnnouncements('activity', [status]);
+          }
         }
       }
       lastStatusFull = fullText;
     }
   }, 1500);
+}
+
+export function toggleStatusTracking(announceChange = true) {
+  const enabled = !isStatusTracking;
+  if (!writeSetting(STORAGE_KEYS.chatActivity, String(enabled))) {
+    if (announceChange) announce(t('saveError'));
+    return false;
+  }
+  isStatusTracking = enabled;
+  if (enabled) startStatusTracking();
+  else {
+    stopStatusTracking();
+    discardPassiveAnnouncements('activity');
+  }
+  if (announceChange) announce(t(enabled ? 'chatActivityOn' : 'chatActivityOff'));
+  return true;
+}
+
+export function isChatActivityEnabled() {
+  return isStatusTracking;
 }
 
 export function focusChatListShortcut(origin = document.activeElement) {
@@ -370,14 +656,32 @@ export function closeAudioPlayerShortcut() {
 }
 
 function focusMessageInputShortcut() {
+  const input = document.querySelector(SELECTORS.messageInput);
+  if (input && (document.activeElement === input || input.contains(document.activeElement))) {
+    const main = document.querySelector(SELECTORS.main);
+    const messageContainer = main && (main.querySelector(SELECTORS.conversationMessages) || main);
+    const rememberedState = getRememberedFocus();
+    const remembered = rememberedState.lastFocusedMessageNode?.isConnected && main?.contains(rememberedState.lastFocusedMessageNode)
+      ? rememberedState.lastFocusedMessageNode
+      : findMessageById(messageContainer, rememberedState.lastFocusedMessageId);
+    const row = remembered && (remembered.closest('div[role="row"]') || remembered);
+    if (focusItem(getBestInnerFocusElement(row))) {
+      row.scrollIntoView({ block: 'nearest' });
+    } else {
+      focusLastMessageShortcut();
+    }
+    return;
+  }
+
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const tryFocus = attempt => {
-    const input = document.querySelector(SELECTORS.messageInput);
-    if (input && focusItem(input)) return;
+    if (getActiveModal()) return;
+    const currentInput = document.querySelector(SELECTORS.messageInput);
+    if (currentInput && focusItem(currentInput)) return;
     if (attempt < SHORTCUT_RENDER_RETRIES && isChatMainActive()) {
       schedule(() => tryFocus(attempt + 1));
     } else {
-      announce(t(input ? 'messageBoxNotReady' : 'messageBoxNotOpen'));
+      announce(t(currentInput ? 'messageBoxNotReady' : 'messageBoxNotOpen'));
     }
   };
   tryFocus(1);
@@ -392,6 +696,17 @@ function announceChatHeaderShortcut() {
 
   const headerBtn = getHeaderInfoButton();
   announce(headerBtn ? truncateList(headerBtn.innerText || headerBtn.textContent || t('noTitle')) : t('titleNotFound'));
+}
+
+function handleAltTShortcut() {
+  const now = Date.now();
+  if (lastTPressTime && now - lastTPressTime < ALT_T_DOUBLE_PRESS_MS) {
+    lastTPressTime = 0;
+    toggleStatusTracking();
+    return;
+  }
+  lastTPressTime = now;
+  announceChatHeaderShortcut();
 }
 
 function handleNavShortcut(e) {
@@ -413,7 +728,14 @@ function handleNavShortcut(e) {
 
   if (e.code === 'KeyN') {
     e.preventDefault();
-    togglePrivacyMode(announce);
+    togglePrivacyWithQueueReset();
+    return true;
+  }
+
+  if (e.code === 'KeyL') {
+    e.preventDefault();
+    lastTPressTime = 0;
+    toggleChatPulse();
     return true;
   }
 
@@ -446,7 +768,7 @@ function handleAltShortcut(e) {
     Digit2: focusLastMessageShortcut,
     Digit3: jumpToUnreadShortcut,
     Digit0: closeAudioPlayerShortcut,
-    KeyT: announceChatHeaderShortcut
+    KeyT: handleAltTShortcut
   };
 
   const handler = shortcuts[e.code];
@@ -458,6 +780,10 @@ function handleAltShortcut(e) {
 }
 
 export function handleShortcuts(e) {
-  if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal() || isSettingsMenuOpen()) return;
+  const isAltT = e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && e.code === 'KeyT';
+  const isModifierKey = /^(?:Alt|Control|Shift|Meta)(?:Left|Right)$/.test(e.code);
+  if (!isAltT && !isModifierKey) lastTPressTime = 0;
+  const settingsMenu = document.getElementById('wa-plus-settings-menu');
+  if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal() || (settingsMenu && !settingsMenu.hidden)) return;
   if (handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
 }

@@ -1,5 +1,6 @@
 export const SCRIPT_VERSION = __SCRIPT_VERSION__;
 export const SHORTCUT_RENDER_RETRIES = 12;
+export const ALT_T_DOUBLE_PRESS_MS = 300;
 export const CHAT_LIST_TOP_FALLBACK_MAX_Y = 1000;
 export const CLEAN_UI_HIDDEN_ATTRIBUTE = 'data-wa-plus-clean-ui-hidden';
 
@@ -9,7 +10,8 @@ export const STORAGE_KEYS = Object.freeze({
   originalDark: 'wa-plus-original-dark',
   language: 'wa-plus-language',
   reduceAnnouncements: 'wa-plus-reduce-announcements',
-  automaticReading: 'wa-plus-automatic-reading'
+  automaticReading: 'wa-plus-automatic-reading',
+  chatActivity: 'wa-plus-chat-activity-monitor'
 });
 
 export const SELECTORS = Object.freeze({
@@ -39,6 +41,7 @@ export const OWNERS = Object.freeze({
   chatStructure: 'chat-structure',
   messageGrid: 'message-grid',
   messageCell: 'message-cell',
+  metaAIMessageName: 'meta-ai-message-name',
   cleanUiHidden: 'clean-ui-hidden'
 });
 
@@ -66,6 +69,26 @@ export const CHAT_ROW_NATIVE_TEXT_SELECTOR = '[data-testid="cell-frame-label"], 
 export const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [role="grid"]';
 export const DESKTOP_APP_PROMO_TITLE_RE = /^Download WhatsApp for (?:Windows|Mac|macOS)$/i;
 export const DESKTOP_APP_PROMO_COPY_RE = /^Get extra features like voice and video calling, screen sharing and more\.?$/i;
+export const MESSAGE_CONTEXT_INSTRUCTION_RE = /\s*For more options,\s*press left or right arrow key to access context menu\.?\s*$/i;
+export const MESSAGE_DELIVERY_STATUS_RE = /^(?:Sent|Delivered|Read)$/i;
+export const CHAT_TYPING_RE = /\btyping(?:…|\.\.\.)?$/i;
+export const CHAT_GENERIC_TYPING_RE = /^typing(?:…|\.\.\.)?$/i;
+export const MESSAGE_DELIVERY_STATUS_RANK = Object.freeze({ Sent: 1, Delivered: 2, Read: 3 });
+export const MESSAGE_TEXT_CONTENT_SELECTOR = '[data-testid="msg-container"] [data-testid="selectable-text"]';
+export const MESSAGE_MEDIA_CONTENT_SELECTOR = [
+  '[data-testid="msg-container"] img[alt]',
+  '[data-testid="msg-container"] video',
+  '[data-testid="msg-container"] audio',
+  '[data-testid="msg-container"] a[href]',
+  '[data-testid="msg-container"] [data-testid*="audio"]',
+  '[data-testid="msg-container"] [data-testid*="document"]',
+  '[data-testid="msg-container"] [data-testid*="image"]',
+  '[data-testid="msg-container"] [data-testid*="video"]',
+  '[data-testid="msg-container"] [data-testid*="sticker"]',
+  '[data-testid="msg-container"] [data-testid*="poll"]',
+  '[data-testid="msg-container"] [data-testid*="location"]',
+  '[data-testid="msg-container"] [data-testid*="contact"]'
+].join(', ');
 export const UNKNOWN_CONTACT_RE = /^(Maybe|Mungkin|Talvez)\b[\s:~,-]*/i;
 export const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g;
 export const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)\+?\d{8,16}\b/gi;

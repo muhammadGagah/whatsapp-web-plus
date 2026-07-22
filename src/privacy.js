@@ -1,4 +1,5 @@
 import {
+  MESSAGE_CONTEXT_INSTRUCTION_RE,
   PHONE_RE,
   PHONE_URL_RE,
   SELECTORS,
@@ -118,7 +119,7 @@ function filterMessageIdentities(text, el) {
     .replace(/:\s*$/, '').trim();
   const metadataSender = (senderMatch && senderMatch[1]) || authorPhone;
   const bodyEl = message.querySelector('.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]');
-  const body = bodyEl && (bodyEl.textContent || '').trim();
+  const body = bodyEl && normalizeText(bodyEl.textContent || '');
   const bodyCandidates = body ? [...new Set([body, body.replace(/^@\s*/, '')].filter(Boolean))] : [];
   const bodyStart = bodyCandidates.reduce((found, candidate) => {
     if (found >= 0) return found;
@@ -147,7 +148,7 @@ function filterMessageIdentities(text, el) {
   const quotedSenderEl = message.querySelector('[data-testid="quoted-message"] [dir="auto"]');
   const quotedSender = quotedSenderEl && (quotedSenderEl.textContent || '').trim();
   const quotedBodyEl = message.querySelector('[data-testid="quoted-message"] [data-testid="selectable-text"]');
-  const quotedBody = quotedBodyEl && (quotedBodyEl.textContent || '').trim();
+  const quotedBody = quotedBodyEl && normalizeText(quotedBodyEl.textContent || '');
   const quotedBodyStart = quotedBody ? text.lastIndexOf(quotedBody) : text.length;
   const quotedSenderCandidates = [...new Set([
     quotedAuthor && quotedAuthorPhone && `${quotedAuthor} ${quotedAuthorPhone}`,
@@ -225,8 +226,21 @@ export function rememberPrivacyAttribute(el, name, raw, masked) {
   attributes.set(name, { raw, masked });
 }
 
+export function hasDirectMetaAISender(message) {
+  if (!message || !message.querySelector) return false;
+  const sender = message.querySelector('span[aria-label="Meta AI:"]');
+  return !!sender && !sender.closest('[data-testid="quoted-message"]');
+}
+
 export function prepareNamedAttribute(el, name, value) {
-  const raw = cleanString(value, false, el);
+  let raw = cleanString(value, false, el);
+  if (name === 'aria-label' &&
+    el.matches?.('.focusable-list-item') &&
+    el.closest?.(SELECTORS.conversationMessages) &&
+    !hasDirectMetaAISender(el) &&
+    el.querySelector?.('[data-testid="icon-down-context"][role="button"][aria-label]')) {
+    raw = raw.replace(MESSAGE_CONTEXT_INSTRUCTION_RE, '').trim();
+  }
   const context = getPrivacyContext(el);
   if (!isPrivacyMode || !context) return raw;
 

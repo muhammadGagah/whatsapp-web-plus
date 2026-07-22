@@ -52,12 +52,12 @@ const main = {
         return selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
     }
 };
-assert.match(source, /const SCRIPT_VERSION = '2\.6\.66'/);
-assert.match(source, /applyOwnedMessageRole\(viewport, 'grid'/);
-assert.match(source, /applyOwnedMessageRole\(message, 'gridcell'/);
-assert.match(source, /if \(!applyOwnedMessageRole\(viewport, 'grid'/);
+assert.match(source, /^\/\/ @version\s+2\.6\.66$/m);
+assert.match(source, /applyOwnedMessageRole\(viewport, ["']grid["']/);
+assert.match(source, /applyOwnedMessageRole\(message, ["']gridcell["']/);
+assert.match(source, /if \(!applyOwnedMessageRole\(viewport, ["']grid["']/);
 assert.match(source, /releaseMessageRoles\(OWNERS\.messageCell/);
-assert.match(source, /releaseOwnedAttribute\(el, 'role', owner\)/);
+assert.match(source, /releaseOwnedAttribute\(el, ["']role["'], owner\)/);
 assert.match(source, /function restorePrivacyAttributes\(\)/);
 assert.doesNotMatch(source, /fixGenericSectionBug|MARKERS|unreadMessageId/);
 assert.doesNotMatch(source, /HTMLElement\.prototype\.focus\s*=/);

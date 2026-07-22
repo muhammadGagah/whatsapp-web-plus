@@ -158,6 +158,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | --- | --- |
 | `Alt + Shift + N` | Turn Privacy Mode on or off |
 | `Alt + Shift + L` | Turn Automatic reading of messages on or off |
+| `Alt + Shift + S` | Open WhatsApp Web Plus settings |
 | `Alt + Shift + 8` | Turn Clean UI on or off |
 | `Alt + Shift + 9` | Turn Original Dark Mode on or off |
 
@@ -165,9 +166,17 @@ Automatic reading of messages and Chat activity monitor settings are remembered 
 
 Privacy Mode, Clean UI, and Original Dark Mode remember your choice after you refresh WhatsApp Web.
 
+## Settings menu
+
+Press `Alt + Shift + S` to open the accessible WhatsApp Web Plus settings menu. It includes language, Privacy Mode, announcement reduction, automatic reading, Chat activity monitor, Clean UI, and Original Dark Mode.
+
+Use the arrow keys to move, `Right Arrow` to open the language submenu, `Left Arrow` to return, `Enter` or `Space` to change a setting, and `Escape` to close the menu.
+
+Right-click, `Shift + F10`, and the keyboard's `Application` key remain available to WhatsApp and the browser; WhatsApp Web Plus never replaces their context menus.
+
 ## Open a message context menu with NVDA
 
-WhatsApp Web Plus does not change the context-menu keys. Use NVDA's mouse commands instead.
+First try `Shift + F10` or the `Application` key on the focused message. If WhatsApp does not open the message menu from keyboard focus, use NVDA's mouse commands below.
 
 The following commands use NVDA's **Laptop** keyboard layout. The `NVDA` key means your NVDA modifier key, usually `Insert` or `Caps Lock`.
 
@@ -192,11 +201,10 @@ If something does not work, [report a WhatsApp Web Plus problem on GitHub](https
 
 ## For contributors
 
-Run these checks after changing the script:
+Edit the modules in `src/`; `whatsapp_web_plus.user.js` is generated and must not be edited directly. Install dependencies once with `npm install`, then build and run all checks with:
 
 ```text
-node test_privacy_filter.js
-node test_accessibility_runtime.js
+npm test
 ```
 
 ## License

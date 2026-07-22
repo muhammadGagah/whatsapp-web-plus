@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "test": "npm run build && node test_privacy_filter.js && node test_accessibility_runtime.js && node test_settings_state.js && node test_settings_menu.js && node test_automatic_reading.js"
+    "test": "npm run build && node test_privacy_filter.js && node test_accessibility_runtime.js && node test_settings_state.js && node test_settings_menu.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"

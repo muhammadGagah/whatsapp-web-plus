@@ -1,5 +1,5 @@
 import { SELECTORS } from './config.js';
-import { isPrivacyModeEnabled, togglePrivacyMode } from './privacy.js';
+import { isPrivacyModeEnabled } from './privacy.js';
 import {
   isCleanUiEnabled,
   isOriginalDarkEnabled,
@@ -13,10 +13,15 @@ import {
   isAutomaticReadingEnabled,
   LANGUAGES,
   setAnnouncementReduction,
-  setAutomaticReading,
   setLanguage,
   t
 } from './settings-state.js';
+import {
+  isChatActivityEnabled,
+  toggleChatPulse,
+  togglePrivacyWithQueueReset,
+  toggleStatusTracking
+} from './navigation.js';
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 let rootMenu = null;
@@ -145,6 +150,7 @@ function createMenu() {
     ['privacyMode', 'privacy'],
     ['reduceAnnouncements', 'reduce-announcements'],
     ['automaticReading', 'automatic-reading'],
+    ['chatActivity', 'chat-activity'],
     ['cleanUi', 'clean-ui'],
     ['originalDark', 'original-dark']
   ].forEach(([labelKey, action]) => {
@@ -218,6 +224,7 @@ function updateMenu() {
     privacy: isPrivacyModeEnabled(),
     'reduce-announcements': isAnnouncementReductionEnabled(),
     'automatic-reading': isAutomaticReadingEnabled(),
+    'chat-activity': isChatActivityEnabled(),
     'clean-ui': isCleanUiEnabled(),
     'original-dark': isOriginalDarkEnabled()
   };
@@ -332,12 +339,14 @@ function activateItem(item, keepOpen) {
   if (action.startsWith('language-')) {
     saved = setLanguage(item.dataset.language);
   } else if (action === 'privacy') {
-    saved = togglePrivacyMode(announce, false);
+    saved = togglePrivacyWithQueueReset(false);
   } else if (action === 'reduce-announcements') {
     saved = setAnnouncementReduction(!isAnnouncementReductionEnabled());
     if (saved) refreshAnnouncementReduction();
   } else if (action === 'automatic-reading') {
-    saved = setAutomaticReading(!isAutomaticReadingEnabled());
+    saved = toggleChatPulse(false);
+  } else if (action === 'chat-activity') {
+    saved = toggleStatusTracking(false);
   } else if (action === 'clean-ui') {
     saved = toggleCleanUiMode(false);
   } else if (action === 'original-dark') {

@@ -11,6 +11,7 @@ import {
   _origSetAttribute,
   cleanString,
   hasActiveState,
+  hasDirectMetaAISender,
   isStatusTabActive,
   privacyAttributes
 } from './privacy.js';
@@ -29,8 +30,8 @@ let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
 let announcementTimer = null;
 let userAnnouncementUntil = 0;
-const automaticMessageQueue = [];
-let automaticMessagePending = false;
+let metaAIMessageNameId = 0;
+const MESSAGE_LOG_LIMIT = 50;
 
 export function getNextMessageRow(marker, messageContainer) {
   const viewport = marker.closest('[data-tab]') || messageContainer;
@@ -241,6 +242,34 @@ function getMessageGridViewport(container) {
   ) || null;
 }
 
+export function isMetaAIReply(message) {
+  return hasDirectMetaAISender(message) &&
+    !!message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text');
+}
+
+function getMetaAIMessageNameId(el) {
+  const existingId = el.getAttribute('id');
+  if (existingId) return existingId;
+  const id = `wa-plus-meta-ai-name-${++metaAIMessageNameId}`;
+  applyOwnedAttribute(el, 'id', id, OWNERS.metaAIMessageName);
+  return id;
+}
+
+export function applyMetaAIMessageName(message) {
+  if (!isMetaAIReply(message)) {
+    releaseOwnedWithin(message, OWNERS.metaAIMessageName);
+    return false;
+  }
+  const labelledElements = [
+    message.querySelector('span[aria-label="Meta AI:"]'),
+    message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text'),
+    message.querySelector('[data-testid="msg-meta"]')
+  ].filter(Boolean);
+  applyOwnedAttribute(message, 'aria-label', null, OWNERS.metaAIMessageName);
+  applyOwnedAttribute(message, 'aria-labelledby', labelledElements.map(getMetaAIMessageNameId).join(' '), OWNERS.metaAIMessageName);
+  return true;
+}
+
 export function applyOwnedMessageRole(el, role, owner) {
   let state = ownedAttributes.get(el)?.get('role');
   if (state && state.owner === owner && el.getAttribute('role') !== state.appliedValue) {
@@ -266,9 +295,28 @@ function applyMessageGridExperiment() {
   const container = main && main.querySelector(SELECTORS.conversationMessages);
   const viewport = getMessageGridViewport(container);
   const active = isAnnouncementReductionEnabled() && !!viewport && isChatMainActive(main);
+  const messages = active
+    ? Array.from(viewport.querySelectorAll('div[role="row"] .focusable-list-item'))
+    : [];
+  const metaAIReplies = new Set(messages.filter(isMetaAIReply));
+
+  const staleMetaAIMessageNames = new Set();
+  for (const el of [...ownedElements]) {
+    const attributes = ownedAttributes.get(el);
+    if (![...(attributes || new Map()).values()].some(state => state.owner === OWNERS.metaAIMessageName)) continue;
+    if (!el.isConnected) {
+      ownedAttributes.delete(el);
+      ownedElements.delete(el);
+      continue;
+    }
+    const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
+    if (!message || !metaAIReplies.has(message)) staleMetaAIMessageNames.add(message || el);
+  }
+  staleMetaAIMessageNames.forEach(message => releaseOwnedWithin(message, OWNERS.metaAIMessageName));
 
   releaseMessageRoles(OWNERS.messageGrid, el => active && el === viewport);
-  releaseMessageRoles(OWNERS.messageCell, el => active && viewport.contains(el) && el.matches('.focusable-list-item[aria-label]'));
+  releaseMessageRoles(OWNERS.messageCell, el => active && viewport.contains(el) &&
+    (metaAIReplies.has(el) || el.matches('.focusable-list-item[aria-label]')));
 
   if (!active) return;
 
@@ -276,7 +324,9 @@ function applyMessageGridExperiment() {
     releaseMessageRoles(OWNERS.messageCell, () => false);
     return;
   }
-  viewport.querySelectorAll('div[role="row"] .focusable-list-item[aria-label]').forEach(message => {
+  messages.forEach(message => {
+    if (!message.hasAttribute('aria-label') && !metaAIReplies.has(message)) return;
+    if (metaAIReplies.has(message)) applyMetaAIMessageName(message);
     applyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell);
   });
 }
@@ -528,55 +578,58 @@ export function ensureLiveRegion() {
   }
   liveRegion.lang = getLanguage();
   liveRegion.dir = 'ltr';
+  ensureMessageLog();
   return liveRegion;
 }
 
-function ensureAutomaticMessageLog() {
-  let log = document.getElementById('wa-plus-message-log');
-  if (!log) {
-    log = document.createElement('div');
-    log.id = 'wa-plus-message-log';
-    _origSetAttribute.call(log, 'role', 'log');
-    _origSetAttribute.call(log, 'aria-live', 'polite');
-    _origSetAttribute.call(log, 'aria-relevant', 'additions');
-    _origSetAttribute.call(log, 'aria-atomic', 'false');
-    log.style.position = 'absolute';
-    log.style.width = '1px';
-    log.style.height = '1px';
-    log.style.overflow = 'hidden';
-    log.style.clipPath = 'inset(50%)';
-    document.body.appendChild(log);
+export function ensureMessageLog() {
+  let messageLog = document.getElementById('wa-plus-message-log');
+  if (!messageLog) {
+    messageLog = document.createElement('div');
+    messageLog.id = 'wa-plus-message-log';
+    _origSetAttribute.call(messageLog, 'role', 'log');
+    _origSetAttribute.call(messageLog, 'aria-live', 'polite');
+    _origSetAttribute.call(messageLog, 'aria-relevant', 'additions');
+    _origSetAttribute.call(messageLog, 'aria-atomic', 'false');
+    messageLog.style.position = 'absolute';
+    messageLog.style.left = '-9999px';
+    document.body.appendChild(messageLog);
   }
-  log.lang = getLanguage();
-  log.dir = 'ltr';
-  return log;
+  messageLog.lang = getLanguage();
+  messageLog.dir = 'ltr';
+  return messageLog;
 }
 
-function flushAutomaticMessageQueue() {
-  if (!automaticMessageQueue.length) {
-    automaticMessagePending = false;
-    return;
+export function announceMessages(messages) {
+  const values = messages.filter(Boolean);
+  if (!values.length) return;
+  const messageLog = ensureMessageLog();
+  values.forEach(text => {
+    const entry = document.createElement('div');
+    entry.textContent = text;
+    messageLog.appendChild(entry);
+  });
+  while (messageLog.childElementCount > MESSAGE_LOG_LIMIT) {
+    messageLog.removeChild(messageLog.firstElementChild);
   }
-  const log = ensureAutomaticMessageLog();
-  const message = document.createElement('div');
-  message.textContent = automaticMessageQueue.shift();
-  log.appendChild(message);
-  while (log.childElementCount > 20) log.firstElementChild.remove();
-  setTimeout(flushAutomaticMessageQueue, 100);
 }
 
-export function announceAutomaticMessage(text) {
-  if (!text) return;
-  automaticMessageQueue.push(text);
-  if (automaticMessagePending) return;
-  automaticMessagePending = true;
-  setTimeout(flushAutomaticMessageQueue, 0);
+export function clearMessageLog() {
+  const messageLog = document.getElementById('wa-plus-message-log');
+  if (messageLog) messageLog.textContent = '';
 }
 
-export function announce(text, passive = false) {
+export function clearStatusRegion() {
+  if (announcementTimer !== null) clearTimeout(announcementTimer);
+  announcementTimer = null;
+  userAnnouncementUntil = 0;
+  const liveRegion = document.getElementById('wa-plus-live-region');
+  if (liveRegion) liveRegion.textContent = '';
+}
+
+export function announce(text) {
   if (!text) return;
-  if (passive && Date.now() < userAnnouncementUntil) return;
-  if (!passive) userAnnouncementUntil = Date.now() + 3000;
+  userAnnouncementUntil = Date.now() + 3000;
   const liveRegion = ensureLiveRegion();
   clearTimeout(announcementTimer);
   liveRegion.textContent = '';
@@ -584,6 +637,10 @@ export function announce(text, passive = false) {
     liveRegion.textContent = text;
     announcementTimer = setTimeout(() => { liveRegion.textContent = ''; }, 3000);
   }, 0);
+}
+
+export function getUserAnnouncementUntil() {
+  return userAnnouncementUntil;
 }
 
 function hasRenderedBox(el) {

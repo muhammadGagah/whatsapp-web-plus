@@ -9,6 +9,7 @@ import {
 import {
   applyOwnedAttribute,
   isOwnedMutation,
+  ownedAttributes,
   releaseOwnedAttribute
 } from './owned-attributes.js';
 import {
@@ -24,6 +25,7 @@ import {
   getChatRowTranslateY,
   getPreferredChatRow,
   getRoleFixRoot,
+  isMetaAIReply,
   normalizeChatListTabStops,
   rememberFocusedRow,
   scheduleRoleFix
@@ -36,11 +38,12 @@ import {
   handleShortcuts,
   isShortUnreadText,
   jumpToUnreadShortcut,
-  maybeReadAddedMessages,
-  maybeReadMessage,
   maybeCaptureUnreadDivider,
   reconcileUnreadTarget,
   recoverFocusAfterRemoval,
+  captureChatPulseBaseline,
+  isChatActivityEnabled,
+  scheduleChatPulseSync,
   startStatusTracking
 } from './navigation.js';
 import {
@@ -52,6 +55,7 @@ import {
   updateStyleSheets
 } from './appearance.js';
 import { startSettingsMenu } from './settings-menu.js';
+import { isAutomaticReadingEnabled } from './settings-state.js';
 
 function onDomReady(fn) {
   if (document.readyState === 'loading') {
@@ -69,12 +73,19 @@ function recleanMessageAncestor(node) {
 function handleAttributeMutation(mutation) {
   const el = mutation.target;
   const attrName = mutation.attributeName;
+  const previousOwner = ownedAttributes.get(el)?.get(attrName)?.owner;
   if (isOwnedMutation(el, attrName)) return null;
 
   if (attrName === 'aria-label' || attrName === 'title') {
     cleanNamedAttribute(el, attrName);
-    if (attrName === 'aria-label') maybeReadMessage(el);
     return attrName === 'aria-label' ? getRoleFixRoot(el) : null;
+  }
+
+  if (attrName === 'aria-labelledby' || attrName === 'id') {
+    const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
+    return previousOwner === OWNERS.metaAIMessageName || isMetaAIReply(message)
+      ? getRoleFixRoot(el)
+      : null;
   }
 
   if (attrName === 'data-pre-plain-text') {
@@ -106,7 +117,6 @@ function handleAddedNode(node) {
   cleanElementAttributes(node);
   recleanMessageAncestor(node);
   maybeCaptureUnreadDivider(node);
-  maybeReadAddedMessages(node);
   return getRoleFixRoot(node) || getRoleFixRoot(node.parentElement);
 }
 
@@ -140,6 +150,7 @@ function createCleanupObserver() {
         scheduleCleanUiSync();
       }
     }
+    scheduleChatPulseSync();
   });
 }
 
@@ -151,7 +162,7 @@ function startCleanupObserver() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
+      attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
     });
     cleanElementAttributes(document.body);
     const chatList = fixAccessibilityRoles(document.body);
@@ -170,6 +181,7 @@ onDomReady(function() {
   document.addEventListener('focusin', event => rememberFocusedRow(event.target));
   document.addEventListener('mousedown', event => rememberFocusedRow(event.target));
 
-  startStatusTracking();
+  if (isChatActivityEnabled()) startStatusTracking();
+  if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
   console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
 });
