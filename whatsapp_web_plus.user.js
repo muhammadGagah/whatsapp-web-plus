@@ -2395,7 +2395,7 @@
     focusMenuItem(menu, index + amount);
   }
   function handleSettingsShortcut(event) {
-    return event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "KeyS";
+    return event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.code === "KeyP" || event.code === "KeyS");
   }
   function handleKeydown(event) {
     if (!isSettingsMenuOpen()) {

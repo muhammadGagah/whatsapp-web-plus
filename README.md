@@ -158,7 +158,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | --- | --- |
 | `Alt + Shift + N` | Turn Privacy Mode on or off |
 | `Alt + Shift + L` | Turn Automatic reading of messages on or off |
-| `Alt + Shift + S` | Open WhatsApp Web Plus settings |
+| `Alt + Shift + P` | Open WhatsApp Web Plus settings (`Alt + Shift + S` remains as a legacy fallback) |
 | `Alt + Shift + 8` | Turn Clean UI on or off |
 | `Alt + Shift + 9` | Turn Original Dark Mode on or off |
 
@@ -168,7 +168,7 @@ Privacy Mode, Clean UI, and Original Dark Mode remember your choice after you re
 
 ## Settings menu
 
-Press `Alt + Shift + S` to open the accessible WhatsApp Web Plus settings menu. It includes language, Privacy Mode, announcement reduction, automatic reading, Chat activity monitor, Clean UI, and Original Dark Mode.
+Press `Alt + Shift + P` to open the accessible WhatsApp Web Plus settings menu. `Alt + Shift + S` remains available as a legacy fallback when the browser sends it to the page. The menu includes language, Privacy Mode, announcement reduction, automatic reading, Chat activity monitor, Clean UI, and Original Dark Mode.
 
 Use the arrow keys to move, `Right Arrow` to open the language submenu, `Left Arrow` to return, `Enter` or `Space` to change a setting, and `Escape` to close the menu.
 

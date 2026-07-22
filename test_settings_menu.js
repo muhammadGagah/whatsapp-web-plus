@@ -172,12 +172,19 @@ function keyboardEvent(overrides = {}) {
     };
 }
 
+function settingsShortcut(code = 'KeyP', overrides = {}) {
+    return keyboardEvent({
+        key: code === 'KeyP' ? 'P' : 'S', code, altKey: true, shiftKey: true,
+        ...overrides
+    });
+}
+
 const keydown = windowListeners.get('keydown');
 const resize = windowListeners.get('resize');
 resize();
 assert.equal(document.activeElement, invoker);
 activeModal = new Element('div');
-const modalOpenAttempt = keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true });
+const modalOpenAttempt = settingsShortcut();
 keydown(modalOpenAttempt);
 assert.equal(modalOpenAttempt.prevented, false);
 assert.equal(rootMenu.hidden, true);
@@ -191,18 +198,27 @@ keydown(applicationKey);
 assert.equal(applicationKey.prevented, false);
 assert.equal(rootMenu.hidden, true);
 for (const ignored of [
-    keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true, ctrlKey: true }),
-    keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true, repeat: true }),
-    keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true, isComposing: true })
+    settingsShortcut('KeyP', { ctrlKey: true }),
+    settingsShortcut('KeyP', { repeat: true }),
+    settingsShortcut('KeyP', { isComposing: true })
 ]) {
     keydown(ignored);
     assert.equal(ignored.prevented, false);
     assert.equal(rootMenu.hidden, true);
 }
 assert.equal(documentListeners.has('contextmenu'), false);
-const openEvent = keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true });
+const legacyOpenEvent = settingsShortcut('KeyS');
+keydown(legacyOpenEvent);
+assert.equal(legacyOpenEvent.prevented, true);
+assert.equal(legacyOpenEvent.stopped, true);
+assert.equal(rootMenu.hidden, false);
+keydown(keyboardEvent({ key: 'Escape' }));
+document.activeElement = invoker;
+
+const openEvent = settingsShortcut();
 keydown(openEvent);
 assert.equal(openEvent.prevented, true);
+assert.equal(openEvent.stopped, true);
 assert.equal(rootMenu.hidden, false);
 assert.equal(rootMenu.getAttribute('role'), 'menu');
 assert.equal(rootMenu.getAttribute('aria-label'), 'WhatsApp Web Plus settings');
@@ -216,7 +232,7 @@ for (const nativeMenuKey of [shiftF10, applicationKey]) {
     assert.equal(nativeMenuKey.stopped, false);
     assert.equal(rootMenu.hidden, true);
     assert.equal(document.activeElement, invoker);
-    keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+    keydown(settingsShortcut());
     assert.equal(rootMenu.hidden, false);
 }
 const pointerDown = windowListeners.get('pointerdown');
@@ -224,7 +240,7 @@ pointerDown({ button: 2, target: new Element('div') });
 assert.equal(rootMenu.hidden, true);
 assert.equal(document.activeElement, invoker);
 
-keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+keydown(settingsShortcut());
 const foreignMenu = new Element('div');
 foreignMenu.setAttribute('role', 'menu');
 const foreignItem = new Element('button');
@@ -253,13 +269,13 @@ for (const foreignNativeKey of [
     assert.equal(foreignNativeKey.stopped, false);
     assert.equal(rootMenu.hidden, true);
     assert.equal(document.activeElement, foreignItem);
-    keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+    keydown(settingsShortcut());
     assert.equal(rootMenu.hidden, false);
 }
 
 keydown(keyboardEvent({ key: 'Escape' }));
 document.activeElement = invoker;
-keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+keydown(settingsShortcut());
 document.activeElement = rootMenu.children[0];
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
@@ -282,7 +298,7 @@ keydown(keyboardEvent({ key: 'Escape' }));
 assert.equal(rootMenu.hidden, true);
 assert.equal(document.activeElement, invoker);
 
-keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+keydown(settingsShortcut());
 assert.equal(rootMenu.hidden, false);
 assert.equal(document.activeElement.dataset.action, 'language');
 keydown(keyboardEvent({ key: 'ArrowRight' }));
@@ -294,7 +310,7 @@ keydown(keyboardEvent({ key: 'Enter' }));
 assert.equal(storedValues.get('wa-plus-language'), 'id');
 assert.equal(rootMenu.hidden, true);
 
-keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+keydown(settingsShortcut());
 const altArrow = keyboardEvent({ key: 'ArrowDown', altKey: true });
 keydown(altArrow);
 assert.equal(altArrow.prevented, false);
@@ -305,7 +321,7 @@ assert.equal(tabEvent.prevented, false);
 assert.equal(rootMenu.hidden, true);
 assert.equal(document.activeElement, invoker);
 
-keydown(keyboardEvent({ key: 'S', code: 'KeyS', altKey: true, shiftKey: true }));
+keydown(settingsShortcut());
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
