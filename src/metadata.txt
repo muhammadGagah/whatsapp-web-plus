@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         WhatsApp Web Plus
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.66
+// @version      2.6.70
 // @description  Making WhatsApp web more accessible for visually impaired users
-// @author       Muhammad
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
+// @updateURL    https://update.greasyfork.org/scripts/587557/WhatsApp%20Web%20Plus.meta.js
+// @downloadURL  https://update.greasyfork.org/scripts/587557/WhatsApp%20Web%20Plus.user.js
 // @grant        none
 // @license      MIT
 // ==/UserScript==

@@ -98,6 +98,15 @@ export function releaseOwnedWithin(rootEl, owner) {
   }
 }
 
+export function pruneDetachedOwnedElements() {
+  for (const el of [...ownedElements]) {
+    if (!el.isConnected) {
+      ownedAttributes.delete(el);
+      ownedElements.delete(el);
+    }
+  }
+}
+
 export function isOwnedMutation(el, name) {
   const isScriptMutation = consumeOwnedMutation(el, name);
   const attributes = ownedAttributes.get(el);

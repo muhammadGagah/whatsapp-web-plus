@@ -2,14 +2,22 @@ import {
   CLEAN_UI_HIDDEN_ATTRIBUTE,
   CLEAN_UI_PROTECTED_SELECTOR,
   DESKTOP_APP_PROMO_COPY_RE,
-  DESKTOP_APP_PROMO_TITLE_RE,
   FOCUSABLE_SELECTOR,
   OWNERS,
   SELECTORS,
   STORAGE_KEYS
 } from './config.js';
 import { normalizeText } from './privacy.js';
-import { readSetting, t, writeSetting } from './settings-state.js';
+import {
+  getClearAllRegex,
+  getCustomText,
+  getDesktopPromoRegex,
+  getNavButton,
+  getRecentSearchesRegex,
+  readSetting,
+  t,
+  writeSetting
+} from './settings-state.js';
 import {
   applyOwnedAttribute,
   ownedAttributes,
@@ -49,13 +57,15 @@ export function getDesktopAppPromo() {
 
     const texts = Array.from(candidate.querySelectorAll('span'))
       .map(el => normalizeText(el.textContent || ''));
-    const hasTitle = texts.some(text => DESKTOP_APP_PROMO_TITLE_RE.test(text));
-    const hasCopy = texts.some(text => DESKTOP_APP_PROMO_COPY_RE.test(text));
-    const downloadButton = candidate.querySelector(':scope > button[type="button"]');
+    const customTitle = normalizeText(getCustomText('desktop-promo')).toLocaleLowerCase();
+    const hasCustomTitle = !!customTitle &&
+      texts.some(text => text.toLocaleLowerCase() === customTitle);
+    const hasTitle = texts.some(text => getDesktopPromoRegex().test(text));
+    const hasCopy = hasCustomTitle || texts.some(text => DESKTOP_APP_PROMO_COPY_RE.test(text));
+    const downloadButton = candidate.querySelector('button[type="button"]');
     const isDownloadButton = downloadButton &&
       !downloadButton.disabled &&
-      downloadButton.getAttribute('aria-disabled') !== 'true' &&
-      normalizeText(downloadButton.textContent || '') === 'Download';
+      downloadButton.getAttribute('aria-disabled') !== 'true';
     const focusableCount = candidate.querySelectorAll(FOCUSABLE_SELECTOR).length;
 
     if (hasTitle && hasCopy && isDownloadButton && focusableCount === 1) return candidate;
@@ -63,11 +73,42 @@ export function getDesktopAppPromo() {
   return null;
 }
 
+function getRecentSearchesTargets() {
+  const side = document.querySelector(SELECTORS.side);
+  if (!side) return [];
+  const targets = [];
+  const searchPattern = getRecentSearchesRegex();
+  const clearPattern = getClearAllRegex();
+
+  const testIdContainers = side.querySelectorAll(
+    '[data-testid="search-history"], [data-testid="recent-searches"], [data-testid="recent-search-list"], [data-testid*="recent-search"]'
+  );
+  testIdContainers.forEach(el => targets.push(el));
+
+  const candidates = Array.from(side.querySelectorAll('button, [role="button"], [role="region"], [role="group"]'));
+  candidates.forEach(el => {
+    const ariaLabel = normalizeText(el.getAttribute('aria-label') || '');
+    const title = normalizeText(el.getAttribute('title') || '');
+    const text = normalizeText(el.textContent || '');
+
+    if (searchPattern.test(ariaLabel) || searchPattern.test(title) || searchPattern.test(text) ||
+        clearPattern.test(ariaLabel) || clearPattern.test(title) || clearPattern.test(text)) {
+      const container = el.closest('button, [role="button"], [role="region"], [role="group"]');
+      if (container && !targets.includes(container)) {
+        targets.push(container);
+      }
+    }
+  });
+
+  return targets.filter((el, index, arr) => el && arr.indexOf(el) === index);
+}
+
 export function getCleanUiHiddenTargets() {
   return [
     getDesktopAppPromo(),
     document.querySelector('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]'),
-    document.querySelector('#side [data-testid="chatlist-e2e-message"]')
+    document.querySelector('#side [data-testid="chatlist-e2e-message"]'),
+    ...getRecentSearchesTargets()
   ].filter((el, index, targets) => el && targets.indexOf(el) === index);
 }
 
@@ -87,8 +128,11 @@ export function syncCleanUi() {
   if (!targets.length) return false;
 
   if (targets.some(target => target.contains(document.activeElement))) {
-    const fallbacks = [document.querySelector(SELECTORS.navChats), document.querySelector(SELECTORS.chatList)]
-      .filter(el => el && !targets.some(target => target.contains(el)));
+    const fallbacks = [
+      document.querySelector(SELECTORS.chatSearch),
+      getNavButton('navChats'),
+      document.querySelector(SELECTORS.chatList)
+    ].filter(el => el && !targets.some(target => target.contains(el)));
     if (!fallbacks.some(focusItem)) {
       releaseCleanUiMarkers();
       return false;
@@ -112,12 +156,11 @@ export function scheduleCleanUiSync() {
 }
 
 export const CLEAN_UI_CSS = `
-  /* Hide only UI containers identified and owned by this script. */
   [${CLEAN_UI_HIDDEN_ATTRIBUTE}="true"] {
     display: none !important;
   }
 
-  /* Keep chat dropdowns accessible, but reduce visual clutter until pointer or keyboard focus. */
+  /* Reveal chat menus on hover or keyboard focus. */
   [data-testid="chat-list"] [role="row"] [data-testid="context-btn"] {
     opacity: 0 !important;
   }
@@ -134,7 +177,7 @@ const ORIGINAL_DARK_CSS = `
     --drawer-background-deep: #111b21 !important;
     --panel-background-deeper: #111b21 !important;
     --compose-input-background: #202c33 !important;
-    --compose-input-border: #202c33 !important;
+    --compose-input-border: #66767e !important;
     --conversation-header-border: #222e35 !important;
     --conversation-panel-border: #222e35 !important;
     --dropdown-background: #222e35 !important;
@@ -148,7 +191,7 @@ const ORIGINAL_DARK_CSS = `
     --WDS-surface-emphasized: #202c33 !important;
     --WDS-surface-elevated-default: #202c33 !important;
     --WDS-surface-elevated-emphasized: #2a3942 !important;
-    --WDS-content-deemphasized: #85959f !important;
+    --WDS-content-deemphasized: #bac5cb !important;
     --WDS-content-action-default: #aebac1 !important;
     --WDS-content-disabled: #617079 !important;
     --WDS-systems-chat-background-wallpaper: #111b21 !important;
@@ -178,7 +221,10 @@ export function isOriginalDarkEnabled() {
 
 export function toggleCleanUiMode(announceChange = true) {
   const nextValue = !isCleanUiMode;
-  if (!writeSetting(STORAGE_KEYS.cleanUi, nextValue ? 'true' : 'false')) return false;
+  if (!writeSetting(STORAGE_KEYS.cleanUi, nextValue ? 'true' : 'false')) {
+    if (announceChange) announce(t('saveError'));
+    return false;
+  }
   isCleanUiMode = nextValue;
   const controlsHidden = syncCleanUi();
   toggleStyleSheet('wa-plus-clean-ui-styles', CLEAN_UI_CSS, isCleanUiMode);
@@ -192,7 +238,10 @@ export function toggleCleanUiMode(announceChange = true) {
 
 export function toggleOriginalDarkMode(announceChange = true) {
   const nextValue = !isOriginalDarkMode;
-  if (!writeSetting(STORAGE_KEYS.originalDark, nextValue ? 'true' : 'false')) return false;
+  if (!writeSetting(STORAGE_KEYS.originalDark, nextValue ? 'true' : 'false')) {
+    if (announceChange) announce(t('saveError'));
+    return false;
+  }
   isOriginalDarkMode = nextValue;
   toggleStyleSheet('wa-plus-original-dark-styles', ORIGINAL_DARK_CSS, isOriginalDarkMode);
   if (announceChange) announce(isOriginalDarkMode ? t('darkOn') : t('darkOff'));

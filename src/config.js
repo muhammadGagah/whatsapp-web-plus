@@ -11,25 +11,56 @@ export const STORAGE_KEYS = Object.freeze({
   language: 'wa-plus-language',
   reduceAnnouncements: 'wa-plus-reduce-announcements',
   automaticReading: 'wa-plus-automatic-reading',
-  chatActivity: 'wa-plus-chat-activity-monitor'
+  senderDeviceAnnouncements: 'wa-plus-sender-device-announcements',
+  openChatsAtFirstUnread: 'wa-plus-open-chats-at-first-unread',
+  remapVoiceRecording: 'wa-plus-remap-voice-recording',
+  remapPreviousChat: 'wa-plus-remap-previous-chat',
+  remapNextChat: 'wa-plus-remap-next-chat',
+  chatActivity: 'wa-plus-chat-activity-monitor',
+  customUnreadDivider: 'wa-plus-custom-unread-divider',
+  customTypingText: 'wa-plus-custom-typing-text',
+  customRecordingAudioText: 'wa-plus-custom-recording-audio-text',
+  customDeliveryStatus: 'wa-plus-custom-delivery-status',
+  customDesktopPromo: 'wa-plus-custom-desktop-promo',
+  customRecentSearches: 'wa-plus-custom-recent-searches',
+  customClearAll: 'wa-plus-custom-clear-all',
+  customNavChats: 'wa-plus-custom-nav-chats',
+  customNavStatus: 'wa-plus-custom-nav-status',
+  customNavCommunities: 'wa-plus-custom-nav-communities',
+  customNavChannels: 'wa-plus-custom-nav-channels',
+  customNavMetaAI: 'wa-plus-custom-nav-meta-ai',
+  customMessageContextInstruction: 'wa-plus-custom-message-context-instruction',
+  customUnknownContactPrefix: 'wa-plus-custom-unknown-contact-prefix',
+  customParticipantPrefix: 'wa-plus-custom-participant-prefix',
+  customQuotePrefix: 'wa-plus-custom-quote-prefix',
+  customOnlineStatus: 'wa-plus-custom-online-status',
+  customLastSeenPrefix: 'wa-plus-custom-last-seen-prefix',
+  customChatStatusLabels: 'wa-plus-custom-chat-status-labels',
+  customViewStatus: 'wa-plus-custom-view-status',
+  customParticipantSeparator: 'wa-plus-custom-participant-separator',
+  customDeliveryPending: 'wa-plus-custom-delivery-pending',
+  customDeliverySent: 'wa-plus-custom-delivery-sent',
+  customDeliveryDelivered: 'wa-plus-custom-delivery-delivered',
+  customDeliveryRead: 'wa-plus-custom-delivery-read'
 });
 
 export const SELECTORS = Object.freeze({
   side: 'div#side',
   main: 'div#main',
   messageInput: 'div#main footer div[contenteditable="true"]',
-  navChats: 'button[aria-label="Chats"]',
-  navStatus: 'button[aria-label="Status"], button[aria-label="Updates in Status"]',
-  navCommunities: 'button[aria-label="Communities"]',
-  navChannels: 'button[aria-label="Channels"]',
-  navMetaAI: 'button[aria-label="Meta AI"]',
-  audioPlayerClose: '#side button[aria-label="Close"]',
+  navChats: '[data-testid="navbar-primary-section"] button[aria-label="Chats"]',
+  navStatus: '[data-testid="navbar-primary-section"] button[aria-label="Status"], [data-testid="navbar-primary-section"] button[aria-label="Updates in Status"]',
+  navCommunities: '[data-testid="navbar-primary-section"] button[aria-label="Communities"]',
+  navChannels: '[data-testid="navbar-primary-section"] button[aria-label="Channels"]',
+  navMetaAI: '[data-testid="navbar-primary-section"] button[aria-label="Meta AI"]',
+  videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
+  audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
   statusListFirstRow: '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]',
   communityListFirstRow: '[data-testid="community-tab-drawer"] [data-testid="community-tab-community-cell"]',
   channelListFirstRow: '[data-testid="newsletter-tab-drawer"] [data-testid="newsletter-tab-newsletter-cell"]',
   chatListScroller: '#pane-side',
-  chatList: '[data-testid="chat-list"], [aria-label="Chat list"][role="grid"]',
-  chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"]',
+  chatList: '[data-testid="chat-list"], [aria-label="Chat list"][role="grid"], [aria-label="Daftar chat"][role="grid"]',
+  chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"], #side [aria-label="Daftar chat"][role="grid"]',
   chatSearch: '#side input[role="textbox"][type="text"], #side [data-testid="chat-list-search-container"] input',
   conversationMessages: '[data-testid="conversation-panel-messages"]',
   cellFrame: '[data-testid="cell-frame-container"]'
@@ -54,26 +85,20 @@ export const CHAT_LABEL_NOISE_RE = Object.freeze({
 });
 
 export const CHAT_PREVIEW_ICON_LABELS = Object.freeze([
-  { pattern: /keyboard-voice|voice-filled|ptt|audio-ptt|voice-message/i, label: 'voice message' },
-  { pattern: /document-refreshed|document-thin|ic-document|file-document|\bdocument\b/i, label: 'document' },
-  { pattern: /video-call/i, label: 'video call' },
-  { pattern: /phone-callback|phone-incoming|voice-call|\bcall\b/i, label: 'voice call' },
-  { pattern: /ic-image|image-refreshed|media-image|\bimage\b/i, label: 'image' },
-  { pattern: /ic-video|video-refreshed|\bvideo\b/i, label: 'video' },
-  { pattern: /sticker/i, label: 'sticker' },
-  { pattern: /\bgif\b/i, label: 'GIF' }
+  { pattern: /keyboard-voice|voice-filled|ptt|audio-ptt|voice-message/i, labelKey: 'voiceMessage' },
+  { pattern: /document-refreshed|document-thin|ic-document|file-document|\bdocument\b/i, labelKey: 'document' },
+  { pattern: /video-call/i, labelKey: 'videoCall' },
+  { pattern: /phone-callback|phone-incoming|voice-call|\bcall\b/i, labelKey: 'voiceCall' },
+  { pattern: /ic-image|image-refreshed|media-image|\bimage\b/i, labelKey: 'image' },
+  { pattern: /ic-video|video-refreshed|\bvideo\b/i, labelKey: 'video' },
+  { pattern: /sticker/i, labelKey: 'sticker' },
+  { pattern: /\bgif\b/i, labelKey: 'gif' }
 ]);
 
 export const FOCUSABLE_SELECTOR = 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]';
 export const CHAT_ROW_NATIVE_TEXT_SELECTOR = '[data-testid="cell-frame-label"], [data-testid="cell-frame-title"], [data-testid="cell-frame-primary-detail"], [data-testid="cell-frame-secondary"], [data-testid="last-msg-status"], [role="gridcell"], [aria-label], [title]';
-export const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [role="grid"]';
-export const DESKTOP_APP_PROMO_TITLE_RE = /^Download WhatsApp for (?:Windows|Mac|macOS)$/i;
+export const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [aria-label="Daftar chat"], [role="grid"]';
 export const DESKTOP_APP_PROMO_COPY_RE = /^Get extra features like voice and video calling, screen sharing and more\.?$/i;
-export const MESSAGE_CONTEXT_INSTRUCTION_RE = /\s*For more options,\s*press left or right arrow key to access context menu\.?\s*$/i;
-export const MESSAGE_DELIVERY_STATUS_RE = /^(?:Sent|Delivered|Read)$/i;
-export const CHAT_TYPING_RE = /\btyping(?:…|\.\.\.)?$/i;
-export const CHAT_GENERIC_TYPING_RE = /^typing(?:…|\.\.\.)?$/i;
-export const MESSAGE_DELIVERY_STATUS_RANK = Object.freeze({ Sent: 1, Delivered: 2, Read: 3 });
 export const MESSAGE_TEXT_CONTENT_SELECTOR = '[data-testid="msg-container"] [data-testid="selectable-text"]';
 export const MESSAGE_MEDIA_CONTENT_SELECTOR = [
   '[data-testid="msg-container"] img[alt]',
@@ -89,8 +114,6 @@ export const MESSAGE_MEDIA_CONTENT_SELECTOR = [
   '[data-testid="msg-container"] [data-testid*="location"]',
   '[data-testid="msg-container"] [data-testid*="contact"]'
 ].join(', ');
-export const UNKNOWN_CONTACT_RE = /^(Maybe|Mungkin|Talvez)\b[\s:~,-]*/i;
-export const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g;
-export const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)\+?\d{8,16}\b/gi;
+export const PHONE_RE = /(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d/g;
+export const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
 export const WEB_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
-export const UNREAD_DIVIDER_RE = /^(?:\d+\+?\s+)?(?:unread messages?|new messages?|pesan (?:yang )?belum dibaca|belum dibaca|pesan baru)$/i;

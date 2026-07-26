@@ -10,6 +10,7 @@ import {
   applyOwnedAttribute,
   isOwnedMutation,
   ownedAttributes,
+  pruneDetachedOwnedElements,
   releaseOwnedAttribute
 } from './owned-attributes.js';
 import {
@@ -25,6 +26,7 @@ import {
   getChatRowTranslateY,
   getPreferredChatRow,
   getRoleFixRoot,
+  handleMessageGridKeydown,
   isMetaAIReply,
   normalizeChatListTabStops,
   rememberFocusedRow,
@@ -32,7 +34,7 @@ import {
 } from './chat-accessibility.js';
 import {
   activateNav,
-  closeAudioPlayerShortcut,
+  closeMediaPlayerShortcut,
   findUnreadMessageTarget,
   focusLastMessageShortcut,
   handleShortcuts,
@@ -66,7 +68,10 @@ function onDomReady(fn) {
 }
 
 function recleanMessageAncestor(node) {
-  const message = node && node.closest && node.closest(`${SELECTORS.conversationMessages} .focusable-list-item`);
+  const message = node && (
+    node.closest?.(`${SELECTORS.conversationMessages} .focusable-list-item`) ||
+    node.querySelector?.('.focusable-list-item')
+  );
   if (message) cleanNamedAttribute(message, 'aria-label');
 }
 
@@ -83,9 +88,15 @@ function handleAttributeMutation(mutation) {
 
   if (attrName === 'aria-labelledby' || attrName === 'id') {
     const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
-    return previousOwner === OWNERS.metaAIMessageName || isMetaAIReply(message)
+    return [OWNERS.metaAIMessageName, OWNERS.chatLabel, OWNERS.messageGrid].includes(previousOwner) ||
+      isMetaAIReply(message)
       ? getRoleFixRoot(el)
       : null;
+  }
+
+  if (attrName === 'data-id' && el.closest?.(SELECTORS.conversationMessages)) {
+    recleanMessageAncestor(el);
+    return getRoleFixRoot(el);
   }
 
   if (attrName === 'data-pre-plain-text') {
@@ -96,6 +107,10 @@ function handleAttributeMutation(mutation) {
   if (attrName === 'role' && el.closest) {
     if (el.closest(SELECTORS.conversationMessages)) return el.closest(SELECTORS.conversationMessages);
     if (el.closest(SELECTORS.chatListInSide)) return getRoleFixRoot(el);
+  }
+
+  if (attrName === 'tabindex' && el.closest?.(SELECTORS.conversationMessages)) {
+    return el.closest(SELECTORS.conversationMessages);
   }
 
   if ((attrName === 'aria-hidden' || attrName === 'tabindex') && el.closest && el.closest(SELECTORS.chatListInSide)) {
@@ -124,15 +139,33 @@ let cleanupObserver = null;
 
 function createCleanupObserver() {
   return new MutationObserver(mutations => {
+    let pulseRelevant = false;
     reconcileUnreadTarget();
     for (const mutation of mutations) {
+      const target = mutation.target?.nodeType === 1
+        ? mutation.target
+        : mutation.target?.parentElement;
+      const targetInConversation = !!(
+        target?.matches?.(SELECTORS.conversationMessages) ||
+        target?.closest?.(SELECTORS.conversationMessages)
+      );
+      if (targetInConversation) pulseRelevant = true;
+
       if (mutation.type === 'attributes') {
         scheduleRoleFix(handleAttributeMutation(mutation));
         continue;
       }
 
       if (mutation.type === 'characterData') {
-        recleanMessageAncestor(mutation.target.parentElement);
+        const parent = mutation.target.parentElement;
+        if (parent) {
+          cleanNamedAttribute(parent, 'aria-label');
+          cleanNamedAttribute(parent, 'title');
+          if (parent.matches?.('span[data-testid="author"]')) {
+            cleanElementAttributes(parent);
+          }
+          recleanMessageAncestor(parent);
+        }
         scheduleCleanUiSync();
         continue;
       }
@@ -140,17 +173,26 @@ function createCleanupObserver() {
       if (mutation.type === 'childList') {
         mutation.addedNodes.forEach(node => {
           scheduleRoleFix(handleAddedNode(node));
+          if (node.nodeType === 1 &&
+            (node.matches?.(SELECTORS.conversationMessages) ||
+              node.querySelector?.(SELECTORS.conversationMessages))) {
+            pulseRelevant = true;
+          }
         });
         mutation.removedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
           forgetPrivacyState(node);
-          recoverFocusAfterRemoval(node);
+          recoverFocusAfterRemoval(node, mutation.nextSibling, mutation.previousSibling);
         });
+        if (targetInConversation) {
+          scheduleRoleFix(target.closest?.(SELECTORS.conversationMessages) || target);
+        }
         recleanMessageAncestor(mutation.target);
         scheduleCleanUiSync();
       }
     }
-    scheduleChatPulseSync();
+    pruneDetachedOwnedElements();
+    if (pulseRelevant) scheduleChatPulseSync();
   });
 }
 
@@ -162,7 +204,7 @@ function startCleanupObserver() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
+      attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
     });
     cleanElementAttributes(document.body);
     const chatList = fixAccessibilityRoles(document.body);
@@ -178,6 +220,7 @@ onDomReady(function() {
   startCleanupObserver();
   updateStyleSheets();
   window.addEventListener('keydown', handleShortcuts, true);
+  document.addEventListener('keydown', handleMessageGridKeydown, true);
   document.addEventListener('focusin', event => rememberFocusedRow(event.target));
   document.addEventListener('mousedown', event => rememberFocusedRow(event.target));
 

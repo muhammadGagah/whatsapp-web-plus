@@ -1,4 +1,6 @@
-import { STORAGE_KEYS } from './config.js';
+import { SELECTORS, STORAGE_KEYS } from './config.js';
+import en from './locales/en.js';
+import id from './locales/id.js';
 
 export const LANGUAGES = Object.freeze([
   { value: 'en', label: 'English' },
@@ -28,102 +30,340 @@ let language = LANGUAGES.some(item => item.value === savedLanguage)
   : (typeof navigator !== 'undefined' && navigator.language || '').toLowerCase().startsWith('id') ? 'id' : 'en';
 let reduceAnnouncements = readSetting(STORAGE_KEYS.reduceAnnouncements, 'true') !== 'false';
 let automaticReading = readSetting(STORAGE_KEYS.automaticReading, 'false') === 'true';
-
-const messages = Object.freeze({
-  en: {
-    settings: 'WhatsApp Web Plus settings',
-    language: 'Language',
-    privacyMode: 'Privacy mode',
-    reduceAnnouncements: 'Remove repeated or unhelpful screen-reader announcements',
-    automaticReading: 'Automatically read new messages',
-    chatActivity: 'Chat activity monitor',
-    cleanUi: 'Clean UI',
-    originalDark: 'Original dark mode',
-    chats: 'Chats',
-    status: 'Status',
-    communities: 'Communities',
-    channels: 'Channels',
-    metaAi: 'Meta AI',
-    buttonNotFound: '{name} button not found',
-    didNotOpen: '{name} did not open',
-    listEmpty: '{name} list is empty',
-    couldNotFocus: '{name} could not be focused',
-    chatListEmpty: 'Chat list empty',
-    chatNotReady: 'Chat is not ready',
-    noMessages: 'No messages',
-    messageNotReady: 'Message is not ready',
-    unreadHistoryOnly: 'Alt 3 only works in the message history',
-    noOpenChat: 'No open chat',
-    unreadNotFound: 'Unread message not found',
-    unreadNotReady: 'Unread message is not ready',
-    audioNotOpen: 'Audio player is not open.',
-    audioClosed: 'Audio player closed.',
-    messageBoxNotReady: 'Message box is not ready',
-    messageBoxNotOpen: 'Message box is not open',
-    noTitle: 'No title found',
-    titleNotFound: 'Chat title not found',
-    privacyOn: 'Privacy Enabled',
-    privacyOff: 'Privacy Disabled',
-    automaticReadingOn: 'Automatic reading of messages is enabled',
-    automaticReadingOff: 'Automatic reading of new messages is disabled',
-    chatActivityOn: 'Chat activity monitor on',
-    chatActivityOff: 'Chat activity monitor off',
-    cleanUiOn: 'Clean UI enabled.',
-    cleanUiOnHidden: 'Clean UI enabled; extra controls hidden.',
-    cleanUiOff: 'Clean UI disabled.',
-    darkOn: 'Original Dark Mode Enabled',
-    darkOff: 'Original Dark Mode Disabled',
-    saveError: 'The setting could not be saved.'
-  },
-  id: {
-    settings: 'Pengaturan WhatsApp Web Plus',
-    language: 'Bahasa',
-    privacyMode: 'Mode privasi',
-    reduceAnnouncements: 'Hapus pengumuman pembaca layar yang berulang atau tidak membantu',
-    automaticReading: 'Bacakan pesan baru secara otomatis',
-    chatActivity: 'Monitor aktivitas chat',
-    cleanUi: 'Antarmuka ringkas',
-    originalDark: 'Mode gelap asli',
-    chats: 'Chat',
-    status: 'Status',
-    communities: 'Komunitas',
-    channels: 'Saluran',
-    metaAi: 'Meta AI',
-    buttonNotFound: 'Tombol {name} tidak ditemukan',
-    didNotOpen: '{name} tidak berhasil dibuka',
-    listEmpty: 'Daftar {name} kosong',
-    couldNotFocus: '{name} tidak dapat difokuskan',
-    chatListEmpty: 'Daftar chat kosong',
-    chatNotReady: 'Chat belum siap',
-    noMessages: 'Tidak ada pesan',
-    messageNotReady: 'Pesan belum siap',
-    unreadHistoryOnly: 'Alt 3 hanya berfungsi di riwayat pesan',
-    noOpenChat: 'Tidak ada chat yang terbuka',
-    unreadNotFound: 'Pesan belum dibaca tidak ditemukan',
-    unreadNotReady: 'Pesan belum dibaca belum siap',
-    audioNotOpen: 'Pemutar audio tidak terbuka.',
-    audioClosed: 'Pemutar audio ditutup.',
-    messageBoxNotReady: 'Kotak pesan belum siap',
-    messageBoxNotOpen: 'Kotak pesan tidak terbuka',
-    noTitle: 'Judul tidak ditemukan',
-    titleNotFound: 'Judul chat tidak ditemukan',
-    privacyOn: 'Mode privasi aktif',
-    privacyOff: 'Mode privasi nonaktif',
-    automaticReadingOn: 'Pembacaan pesan otomatis aktif',
-    automaticReadingOff: 'Pembacaan pesan baru otomatis nonaktif',
-    chatActivityOn: 'Monitor aktivitas chat aktif',
-    chatActivityOff: 'Monitor aktivitas chat nonaktif',
-    cleanUiOn: 'Antarmuka ringkas aktif.',
-    cleanUiOnHidden: 'Antarmuka ringkas aktif; kontrol tambahan disembunyikan.',
-    cleanUiOff: 'Antarmuka ringkas nonaktif.',
-    darkOn: 'Mode gelap asli aktif',
-    darkOff: 'Mode gelap asli nonaktif',
-    saveError: 'Pengaturan tidak dapat disimpan.'
-  }
+let senderDeviceAnnouncements = readSetting(STORAGE_KEYS.senderDeviceAnnouncements, 'false') === 'true';
+let openChatsAtFirstUnread = readSetting(STORAGE_KEYS.openChatsAtFirstUnread, 'false') === 'true';
+const customTextStorageKeys = Object.freeze({
+  'unread-divider': STORAGE_KEYS.customUnreadDivider,
+  typing: STORAGE_KEYS.customTypingText,
+  'recording-audio': STORAGE_KEYS.customRecordingAudioText,
+  'delivery-status': STORAGE_KEYS.customDeliveryStatus,
+  'delivery-pending': STORAGE_KEYS.customDeliveryPending,
+  'delivery-sent': STORAGE_KEYS.customDeliverySent,
+  'delivery-delivered': STORAGE_KEYS.customDeliveryDelivered,
+  'delivery-read': STORAGE_KEYS.customDeliveryRead,
+  'desktop-promo': STORAGE_KEYS.customDesktopPromo,
+  'recent-searches': STORAGE_KEYS.customRecentSearches,
+  'clear-all': STORAGE_KEYS.customClearAll,
+  'nav-chats': STORAGE_KEYS.customNavChats,
+  'nav-status': STORAGE_KEYS.customNavStatus,
+  'nav-communities': STORAGE_KEYS.customNavCommunities,
+  'nav-channels': STORAGE_KEYS.customNavChannels,
+  'nav-meta-ai': STORAGE_KEYS.customNavMetaAI,
+  'message-context-instruction': STORAGE_KEYS.customMessageContextInstruction,
+  'unknown-contact-prefix': STORAGE_KEYS.customUnknownContactPrefix,
+  'participant-prefix': STORAGE_KEYS.customParticipantPrefix,
+  'quote-prefix': STORAGE_KEYS.customQuotePrefix,
+  'online-status': STORAGE_KEYS.customOnlineStatus,
+  'last-seen-prefix': STORAGE_KEYS.customLastSeenPrefix,
+  'chat-status-labels': STORAGE_KEYS.customChatStatusLabels,
+  'view-status': STORAGE_KEYS.customViewStatus,
+  'participant-separator': STORAGE_KEYS.customParticipantSeparator
 });
+const customText = Object.fromEntries(Object.entries(customTextStorageKeys)
+  .map(([key, storageKey]) => [key, readSetting(storageKey, '')]));
+const navCustomKeys = Object.freeze({
+  navChats: 'nav-chats',
+  navStatus: 'nav-status',
+  navCommunities: 'nav-communities',
+  navChannels: 'nav-channels',
+  navMetaAI: 'nav-meta-ai'
+});
+
+const shortcutRemapStorageKeys = Object.freeze({
+  'voice-recording': STORAGE_KEYS.remapVoiceRecording,
+  'previous-chat': STORAGE_KEYS.remapPreviousChat,
+  'next-chat': STORAGE_KEYS.remapNextChat
+});
+const shortcutRemaps = {
+  'voice-recording': readSetting(STORAGE_KEYS.remapVoiceRecording, 'true') !== 'false',
+  'previous-chat': readSetting(STORAGE_KEYS.remapPreviousChat, 'false') === 'true',
+  'next-chat': readSetting(STORAGE_KEYS.remapNextChat, 'false') === 'true'
+};
+
+const messages = Object.freeze({ en, id });
+const regexCache = new Map();
+const DELIVERY_STATUS_DEFINITIONS = Object.freeze([
+  { key: 'deliveryPending', customKey: 'delivery-pending', rank: 0, values: ['Pending', 'Tertunda'] },
+  { key: 'deliverySent', customKey: 'delivery-sent', rank: 1, values: ['Sent', 'Terkirim'] },
+  { key: 'deliveryDelivered', customKey: 'delivery-delivered', rank: 2, values: ['Delivered', 'Tersampaikan'] },
+  { key: 'deliveryRead', customKey: 'delivery-read', rank: 3, values: ['Read', 'Dibaca'] }
+]);
+
+export function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getCachedRegex(key, source, flags) {
+  const cacheKey = `${key}\u0000${source}\u0000${flags}`;
+  let regex = regexCache.get(cacheKey);
+  if (!regex) {
+    regex = new RegExp(source, flags);
+    regexCache.set(cacheKey, regex);
+  }
+  return regex;
+}
+
+export function getCustomText(key) {
+  return customText[key] || '';
+}
+
+export function setCustomText(key, value) {
+  const cleanValue = String(value || '').trim();
+  const storageKey = customTextStorageKeys[key];
+  if (!storageKey) return false;
+
+  if (!writeSetting(storageKey, cleanValue)) return false;
+  customText[key] = cleanValue;
+  regexCache.clear();
+  return true;
+}
+
+function getPatternParts(customKey, defaults, separator = null) {
+  const parts = [...defaults];
+  const value = getCustomText(customKey);
+  if (!value) return parts;
+  const customParts = separator ? value.split(separator) : [value];
+  customParts.reverse().forEach(part => {
+    const trimmed = part.trim();
+    if (trimmed) parts.unshift(escapeRegExp(trimmed));
+  });
+  return parts;
+}
+
+export function getNavSelector(selectorKey) {
+  const defaultSelector = SELECTORS[selectorKey] || '';
+  const customKey = navCustomKeys[selectorKey];
+  const customLabel = customKey && getCustomText(customKey);
+  if (!customLabel) return defaultSelector;
+  return `[data-testid="navbar-primary-section"] button[aria-label="${CSS.escape(customLabel)}"]`;
+}
+
+export function getNavButton(selectorKey) {
+  const selector = getNavSelector(selectorKey);
+  return selector ? document.querySelector(selector) : null;
+}
+
+export function getUnreadDividerRegex() {
+  const parts = ['unread messages?', 'new messages?', 'pesan (?:yang )?belum dibaca', 'belum dibaca', 'pesan baru'];
+  const customUnreadDivider = getCustomText('unread-divider');
+  if (customUnreadDivider) parts.unshift(escapeRegExp(customUnreadDivider));
+  return getCachedRegex('unread-divider', `^(?:\\d+\\+?\\s+)?(?:${parts.join('|')})$`, 'i');
+}
+
+function getTypingParts() {
+  const parts = ['typing', 'mengetik', 'sedang mengetik'];
+  const customTypingText = getCustomText('typing');
+  if (customTypingText) parts.unshift(escapeRegExp(customTypingText));
+  return parts;
+}
+
+export function getTypingRegex() {
+  return getCachedRegex('typing', `(?:^|\\s)(?:${getTypingParts().join('|')})(?:\\u2026|\\.{3})?$`, 'iu');
+}
+
+export function getGenericTypingPattern() {
+  return getTypingParts().join('|');
+}
+
+export function getGenericTypingRegex() {
+  return getCachedRegex('typing-generic', `^(?:${getGenericTypingPattern()})(?:\\u2026|\\.{3})?$`, 'iu');
+}
+
+function getRecordingAudioParts() {
+  const parts = [
+    'recording audio',
+    'recording (?:a )?voice message',
+    'sedang merekam audio',
+    '(?:sedang )?merekam pesan suara'
+  ];
+  const customRecordingAudioText = getCustomText('recording-audio');
+  if (customRecordingAudioText) parts.unshift(escapeRegExp(customRecordingAudioText));
+  return parts;
+}
+
+export function getRecordingAudioRegex() {
+  return getCachedRegex(
+    'recording-audio',
+    `(?:^|\\s)(?:${getRecordingAudioParts().join('|')})(?:\\u2026|\\.{3})?$`,
+    'iu'
+  );
+}
+
+export function getGenericRecordingAudioPattern() {
+  return getRecordingAudioParts().join('|');
+}
+
+export function getGenericRecordingAudioRegex() {
+  return getCachedRegex(
+    'recording-audio-generic',
+    `^(?:${getGenericRecordingAudioPattern()})(?:\\u2026|\\.{3})?$`,
+    'iu'
+  );
+}
+
+export function getDeliveryStatusPattern() {
+  const parts = DELIVERY_STATUS_DEFINITIONS.flatMap(({ customKey, values }) =>
+    getPatternParts(customKey, values));
+  const customDeliveryStatus = getCustomText('delivery-status');
+  if (customDeliveryStatus) {
+    customDeliveryStatus.split(/[,|]/).forEach(item => {
+      const trimmed = item.trim();
+      if (trimmed) parts.unshift(escapeRegExp(trimmed));
+    });
+  }
+  return parts.join('|');
+}
+
+export function getDeliveryStatusRegex() {
+  return getCachedRegex('delivery-status', `^(?:${getDeliveryStatusPattern()})$`, 'i');
+}
+
+export function getDesktopPromoRegex() {
+  const parts = ['Download WhatsApp for (?:Windows|Mac|macOS)'];
+  const customDesktopPromo = getCustomText('desktop-promo');
+  if (customDesktopPromo) parts.unshift(escapeRegExp(customDesktopPromo));
+  return getCachedRegex('desktop-promo', `^(?:${parts.join('|')})$`, 'i');
+}
+
+export function getRecentSearchesRegex() {
+  const parts = ['recent searches', 'pencarian (?:terkini|terbaru)', 'búsquedas recientes', 'letzte suchanfragen'];
+  const customRecentSearches = getCustomText('recent-searches');
+  if (customRecentSearches) parts.unshift(escapeRegExp(customRecentSearches));
+  return getCachedRegex('recent-searches', `^(?:${parts.join('|')})$`, 'i');
+}
+
+export function getClearAllRegex() {
+  const parts = ['clear all', 'hapus semua', 'borrar todo', 'alle löschen', 'effacer tout', 'limpar tudo'];
+  const customClearAll = getCustomText('clear-all');
+  if (customClearAll) parts.unshift(escapeRegExp(customClearAll));
+  return getCachedRegex('clear-all', `^(?:${parts.join('|')})$`, 'i');
+}
+
+export function getMessageContextInstructionRegex() {
+  const parts = getPatternParts('message-context-instruction', [
+    'For more options,\\s*press left or right arrow key to access context menu'
+  ]);
+  return getCachedRegex(
+    'message-context-instruction',
+    `\\s*(?:${parts.join('|')})\\.?\\s*$`,
+    'iu'
+  );
+}
+
+function getPrefixRegex(cacheKey, customKey, defaults, flags = 'iu') {
+  const parts = getPatternParts(customKey, defaults);
+  return getCachedRegex(
+    cacheKey,
+    `^(?:${parts.join('|')})(?=$|[\\s:：~,，،—-])[\\s:：~,，،—-]*`,
+    flags
+  );
+}
+
+export function getUnknownContactRegex() {
+  return getPrefixRegex(
+    'unknown-contact-prefix',
+    'unknown-contact-prefix',
+    ['Maybe', 'Mungkin', 'Talvez']
+  );
+}
+
+export function getParticipantPrefixRegex() {
+  return getPrefixRegex(
+    'participant-prefix',
+    'participant-prefix',
+    ['Participant', 'Peserta']
+  );
+}
+
+export function getParticipantWordRegex() {
+  const parts = getPatternParts('participant-prefix', ['Participant', 'Peserta']);
+  return getCachedRegex(
+    'participant-word',
+    `(?:^|\\s)(?:${parts.join('|')})(?=$|[\\s:：~,，،—-])[\\s:：~,，،—-]*`,
+    'giu'
+  );
+}
+
+export function getQuotePrefixRegex() {
+  const parts = getPatternParts('quote-prefix', [
+    'to quoted message from',
+    'quoted message from',
+    'ke pesan yang dikutip dari',
+    'pesan yang dikutip dari'
+  ]);
+  return getCachedRegex('quote-prefix', `(?:${parts.join('|')})\\s*`, 'iu');
+}
+
+export function getOnlineStatusRegex() {
+  const parts = getPatternParts('online-status', ['online']);
+  return getCachedRegex('online-status', `^(?:${parts.join('|')})$`, 'iu');
+}
+
+export function getLastSeenRegex() {
+  const parts = getPatternParts('last-seen-prefix', ['last seen', 'terakhir dilihat']);
+  return getCachedRegex('last-seen-prefix', `^(?:${parts.join('|')})(.*)$`, 'iu');
+}
+
+export function getRecordingAudioStatusRegex() {
+  return getCachedRegex(
+    'recording-audio-status',
+    `^(?:${getGenericRecordingAudioPattern()})(.*)$`,
+    'iu'
+  );
+}
+
+export function getChatStatusRegex() {
+  const parts = [
+    ...getPatternParts('chat-status-labels', [
+      'muted chat',
+      'chat dibisukan',
+      'pinned chat',
+      'chat disematkan',
+      'archived chat',
+      'chat diarsipkan',
+      'draft',
+      'draf'
+    ], /[|]/),
+    ...getTypingParts()
+  ];
+  return getCachedRegex(
+    'chat-status-labels',
+    `^(?:${parts.join('|')})(?:\\u2026|\\.{3})?$`,
+    'iu'
+  );
+}
+
+export function getViewStatusRegex() {
+  const parts = getPatternParts('view-status', ['(?:view|lihat) status']);
+  return getCachedRegex('view-status', `^(?:${parts.join('|')})(?=$|\\s)`, 'iu');
+}
+
+export function getMetaAIRegex(exact = false) {
+  const parts = getPatternParts('nav-meta-ai', ['Meta AI']);
+  return getCachedRegex(
+    exact ? 'meta-ai-exact' : 'meta-ai-contained',
+    exact ? `^(?:${parts.join('|')})\\s*[:：]?$` : `(?:${parts.join('|')})`,
+    'iu'
+  );
+}
+
+export function splitParticipantList(value) {
+  const separators = [','];
+  const customSeparator = getCustomText('participant-separator');
+  if (customSeparator) separators.unshift(escapeRegExp(customSeparator));
+  return String(value || '')
+    .split(getCachedRegex('participant-separator', `\\s*(?:${separators.join('|')})\\s*`, 'u'))
+    .map(part => part.trim())
+    .filter(Boolean);
+}
 
 export function getLanguage() {
   return language;
+}
+
+export function getSupportedLanguage(value) {
+  const code = String(value || '').toLowerCase().split('-')[0];
+  return LANGUAGES.some(item => item.value === code) ? code : '';
 }
 
 export function setLanguage(value) {
@@ -155,7 +395,128 @@ export function setAutomaticReading(value) {
   return true;
 }
 
-export function t(key, values = {}) {
-  const template = messages[language][key] || messages.en[key] || key;
+export function tForLanguage(key, targetLanguage, values = {}) {
+  const target = getSupportedLanguage(targetLanguage) || 'en';
+  const template = messages[target][key] || messages.en[key] || key;
   return template.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? `{${name}}`);
+}
+
+export function t(key, values = {}) {
+  return tForLanguage(key, language, values);
+}
+
+export function isSenderDeviceAnnouncementEnabled() {
+  return senderDeviceAnnouncements;
+}
+
+export function setSenderDeviceAnnouncement(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.senderDeviceAnnouncements, String(nextValue))) return false;
+  senderDeviceAnnouncements = nextValue;
+  return true;
+}
+
+export function shouldOpenChatsAtFirstUnread() {
+  return openChatsAtFirstUnread;
+}
+
+export function setOpenChatsAtFirstUnread(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.openChatsAtFirstUnread, String(nextValue))) return false;
+  openChatsAtFirstUnread = nextValue;
+  return true;
+}
+
+export function isShortcutRemapEnabled(name) {
+  return shortcutRemaps[name] === true;
+}
+
+export function setShortcutRemap(name, value) {
+  const storageKey = shortcutRemapStorageKeys[name];
+  if (!storageKey) return false;
+  const nextValue = !!value;
+  if (!writeSetting(storageKey, String(nextValue))) return false;
+  shortcutRemaps[name] = nextValue;
+  return true;
+}
+
+export function getDeliveryStatusKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const builtInDefinition = DELIVERY_STATUS_DEFINITIONS.find(({ values }) =>
+    values.some(item => item.toLowerCase() === normalized));
+  if (builtInDefinition) return builtInDefinition.key;
+  const customDefinition = DELIVERY_STATUS_DEFINITIONS.find(({ customKey }) => {
+    const customValue = getCustomText(customKey).toLowerCase();
+    return customValue && customValue === normalized;
+  });
+  return customDefinition?.key || '';
+}
+
+export function getDeliveryStatusRank(value) {
+  const key = getDeliveryStatusKey(value);
+  return DELIVERY_STATUS_DEFINITIONS.find(definition => definition.key === key)?.rank ?? -1;
+}
+
+export function translateDeliveryStatus(value, targetLanguage = '') {
+  const key = getDeliveryStatusKey(value);
+  return key ? (targetLanguage ? tForLanguage(key, targetLanguage) : t(key)) : value;
+}
+
+export function translateDeliveryStatusInText(value, targetLanguage = '') {
+  const text = String(value || '');
+  const pattern = getDeliveryStatusPattern();
+  return text.replace(getCachedRegex('delivery-status-text', `(^|\\s)(${pattern})(?=\\s*$)`, 'i'),
+    (_, prefix, status) => `${prefix}${translateDeliveryStatus(status, targetLanguage)}`);
+}
+
+export function getTypingSuffix(value) {
+  const match = String(value || '').match(/(\u2026|\.{3})$/);
+  return match?.[1] || '';
+}
+
+export function isolateBidiText(value) {
+  const text = String(value || '');
+  return /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc]/u.test(text)
+    ? `\u2068${text}\u2069`
+    : text;
+}
+
+function translateNamedActivity(value, pattern, cacheKey, messageKey) {
+  const text = String(value || '').trim();
+  const match = text.match(getCachedRegex(
+    cacheKey,
+    `^(.*?)\\s+(?:(is|are|sedang)\\s+)?(?:${pattern})(\\u2026|\\.{3})?$`,
+    'iu'
+  ));
+  return match
+    ? t(messageKey, {
+      name: isolateBidiText(match[1]),
+      verb: match[2]?.toLowerCase() === 'are' ? 'are' : 'is',
+      suffix: match[3] || ''
+    })
+    : text;
+}
+
+export function translateTypingActivity(value) {
+  return translateNamedActivity(value, getGenericTypingPattern(), 'typing-activity', 'typingActivity');
+}
+
+export function translateRecordingAudioActivity(value) {
+  return translateNamedActivity(
+    value,
+    getGenericRecordingAudioPattern(),
+    'recording-audio-activity',
+    'recordingAudioActivity'
+  );
+}
+
+export function translateActivityStatus(value) {
+  const text = String(value || '').trim();
+  if (getOnlineStatusRegex().test(text)) return t('online');
+  const lastSeen = text.match(getLastSeenRegex());
+  if (lastSeen) return t('lastSeen', { details: lastSeen[1] });
+  const recording = text.match(getRecordingAudioStatusRegex());
+  if (recording) return t('recordingAudio', { details: recording[1] });
+  if (getRecordingAudioRegex().test(text)) return translateRecordingAudioActivity(text);
+  return translateTypingActivity(text);
 }

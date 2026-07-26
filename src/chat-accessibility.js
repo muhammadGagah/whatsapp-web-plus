@@ -10,6 +10,7 @@ import {
 import {
   _origSetAttribute,
   cleanString,
+  getDirectMetaAISender,
   hasActiveState,
   hasDirectMetaAISender,
   isStatusTabActive,
@@ -23,13 +24,24 @@ import {
   releaseOwnedAttribute,
   releaseOwnedWithin
 } from './owned-attributes.js';
-import { getLanguage, isAnnouncementReductionEnabled } from './settings-state.js';
+import {
+  getChatStatusRegex,
+  getLanguage,
+  getNavButton,
+  getSupportedLanguage,
+  getUnreadDividerRegex,
+  getViewStatusRegex,
+  isAnnouncementReductionEnabled,
+  t,
+  tForLanguage
+} from './settings-state.js';
 
 let lastFocusedChatRowNode = null;
 let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
 let announcementTimer = null;
 let userAnnouncementUntil = 0;
+let announcementGeneration = 0;
 let metaAIMessageNameId = 0;
 const MESSAGE_LOG_LIMIT = 50;
 
@@ -51,7 +63,7 @@ export function getNextMessageRow(marker, messageContainer) {
 }
 
 function isNavbarActive(selectorKey) {
-  return hasActiveState(document.querySelector(SELECTORS[selectorKey]));
+  return hasActiveState(getNavButton(selectorKey));
 }
 
 export function isChatsTabActive() {
@@ -139,8 +151,18 @@ function getChatPreviewIconLabel(el) {
   if (!identity) return '';
   if (CHAT_LABEL_NOISE_RE.ignoredIconIdentity.test(identity)) return '';
 
+  const hostLanguage = getSupportedLanguage(document.documentElement?.lang);
+  if (!hostLanguage) {
+    return cleanString(
+      el.getAttribute('aria-label') ||
+      el.getAttribute('title') ||
+      el.querySelector?.('title')?.textContent ||
+      '',
+      false
+    );
+  }
   const match = CHAT_PREVIEW_ICON_LABELS.find(item => item.pattern.test(identity));
-  return match ? match.label : '';
+  return match ? tForLanguage(match.labelKey, hostLanguage) : '';
 }
 
 function collectChatTextParts(root, parts) {
@@ -199,17 +221,17 @@ export function collectChatBadgeLabels(row) {
     const label = normalizeChatLabelPart(el.getAttribute('aria-label') || '');
     if (!label) return;
 
-    if (/\bunread messages?\b/i.test(label)) {
+    if (getUnreadDividerRegex().test(label)) {
       addChatLabelPart(unread, label);
       return;
     }
 
-    if (/\b(muted chat|pinned chat|archived chat|draft|typing)\b/i.test(label)) {
+    if (getChatStatusRegex().test(label)) {
       addChatLabelPart(status, label);
       return;
     }
 
-    const isStatusAction = /^(?:view|lihat) status\b/i.test(label);
+    const isStatusAction = getViewStatusRegex().test(label);
     if (!isStatusAction && !hasFocusableSelfOrDescendant(el) && cellFrame && !cellFrame.contains(el)) {
       addChatLabelPart(details, label);
     }
@@ -261,7 +283,7 @@ export function applyMetaAIMessageName(message) {
     return false;
   }
   const labelledElements = [
-    message.querySelector('span[aria-label="Meta AI:"]'),
+    getDirectMetaAISender(message),
     message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text'),
     message.querySelector('[data-testid="msg-meta"]')
   ].filter(Boolean);
@@ -282,23 +304,102 @@ export function applyOwnedMessageRole(el, role, owner) {
   return true;
 }
 
-function releaseMessageRoles(owner, keep) {
+function releaseMessageAttributes(owner, keep) {
   for (const el of [...ownedElements]) {
-    const state = ownedAttributes.get(el)?.get('role');
-    if (!state || state.owner !== owner) continue;
-    if (!el.isConnected || !keep(el)) releaseOwnedAttribute(el, 'role', owner);
+    const attributes = ownedAttributes.get(el);
+    if (!attributes || ![...attributes.values()].some(state => state.owner === owner)) continue;
+    if (el.isConnected && keep(el)) continue;
+    for (const [name, state] of [...attributes]) {
+      if (state.owner === owner) releaseOwnedAttribute(el, name, owner);
+    }
   }
+}
+
+function canApplyOwnedMessageRole(el, role, owner) {
+  const state = ownedAttributes.get(el)?.get('role');
+  const currentRole = (el.getAttribute('role') || '').trim();
+  return !currentRole || currentRole === role ||
+    (state?.owner === owner && currentRole === state.appliedValue);
+}
+
+function ensureMessageGridLabel() {
+  let label = document.getElementById('wa-plus-message-grid-label');
+  if (!label) {
+    label = document.createElement('span');
+    label.id = 'wa-plus-message-grid-label';
+    applyVisuallyHiddenStyle(label);
+    document.body.appendChild(label);
+  }
+  label.lang = getLanguage();
+  label.dir = 'ltr';
+  label.textContent = t('messageHistory');
+  return label;
+}
+
+function setMessageGridTabStop(messages, target) {
+  messages.forEach(message =>
+    applyOwnedAttribute(message, 'tabindex', message === target ? '0' : '-1', OWNERS.messageCell)
+  );
+}
+
+function normalizeMessageGridTabStops(messages, preferred = null) {
+  const activeCell = document.activeElement?.closest?.('[role="gridcell"]');
+  const rememberedCell = lastFocusedMessageNode?.querySelector?.('.focusable-list-item');
+  const target = (messages.includes(preferred) && preferred) ||
+    (messages.includes(activeCell) && activeCell) ||
+    messages.find(message => message.getAttribute('tabindex') === '0') ||
+    (messages.includes(rememberedCell) && rememberedCell) ||
+    messages[0];
+  if (target) setMessageGridTabStop(messages, target);
+}
+
+export function handleMessageGridKeydown(event) {
+  if (event.defaultPrevented || event.isComposing ||
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return false;
+
+  const cell = event.target?.closest?.('[role="gridcell"]');
+  if (!cell || event.target !== cell ||
+    ownedAttributes.get(cell)?.get('role')?.owner !== OWNERS.messageCell) return false;
+  const grid = cell.closest?.('[role="grid"]');
+  if (!grid || ownedAttributes.get(grid)?.get('role')?.owner !== OWNERS.messageGrid) return false;
+  const cells = Array.from(grid.querySelectorAll('[role="gridcell"]')).filter(candidate =>
+    ownedAttributes.get(candidate)?.get('role')?.owner === OWNERS.messageCell
+  );
+  const index = cells.indexOf(cell);
+  if (index < 0) return false;
+
+  const targetIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? cells.length - 1
+      : Math.max(0, Math.min(cells.length - 1, index + (event.key === 'ArrowUp' ? -1 : 1)));
+  const target = cells[targetIndex];
+  setMessageGridTabStop(cells, target);
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ block: 'nearest' });
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
 }
 
 function applyMessageGridExperiment() {
   const main = document.querySelector(SELECTORS.main);
   const container = main && main.querySelector(SELECTORS.conversationMessages);
   const viewport = getMessageGridViewport(container);
-  const active = isAnnouncementReductionEnabled() && !!viewport && isChatMainActive(main);
-  const messages = active
-    ? Array.from(viewport.querySelectorAll('div[role="row"] .focusable-list-item'))
-    : [];
+  const chatReady = !!viewport && isChatMainActive(main);
+  const active = isAnnouncementReductionEnabled() && chatReady;
+  const rows = active ? Array.from(viewport.querySelectorAll('div[role="row"]')) : [];
+  const messages = rows.map(row => row.querySelector('.focusable-list-item'));
   const metaAIReplies = new Set(messages.filter(isMetaAIReply));
+  const completeGrid = active && rows.length > 0 && messages.every((message, index) =>
+    message &&
+    message.closest('div[role="row"]') === rows[index] &&
+    (message.hasAttribute('aria-label') || metaAIReplies.has(message)) &&
+    canApplyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell)
+  ) && new Set(messages).size === messages.length &&
+    canApplyOwnedMessageRole(viewport, 'grid', OWNERS.messageGrid);
+  const messageSet = new Set(messages);
 
   const staleMetaAIMessageNames = new Set();
   for (const el of [...ownedElements]) {
@@ -310,28 +411,38 @@ function applyMessageGridExperiment() {
       continue;
     }
     const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
-    if (!message || !metaAIReplies.has(message)) staleMetaAIMessageNames.add(message || el);
+    if (!message || !metaAIReplies.has(message)) {
+      staleMetaAIMessageNames.add(message || el);
+    }
   }
   staleMetaAIMessageNames.forEach(message => releaseOwnedWithin(message, OWNERS.metaAIMessageName));
+  metaAIReplies.forEach(applyMetaAIMessageName);
 
-  releaseMessageRoles(OWNERS.messageGrid, el => active && el === viewport);
-  releaseMessageRoles(OWNERS.messageCell, el => active && viewport.contains(el) &&
-    (metaAIReplies.has(el) || el.matches('.focusable-list-item[aria-label]')));
+  releaseMessageAttributes(OWNERS.messageGrid, el => completeGrid && el === viewport);
+  releaseMessageAttributes(OWNERS.messageCell, el => completeGrid && messageSet.has(el));
 
-  if (!active) return;
+  if (!completeGrid) return;
 
   if (!applyOwnedMessageRole(viewport, 'grid', OWNERS.messageGrid)) {
-    releaseMessageRoles(OWNERS.messageCell, () => false);
+    releaseMessageAttributes(OWNERS.messageGrid, () => false);
+    releaseMessageAttributes(OWNERS.messageCell, () => false);
     return;
   }
+  applyOwnedAttribute(
+    viewport,
+    'aria-labelledby',
+    ensureMessageGridLabel().id,
+    OWNERS.messageGrid
+  );
+  applyOwnedAttribute(viewport, 'aria-rowcount', '-1', OWNERS.messageGrid);
   messages.forEach(message => {
-    if (!message.hasAttribute('aria-label') && !metaAIReplies.has(message)) return;
-    if (metaAIReplies.has(message)) applyMetaAIMessageName(message);
     applyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell);
   });
+  normalizeMessageGridTabStops(messages);
 }
 
 function applyChatMaskedLabel(el, label) {
+  applyOwnedAttribute(el, 'aria-labelledby', null, OWNERS.chatLabel);
   applyOwnedAttribute(el, 'aria-label', label, OWNERS.chatLabel);
 }
 
@@ -343,7 +454,10 @@ export function getChatRowGridcell(row) {
   if (!row || !row.querySelector) return null;
   return row.querySelector(':scope > [role="gridcell"]') || Array.from(row.children || []).find(el => {
     const state = ownedAttributes.get(el)?.get('role');
-    return state?.owner === OWNERS.chatStructure && state.originalValue === 'gridcell';
+    if (state?.owner !== OWNERS.chatStructure || state.originalValue !== 'gridcell') return false;
+    if (el.getAttribute('role') === state.appliedValue) return true;
+    dropOwnedAttribute(el, 'role');
+    return false;
   }) || null;
 }
 
@@ -353,12 +467,12 @@ export function getChatRowActivator(row) {
   return gridcell.querySelector(`:scope > [tabindex][aria-selected], :scope > [tabindex]:not(${SELECTORS.cellFrame})`) || gridcell;
 }
 
-export function focusChatRow(row, onFailure) {
-  if (!getChatRowActivator(row) || getActiveModal()) return false;
+export function focusChatRow(row, onFailure, shouldContinue = () => true) {
+  if (!shouldContinue() || !getChatRowActivator(row) || getActiveModal()) return false;
   const rowTitle = getChatRowTitle(row);
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const focusTarget = (retried = false) => {
-    if (getActiveModal()) return false;
+    if (!shouldContinue() || getActiveModal()) return false;
     const currentRow = row.isConnected
       ? row
       : findChatRowByTitle(getChatListRows(), rowTitle);
@@ -431,7 +545,9 @@ export function applyChatRowDescendantMasks(row, maskRoot) {
   maskRoot.querySelectorAll(CHAT_ROW_NATIVE_TEXT_SELECTOR).forEach(el => {
     if (el === maskRoot) return;
     const isNestedGridcell = el.getAttribute('role') === 'gridcell';
-    const isStatusAction = /^(?:view|lihat) status\b/i.test(el.getAttribute('aria-label') || el.getAttribute('title') || '');
+    const isStatusAction = getViewStatusRegex().test(
+      el.getAttribute('aria-label') || el.getAttribute('title') || ''
+    );
     if (
       (el.parentElement && el.parentElement.closest('[aria-hidden="true"]')) ||
       hasFocusableSelfOrDescendant(el) ||
@@ -465,18 +581,21 @@ export function applyChatRowNativeMask(row) {
     return false;
   }
 
-  if (activator && activator !== gridcell) {
+  const canTransferRole = activator && activator !== gridcell &&
+    applyOwnedMessageRole(activator, 'gridcell', OWNERS.chatStructure);
+  if (canTransferRole) {
     const transferFocus = document.activeElement === gridcell;
     releaseOwnedAttribute(gridcell, 'aria-label', OWNERS.chatLabel);
+    releaseOwnedAttribute(gridcell, 'aria-labelledby', OWNERS.chatLabel);
     applyChatMaskedLabel(activator, label);
     applyOwnedAttribute(gridcell, 'role', 'presentation', OWNERS.chatStructure);
-    applyOwnedAttribute(activator, 'role', 'gridcell', OWNERS.chatStructure);
     applyOwnedAttribute(gridcell, 'tabindex', null, OWNERS.chatStructure);
     applyChatRowDescendantMasks(row, activator);
     if (transferFocus) activator.focus({ preventScroll: true });
     return true;
   }
 
+  restoreChatRowNativeMasks(row);
   applyChatMaskedLabel(gridcell, label);
   applyChatRowDescendantMasks(row, gridcell);
   return true;
@@ -486,7 +605,12 @@ export function normalizeChatListTabStops(chatList, preferredRow = null) {
   const rows = Array.from(getChatListRowCandidates(chatList)).filter(row => row.querySelector(SELECTORS.cellFrame));
   if (rows.length === 0) return;
   const visibleRows = getElementsInsideViewport(rows, getChatListViewport(chatList));
-  const target = (rows.includes(preferredRow) && preferredRow) || getPreferredChatRow(visibleRows) || rows[0];
+  const activeRow = document.activeElement?.closest?.('div[role="row"]');
+  const target = (rows.includes(preferredRow) && preferredRow) ||
+    (rows.includes(activeRow) && activeRow) ||
+    (rows.includes(lastFocusedChatRowNode) && lastFocusedChatRowNode) ||
+    getPreferredChatRow(visibleRows) ||
+    rows[0];
 
   rows.forEach(row => {
     const gridcell = getChatRowGridcell(row);
@@ -501,8 +625,8 @@ export function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
   if (!rootEl || !rootEl.querySelectorAll) return null;
 
   if (!isAnnouncementReductionEnabled()) {
-    releaseMessageRoles(OWNERS.messageGrid, () => false);
-    releaseMessageRoles(OWNERS.messageCell, () => false);
+    releaseMessageAttributes(OWNERS.messageGrid, () => false);
+    releaseMessageAttributes(OWNERS.messageCell, () => false);
     restoreChatRowNativeMasks(rootEl);
     restoreChatRowNativeMasksOutsideChatList();
     return null;
@@ -548,12 +672,21 @@ export function scheduleRoleFix(rootEl) {
     const roots = [...dirtyRoots];
     dirtyRoots.clear();
     let chatList = null;
-    applyMessageGridExperiment();
-    restoreChatRowNativeMasksOutsideChatList();
+    const messageDirty = roots.some(root =>
+      root.matches?.(SELECTORS.conversationMessages) ||
+      root.closest?.(SELECTORS.conversationMessages)
+    );
+    const chatListDirty = roots.some(root =>
+      root.matches?.(SELECTORS.side) ||
+      root.closest?.(SELECTORS.chatListInSide) ||
+      root.querySelector?.(SELECTORS.chatList)
+    );
+    if (messageDirty) applyMessageGridExperiment();
+    if (chatListDirty) restoreChatRowNativeMasksOutsideChatList();
     roots.forEach(root => {
       if (root.isConnected !== false) chatList = fixAccessibilityRoles(root, true) || chatList;
     });
-    if (chatList) normalizeChatListTabStops(chatList);
+    if (chatList && chatListDirty) normalizeChatListTabStops(chatList);
   });
 }
 
@@ -565,15 +698,27 @@ export function getRoleFixRoot(el) {
     el.closest(`${SELECTORS.side}, ${SELECTORS.main}`);
 }
 
+function applyVisuallyHiddenStyle(el) {
+  el.style.position = 'absolute';
+  el.style.width = '1px';
+  el.style.height = '1px';
+  el.style.padding = '0';
+  el.style.margin = '-1px';
+  el.style.overflow = 'hidden';
+  el.style.clip = 'rect(0, 0, 0, 0)';
+  el.style.whiteSpace = 'nowrap';
+  el.style.border = '0';
+}
+
 export function ensureLiveRegion() {
   let liveRegion = document.getElementById('wa-plus-live-region');
   if (!liveRegion) {
     liveRegion = document.createElement('div');
     liveRegion.id = 'wa-plus-live-region';
     _origSetAttribute.call(liveRegion, 'role', 'status');
+    _origSetAttribute.call(liveRegion, 'aria-live', 'polite');
     _origSetAttribute.call(liveRegion, 'aria-atomic', 'true');
-    liveRegion.style.position = 'absolute';
-    liveRegion.style.left = '-9999px';
+    applyVisuallyHiddenStyle(liveRegion);
     document.body.appendChild(liveRegion);
   }
   liveRegion.lang = getLanguage();
@@ -591,8 +736,7 @@ export function ensureMessageLog() {
     _origSetAttribute.call(messageLog, 'aria-live', 'polite');
     _origSetAttribute.call(messageLog, 'aria-relevant', 'additions');
     _origSetAttribute.call(messageLog, 'aria-atomic', 'false');
-    messageLog.style.position = 'absolute';
-    messageLog.style.left = '-9999px';
+    applyVisuallyHiddenStyle(messageLog);
     document.body.appendChild(messageLog);
   }
   messageLog.lang = getLanguage();
@@ -600,9 +744,9 @@ export function ensureMessageLog() {
   return messageLog;
 }
 
-export function announceMessages(messages) {
+function appendMessages(messages, generation) {
   const values = messages.filter(Boolean);
-  if (!values.length) return;
+  if (!values.length || generation !== announcementGeneration) return;
   const messageLog = ensureMessageLog();
   values.forEach(text => {
     const entry = document.createElement('div');
@@ -627,16 +771,39 @@ export function clearStatusRegion() {
   if (liveRegion) liveRegion.textContent = '';
 }
 
-export function announce(text) {
+export function invalidatePassiveAnnouncements() {
+  announcementGeneration++;
+  clearTimeout(announcementTimer);
+  announcementTimer = null;
+  userAnnouncementUntil = 0;
+  const liveRegion = document.getElementById('wa-plus-live-region');
+  if (liveRegion) liveRegion.textContent = '';
+  const messageLog = document.getElementById('wa-plus-message-log');
+  if (messageLog) messageLog.textContent = '';
+}
+
+function announceWithGeneration(text, generation) {
   if (!text) return;
+  if (generation !== announcementGeneration) return;
   userAnnouncementUntil = Date.now() + 3000;
   const liveRegion = ensureLiveRegion();
   clearTimeout(announcementTimer);
   liveRegion.textContent = '';
   announcementTimer = setTimeout(() => {
+    if (generation !== announcementGeneration) return;
     liveRegion.textContent = text;
-    announcementTimer = setTimeout(() => { liveRegion.textContent = ''; }, 3000);
+    announcementTimer = setTimeout(() => {
+      if (generation === announcementGeneration) liveRegion.textContent = '';
+    }, 3000);
   }, 0);
+}
+
+export function announce(text) {
+  announceWithGeneration(text, announcementGeneration);
+}
+
+export function announcePassiveMessages(messages, generation) {
+  appendMessages(messages, generation);
 }
 
 export function getUserAnnouncementUntil() {
@@ -756,14 +923,46 @@ export function getBestInnerFocusElement(row) {
   return row;
 }
 
+export function getHeaderText(info) {
+  if (!info) return '';
+  const cleanHeaderLines = value => String(value || '')
+    .split(/\r?\n/)
+    .map(line => cleanString(line, false))
+    .filter(Boolean)
+    .join('\n');
+
+  const visible = cleanHeaderLines(info.innerText || info.textContent || '');
+  if (visible) return visible;
+
+  const labelledBy = (info.getAttribute('aria-labelledby') || '')
+    .split(/\s+/)
+    .map(id => {
+      const label = document.getElementById(id);
+      return label?.innerText || label?.textContent || '';
+    })
+    .filter(Boolean)
+    .join('\n');
+  return cleanHeaderLines(
+    labelledBy || info.getAttribute('aria-label') || info.getAttribute('title') || ''
+  );
+}
+
 export function getHeaderInfoButton() {
   const main = document.querySelector(SELECTORS.main);
   if (!isChatMainActive(main)) return null;
 
   const header = main.querySelector('header');
   if (!header) return null;
-  const buttons = Array.from(header.querySelectorAll('div[role="button"]'));
-  return buttons.find(button => button.classList.contains('xdt5ytf')) || buttons[1];
+
+  const titleEl = header.querySelector(
+    '[data-testid="conversation-info-header-chat-title"], [data-testid="chat-title"], span[title]'
+  );
+  if (!titleEl) return null;
+
+  const info = titleEl.closest('[data-testid="conversation-info-header"][role="button"]') ||
+    titleEl.closest('[data-testid="conversation-info-header"]') ||
+    titleEl.closest('[role="button"]');
+  return info && header.contains(info) && info.contains(titleEl) ? info : null;
 }
 
 export function getSelectedChatRow(rows) {
@@ -792,13 +991,41 @@ export function getChatRowTitle(row) {
 }
 
 export function getCurrentChatTitle() {
-  const infoBtn = getHeaderInfoButton();
-  if (!infoBtn) return '';
+  const main = document.querySelector(SELECTORS.main);
+  if (!main) return '';
 
-  const chatTitle = infoBtn.querySelector('[data-testid="conversation-info-header-chat-title"]');
-  const titled = !chatTitle && infoBtn.querySelector('[title]');
-  const value = chatTitle ? chatTitle.textContent : (titled ? titled.getAttribute('title') : (infoBtn.innerText || '').split('\n')[0]);
-  return cleanString(value || '', false);
+  const header = main.querySelector('header');
+  if (header) {
+    const titleEl = header.querySelector(
+      '[data-testid="conversation-info-header-chat-title"], [data-testid="chat-title"]'
+    );
+    if (titleEl) {
+      const text = cleanString(titleEl.getAttribute('title') || titleEl.textContent || '', false);
+      if (text) return text;
+    }
+  }
+
+  const infoBtn = getHeaderInfoButton();
+  if (infoBtn) {
+    const titleEl = infoBtn.querySelector('[data-testid="conversation-info-header-chat-title"], [data-testid="chat-title"]');
+    if (titleEl) {
+      const text = cleanString(titleEl.getAttribute('title') || titleEl.textContent || '', false);
+      if (text) return text;
+    }
+    const titled = infoBtn.querySelector('span[title]');
+    if (titled) {
+      const text = cleanString(titled.getAttribute('title') || titled.textContent || '', false);
+      if (text) return text;
+    }
+    const fullText = getHeaderText(infoBtn);
+    if (fullText) {
+      const firstLine = fullText.split('\n')[0].trim();
+      const text = cleanString(firstLine, false);
+      if (text) return text;
+    }
+  }
+
+  return '';
 }
 
 export function findChatRowByTitle(rows, title) {
@@ -820,8 +1047,27 @@ export function getPreferredChatRow(rows, origin = null) {
   return startedAtDocumentRoot ? (rows[0] || null) : null;
 }
 
-export function getActiveModal() {
-  return document.querySelector('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]');
+export function isRenderedElement(el) {
+  if (!el || !el.isConnected || el.hidden || el.inert ||
+    el.getAttribute('aria-hidden') === 'true') return false;
+  for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.hidden || ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true') return false;
+  }
+  if (typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return typeof el.getClientRects !== 'function' || el.getClientRects().length > 0;
+}
+
+export function getActiveModal(preferredTarget = document.activeElement) {
+  const selector = 'dialog[open], [role="dialog"], [role="alertdialog"]';
+  const dialogs = Array.from(document.querySelectorAll?.(selector) || []).filter(isRenderedElement);
+  if (preferredTarget) {
+    const containing = [...dialogs].reverse().find(dialog => dialog.contains?.(preferredTarget));
+    if (containing) return containing;
+  }
+  return dialogs.at(-1) || null;
 }
 
 export function rememberFocusedRow(target) {
@@ -841,6 +1087,14 @@ export function rememberFocusedRow(target) {
     lastFocusedMessageNode = row;
     const message = row.querySelector('[data-id]');
     lastFocusedMessageId = message ? message.getAttribute('data-id') : '';
+    const cell = target.closest?.('[role="gridcell"]');
+    const grid = cell?.closest?.('[role="grid"]');
+    if (grid && ownedAttributes.get(cell)?.get('role')?.owner === OWNERS.messageCell) {
+      const cells = Array.from(grid.querySelectorAll('[role="gridcell"]')).filter(candidate =>
+        ownedAttributes.get(candidate)?.get('role')?.owner === OWNERS.messageCell
+      );
+      normalizeMessageGridTabStops(cells, cell);
+    }
   }
 }
 
