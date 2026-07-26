@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const scriptPath = process.env.WA_PLUS_SCRIPT || 'whatsapp_web_plus.user.js';
+const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
+    .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 const source = fs.readFileSync(scriptPath, 'utf8').replace(
     /\}\)\(\);\s*$/,
-    'globalThis.__privacyTest = { cleanString, getPrivacyContext, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), seedPrivacyState: rememberPrivacyAttribute }; })();'
+    'globalThis.__privacyTest = { cleanString, cleanElementAttributes, cleanNamedAttribute, prepareNamedAttribute, getPrivacyContext, getDirectMetaAISender, getMessageContextInstructionRegex, setCustomText, setSenderDeviceAnnouncement, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), restorePrivacyAttributes, seedPrivacyState: rememberPrivacyAttribute }; })();'
 );
 class Element {
     constructor() {
@@ -28,23 +30,40 @@ class Element {
     }
     matches() { return false; }
     querySelector(selector) { return this.queryHandler ? this.queryHandler(selector) : null; }
+    querySelectorAll() { return []; }
 }
 Element.prototype.setAttribute = function (name, value) { this.attributes.set(name, String(value)); };
 Element.prototype.removeAttribute = function (name) { this.attributes.delete(name); };
 Element.prototype.focus = function () { this.focusCalled = true; };
 
+const storedSettings = new Map();
 const sandbox = {
     Element,
     HTMLElement: Element,
     console,
+    CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     document: { readyState: 'loading', addEventListener() {}, querySelector() { return null; } },
-    localStorage: { getItem() { return 'true'; } }
+    localStorage: {
+        getItem(key) {
+            if (storedSettings.has(key)) return storedSettings.get(key);
+            return key === 'wa-plus-privacy' ? 'true' : null;
+        },
+        setItem(key, value) { storedSettings.set(key, String(value)); }
+    }
 };
 vm.runInNewContext(source, sandbox);
 
 const clean = sandbox.__privacyTest.cleanString;
+const cleanElementAttributes = sandbox.__privacyTest.cleanElementAttributes;
+const cleanNamedAttribute = sandbox.__privacyTest.cleanNamedAttribute;
+const prepareNamedAttribute = sandbox.__privacyTest.prepareNamedAttribute;
 const getContext = sandbox.__privacyTest.getPrivacyContext;
+const getDirectMetaAISender = sandbox.__privacyTest.getDirectMetaAISender;
+const getMessageContextInstructionRegex = sandbox.__privacyTest.getMessageContextInstructionRegex;
+const setCustomText = sandbox.__privacyTest.setCustomText;
+const setSenderDeviceAnnouncement = sandbox.__privacyTest.setSenderDeviceAnnouncement;
 const hasPrivacyState = sandbox.__privacyTest.hasPrivacyState;
+const restorePrivacyAttributes = sandbox.__privacyTest.restorePrivacyAttributes;
 const seedPrivacyState = sandbox.__privacyTest.seedPrivacyState;
 const conversation = {};
 const main = {
@@ -52,12 +71,64 @@ const main = {
         return selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
     }
 };
-assert.match(source, /const SCRIPT_VERSION = '2\.6\.66'/);
-assert.match(source, /applyOwnedMessageRole\(viewport, 'grid'/);
-assert.match(source, /applyOwnedMessageRole\(message, 'gridcell'/);
-assert.match(source, /if \(!applyOwnedMessageRole\(viewport, 'grid'/);
-assert.match(source, /releaseMessageRoles\(OWNERS\.messageCell/);
-assert.match(source, /releaseOwnedAttribute\(el, 'role', owner\)/);
+const unsupportedMessageWrapper = {
+    getAttribute(name) {
+        return name === 'data-id' ? 'msg_3A1234567890ABCDEF12' : null;
+    }
+};
+const unsupportedMessageLabel = new Element();
+unsupportedMessageLabel.matches = selector => selector === '.focusable-list-item';
+unsupportedMessageLabel.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    if (selector === '[data-testid^="conv-msg-"][data-id]') return unsupportedMessageWrapper;
+    return null;
+};
+assert.equal(setCustomText('delivery-delivered', 'remis'), true);
+assert.equal(setSenderDeviceAnnouncement(true), true);
+sandbox.document.documentElement = { lang: 'fr' };
+assert.equal(
+    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Member Six 12:00 remis'),
+    'Member Six 12:00 remis'
+);
+sandbox.document.documentElement.lang = 'en';
+assert.equal(
+    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Member Six 12:00 Delivered'),
+    'Member Six 12:00 Delivered. Sent from iPhone'
+);
+assert.equal(setSenderDeviceAnnouncement(false), true);
+assert.equal(setCustomText('delivery-delivered', ''), true);
+delete sandbox.document.documentElement;
+
+assert.equal(setCustomText('nav-meta-ai', 'Asistente [IA]'), true);
+const customMetaSender = new Element();
+customMetaSender.setAttribute('aria-label', 'Asistente [IA]:');
+const customMetaMessage = {
+    querySelectorAll(selector) {
+        return selector === 'span[aria-label]' ? [customMetaSender] : [];
+    }
+};
+assert.equal(getDirectMetaAISender(customMetaMessage), customMetaSender);
+assert.equal(setCustomText('nav-meta-ai', ''), true);
+
+assert.equal(setCustomText('message-context-instruction', 'Para más opciones [usa flechas]'), true);
+assert.equal(
+    'Mensaje. Para más opciones [usa flechas]'.replace(getMessageContextInstructionRegex(), ''),
+    'Mensaje.'
+);
+assert.equal(
+    'Para más opciones usa flechas'.replace(getMessageContextInstructionRegex(), ''),
+    'Para más opciones usa flechas'
+);
+
+assert.ok(expectedVersion);
+assert.equal(require('./package.json').version, expectedVersion);
+assert.equal(source.match(/^\/\/ @version\s+(\S+)$/m)?.[1], expectedVersion);
+assert.match(source, /applyOwnedMessageRole\(viewport, ["']grid["']/);
+assert.match(source, /applyOwnedMessageRole\(message, ["']gridcell["']/);
+assert.match(source, /if \(!applyOwnedMessageRole\(viewport, ["']grid["']/);
+assert.match(source, /releaseMessageAttributes\(OWNERS\.messageCell/);
+assert.match(source, /releaseOwnedAttribute\(el, name, owner\)/);
 assert.match(source, /function restorePrivacyAttributes\(\)/);
 assert.doesNotMatch(source, /fixGenericSectionBug|MARKERS|unreadMessageId/);
 assert.doesNotMatch(source, /HTMLElement\.prototype\.focus\s*=/);
@@ -81,10 +152,10 @@ const replyMessage = {
     },
     querySelector(selector) {
         if (selector === '.copyable-text[data-pre-plain-text]') {
-            return { getAttribute() { return '[10:45, 7/15/2026] Maybe rohmansyah +62 858-7888-3458: '; } };
+            return { getAttribute() { return '[10:45, 7/15/2026] Maybe Contact A +62 858-7888-3458: '; } };
         }
         if (selector === '[data-testid="quoted-message"] [dir="auto"]') {
-            return { textContent: 'Maybe Sofyan Sukmana +62 812-9505-8785' };
+            return { textContent: 'Maybe Contact B +62 812-9505-8785' };
         }
         if (selector === '[data-testid="quoted-message"] [data-testid="selectable-text"]') {
             return { textContent: 'Info WhatsApp 0812-9505-8785' };
@@ -96,7 +167,7 @@ const quotedCollisionMessage = {
     closest: replyMessage.closest,
     querySelector(selector) {
         if (selector === '[data-testid="quoted-message"] [data-testid="selectable-text"]') {
-            return { textContent: 'Maybe Sofyan Sukmana +62 812-9505-8785: hubungi saya' };
+            return { textContent: 'Maybe Contact B +62 812-9505-8785: hubungi saya' };
         }
         return replyMessage.querySelector(selector);
     }
@@ -105,17 +176,21 @@ const statusQuoteMessage = {
     closest: replyMessage.closest,
     querySelector(selector) {
         if (selector === '[data-testid="quoted-message"] [dir="auto"]') {
-            return { textContent: 'Maybe Sofyan Sukmana +62 812-9505-8785 · Status' };
+            return { textContent: 'Maybe Contact B +62 812-9505-8785 · Status' };
         }
         return replyMessage.querySelector(selector);
     }
+};
+const outgoingReplyMessage = {
+    closest: replyMessage.closest,
+    querySelector() { return null; }
 };
 const structuredQuoteMessage = {
     closest: replyMessage.closest,
     querySelector(selector) {
         if (selector === '[data-testid="quoted-message"] [data-testid="author"][aria-label]') {
             return {
-                getAttribute() { return 'Maybe Nohansa Nuh'; },
+                getAttribute() { return 'Maybe Contact C'; },
                 nextElementSibling: { textContent: '+62 818-616-450' }
             };
         }
@@ -133,7 +208,7 @@ const multilineQuotedMessage = {
         }
         if (selector === '[data-testid="author"][aria-label]') {
             return {
-                getAttribute() { return 'Maybe Prima Agus Setiyawan'; },
+                getAttribute() { return 'Maybe Contact D'; },
                 nextElementSibling: { textContent: '+62 856-4030-6004' }
             };
         }
@@ -142,12 +217,12 @@ const multilineQuotedMessage = {
         }
         if (selector === '[data-testid="quoted-message"] [data-testid="author"][aria-label]') {
             return {
-                getAttribute() { return 'Maybe Fransiska Nadia'; },
+                getAttribute() { return 'Maybe Contact E'; },
                 nextElementSibling: { textContent: '+62 877-7088-0051' }
             };
         }
         if (selector === '[data-testid="quoted-message"] [dir="auto"]') {
-            return { textContent: 'Fransiska Nadia' };
+            return { textContent: 'Contact E' };
         }
         if (selector === '[data-testid="quoted-message"] [data-testid="selectable-text"]') {
             return { textContent: 'Kontaknya yang ini kan ya ka?\n\n+6285591169006' };
@@ -160,7 +235,7 @@ const groupMediaMessage = {
     querySelector(selector) {
         if (selector === '[data-testid="author"][aria-label]') {
             return {
-                getAttribute() { return 'Maybe Arief'; },
+                getAttribute() { return 'Maybe Contact F'; },
                 nextElementSibling: { textContent: '+62 819-9030-1656' }
             };
         }
@@ -175,7 +250,7 @@ const groupTextMessage = {
         }
         if (selector === '[data-testid="author"][aria-label]') {
             return {
-                getAttribute() { return 'Maybe y29n.'; },
+                getAttribute() { return 'Maybe Contact G'; },
                 nextElementSibling: { textContent: '+62 899-0002-593' }
             };
         }
@@ -213,7 +288,7 @@ const mentionBodyMessage = {
             return { getAttribute() { return '[10:00, 7/20/2026] +62 812-3333-4444: '; } };
         }
         if (selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]') {
-            return { textContent: '@Muhammad halo' };
+            return { textContent: '@Contact I halo' };
         }
         return null;
     }
@@ -262,20 +337,73 @@ dynamicVoiceLabel.closestHandler = selector => {
     if (selector === '.focusable-list-item' || selector.endsWith(' .focusable-list-item')) return dynamicVoiceMessage;
     return null;
 };
+const viewOncePhoneAuthor = new Element();
+viewOncePhoneAuthor.nodeType = 1;
+viewOncePhoneAuthor.isConnected = true;
+viewOncePhoneAuthor.textContent = '+62 812-3456-7890';
+viewOncePhoneAuthor.matches = selector => selector === 'span[data-testid="author"]:not([aria-label])';
+viewOncePhoneAuthor.closestHandler = selector =>
+    selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
+let dynamicQuoteReady = false;
+const dynamicReplyMessage = {
+    closest: replyMessage.closest,
+    querySelector(selector) {
+        if (selector.startsWith('[data-testid="quoted-message"]') && !dynamicQuoteReady) return null;
+        return replyMessage.querySelector(selector);
+    }
+};
+const dynamicReplyLabel = new Element();
+dynamicReplyLabel.matches = selector => selector === '.focusable-list-item';
+dynamicReplyLabel.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    if (selector === '.focusable-list-item') return dynamicReplyMessage;
+    return null;
+};
 
 assert.equal(getContext(nonFocusableMessageContent), 'message');
 assert.equal(getContext(profileControl), 'identity-name');
+const phoneLink = new Element();
+phoneLink.setAttribute('href', 'https://wa.me/6281234567890');
+phoneLink.matches = selector => selector === 'a[href], [role="link"]';
+phoneLink.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    return null;
+};
+assert.equal(getContext(phoneLink), 'link');
 assert.equal(
-    clean('Open chat details for Maybe Arief +62 819-9030-1656', getContext(profileControl), profileControl),
-    'Open chat details for Maybe Arief'
+    prepareNamedAttribute(phoneLink, 'aria-label', 'Open https://wa.me/6281234567890'),
+    'Open Phone number link'
 );
-assert.equal(clean('adepanjabat 081362579858 20:47', 'message'), 'adepanjabat 081362579858 20:47');
+assert.equal(phoneLink.getAttribute('href'), 'https://wa.me/6281234567890');
+const unrelatedLabel = new Element();
+const unrelatedBidiText = 'Outside  label \u2067\u05D0\u05D1\u05D2\u2069';
+unrelatedLabel.setAttribute('aria-label', unrelatedBidiText);
+assert.equal(unrelatedLabel.getAttribute('aria-label'), unrelatedBidiText);
+assert.equal(clean(unrelatedBidiText, false), 'Outside label \u2067\u05D0\u05D1\u05D2\u2069');
+assert.equal(
+    clean('Open chat details for Maybe Contact F +62 819-9030-1656', getContext(profileControl), profileControl),
+    'Open chat details for Maybe Contact F'
+);
+assert.equal(clean('contact-preview 081362579858 20:47', 'message'), 'contact-preview 081362579858 20:47');
 assert.equal(clean('081362579858 hello 20:47', 'message'), '081362579858 hello 20:47');
 assert.equal(
     clean('System notice: +62 812-3333-4444 joined via invite link', 'message', nonFocusableMessageContent),
     'System notice: Participant joined via invite link'
 );
 assert.equal(clean('081362579858 online', 'identity'), 'Participant online');
+assert.equal(clean('415-555-2671 online', 'identity'), 'Participant online');
+assert.equal(clean('44 20 7946 0958 online', 'identity'), 'Participant online');
+assert.equal(clean('00 44 20 7946 0958 online', 'identity'), 'Participant online');
+assert.equal(clean('+62 812/3456/7890 online', 'identity'), 'Participant online');
+assert.equal(setCustomText('unknown-contact-prefix', 'Quizás'), true);
+assert.equal(clean('Quizás 081362579858 online', 'identity'), 'Quizás online');
+assert.equal(setCustomText('unknown-contact-prefix', ''), true);
+assert.equal(setCustomText('participant-prefix', 'Teilnehmer'), true);
+assert.equal(clean('Teilnehmer: +62 812-3456-7890 online', 'identity'), 'Teilnehmer: online');
+assert.equal(setCustomText('participant-prefix', ''), true);
+assert.equal(clean('Meeting 2026-07-22 15:54', 'identity'), 'Meeting 2026-07-22 15:54');
 assert.equal(
     clean('Maybe 081362579858 online', 'identity'),
     'Maybe online'
@@ -285,72 +413,98 @@ assert.equal(
     'Preview Participant'
 );
 assert.equal(
-    clean('adepanjabat https://wa.me/6281362579858 20:47', 'message'),
-    'adepanjabat https://wa.me/6281362579858 20:47'
+    clean('Preview https://wa.me/62-812/3456/7890', 'identity'),
+    'Preview Participant'
 );
 assert.equal(
-    clean('adepanjabat https://example.com 081362579858 20:47', 'message'),
-    'adepanjabat https://example.com 081362579858 20:47'
+    clean('contact-preview https://wa.me/6281362579858 20:47', 'message'),
+    'contact-preview Phone number link 20:47'
+);
+assert.equal(
+    clean('contact-preview https://example.com 081362579858 20:47', 'message'),
+    'contact-preview https://example.com 081362579858 20:47'
+);
+assert.equal(
+    clean('Open https://example.com/contact/081362579858', 'message', nonFocusableMessageContent),
+    'Open Phone number link'
 );
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 replied Hubungi 0813-6257-9858 to quoted message from Maybe Sofyan Sukmana +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
+        'Maybe Contact A +62 858-7888-3458 replied Hubungi 0813-6257-9858 to quoted message from Maybe Contact B +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
         'message',
         replyMessage
     ),
-    'Maybe rohmansyah replied Hubungi 0813-6257-9858 to quoted message from Maybe Sofyan Sukmana: Info WhatsApp 0812-9505-8785 10:45'
+    'Maybe Contact A replied Hubungi Participant to quoted message from Maybe Contact B: Info WhatsApp Participant 10:45'
 );
+assert.equal(setCustomText('quote-prefix', 'mensaje citado de'), true);
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 Nomor saya +62 858-7888-3458 10:45',
+        'Maybe Contact A +62 858-7888-3458 respondió Oke a mensaje citado de Maybe Contact B +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
         'message',
         replyMessage
     ),
-    'Maybe rohmansyah Nomor saya +62 858-7888-3458 10:45'
+    'Maybe Contact A respondió Oke a mensaje citado de Maybe Contact B: Info WhatsApp Participant 10:45'
 );
+assert.equal(setCustomText('quote-prefix', ''), true);
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 membalas Isi 0813-6257-9858 ke pesan yang dikutip dari Maybe Sofyan Sukmana +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
+        'Maybe Contact A +62 858-7888-3458 Nomor saya +62 858-7888-3458 10:45',
         'message',
         replyMessage
     ),
-    'Maybe rohmansyah membalas Isi 0813-6257-9858 ke pesan yang dikutip dari Maybe Sofyan Sukmana: Info WhatsApp 0812-9505-8785 10:45'
+    'Maybe Contact A Nomor saya Participant 10:45'
 );
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 replied Oke to quoted message from Maybe Sofyan Sukmana +62 812-9505-8785: Maybe Sofyan Sukmana +62 812-9505-8785: hubungi saya 10:45',
+        'Maybe Contact A +62 858-7888-3458 membalas Isi 0813-6257-9858 ke pesan yang dikutip dari Maybe Contact B +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
+        'message',
+        replyMessage
+    ),
+    'Maybe Contact A membalas Isi Participant ke pesan yang dikutip dari Maybe Contact B: Info WhatsApp Participant 10:45'
+);
+assert.equal(
+    clean(
+        'Maybe Contact A +62 858-7888-3458 replied Oke to quoted message from Maybe Contact B +62 812-9505-8785: Maybe Contact B +62 812-9505-8785: hubungi saya 10:45',
         'message',
         quotedCollisionMessage
     ),
-    'Maybe rohmansyah replied Oke to quoted message from Maybe Sofyan Sukmana: Maybe Sofyan Sukmana +62 812-9505-8785: hubungi saya 10:45'
+    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Maybe Contact B Participant: hubungi saya 10:45'
 );
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 replied Oke to quoted message from Maybe Sofyan Sukmana +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
+        'Maybe Contact A +62 858-7888-3458 replied Oke to quoted message from Maybe Contact B +62 812-9505-8785: Info WhatsApp 0812-9505-8785 10:45',
         'message',
         statusQuoteMessage
     ),
-    'Maybe rohmansyah replied Oke to quoted message from Maybe Sofyan Sukmana: Info WhatsApp 0812-9505-8785 10:45'
+    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Info WhatsApp Participant 10:45'
 );
 assert.equal(
-    clean('Maybe Arief +62 819-9030-1656 Image Image 11:03', 'message', groupMediaMessage),
-    'Maybe Arief Image Image 11:03'
+    clean(
+        'You replied mas masih ready paypal? to quoted message from +62 812-9505-8785 joyo: Terima kasih om 11:26 Read',
+        'message',
+        outgoingReplyMessage
+    ),
+    'You replied mas masih ready paypal? to quoted message from Participant joyo: Terima kasih om 11:26 Read'
 );
 assert.equal(
-    clean('Maybe y29n. +62 899-0002-593 Hubungi 0812-9505-8785 11:18', 'message', groupTextMessage),
-    'Maybe y29n. Hubungi 0812-9505-8785 11:18'
+    clean('Maybe Contact F +62 819-9030-1656 Image Image 11:03', 'message', groupMediaMessage),
+    'Maybe Contact F Image Image 11:03'
 );
 assert.equal(
-    clean('Maybe Jordel +1 (249) 878-8863 just got the delay vst. gonna test it soon 23:37', 'message', consecutiveUnknownMessage),
-    'Maybe Jordel just got the delay vst. gonna test it soon 23:37'
+    clean('Maybe Contact G +62 899-0002-593 Hubungi 0812-9505-8785 11:18', 'message', groupTextMessage),
+    'Maybe Contact G Hubungi Participant 11:18'
 );
 assert.equal(
-    clean('Maybe Jordel call +1 (249) 878-8863 tomorrow 23:38', 'message', bodyPhoneCollisionMessage),
-    'Maybe Jordel call +1 (249) 878-8863 tomorrow 23:38'
+    clean('Maybe Contact H +1 (249) 878-8863 just got the delay vst. gonna test it soon 23:37', 'message', consecutiveUnknownMessage),
+    'Maybe Contact H just got the delay vst. gonna test it soon 23:37'
 );
 assert.equal(
-    clean('Maybe Contact +62 812-3333-4444 Muhammad halo 10:00', 'message', mentionBodyMessage),
-    'Maybe Contact Muhammad halo 10:00'
+    clean('Maybe Contact H call +1 (249) 878-8863 tomorrow 23:38', 'message', bodyPhoneCollisionMessage),
+    'Maybe Contact H call Participant tomorrow 23:38'
+);
+assert.equal(
+    clean('Maybe Contact +62 812-3333-4444 Contact I halo 10:00', 'message', mentionBodyMessage),
+    'Maybe Contact Contact I halo 10:00'
 );
 assert.equal(
     clean('+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48', 'message', voiceMessageWithoutPrePlainText),
@@ -362,14 +516,18 @@ assert.equal(
 );
 assert.equal(
     clean('+62 852-1859-6884 Ali Amri Document Hubungi 0812-9505-8785 19:49', 'message', voiceMessageWithoutPrePlainText),
-    'Participant Ali Amri Document Hubungi 0812-9505-8785 19:49'
+    'Participant Ali Amri Document Hubungi Participant 19:49'
 );
 assert.equal(
     clean('081362579858 hello 19:50', 'message', bodyFirstWithSenderLikeSpan),
-    '081362579858 hello 19:50'
+    'Participant hello 19:50'
 );
 dynamicVoiceLabel.setAttribute('aria-label', '+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48');
-assert.equal(hasPrivacyState(dynamicVoiceLabel, 'aria-label'), false);
+assert.equal(hasPrivacyState(dynamicVoiceLabel, 'aria-label'), true);
+assert.equal(
+    dynamicVoiceLabel.getAttribute('aria-label'),
+    'Participant Ali Amri Voice message Duration: 0:46 19:48'
+);
 dynamicSenderReady = true;
 dynamicVoiceLabel.setAttribute('aria-label', dynamicVoiceLabel.getAttribute('aria-label'));
 assert.equal(
@@ -378,19 +536,38 @@ assert.equal(
 );
 assert.equal(
     clean(
-        'Maybe rohmansyah +62 858-7888-3458 replied Well noted to quoted message from Maybe Nohansa Nuh +62 818-616-450: 0:42 12:16',
+        'Maybe Contact A +62 858-7888-3458 replied Well noted to quoted message from Maybe Contact C +62 818-616-450: 0:42 12:16',
         'message',
         structuredQuoteMessage
     ),
-    'Maybe rohmansyah replied Well noted to quoted message from Maybe Nohansa Nuh: 0:42 12:16'
+    'Maybe Contact A replied Well noted to quoted message from Maybe Contact C: 0:42 12:16'
 );
 assert.equal(
     clean(
-        'Maybe Prima Agus Setiyawan replied Yes to quoted message from Maybe Fransiska Nadia +62 877-7088-0051: Kontaknya yang ini kan ya ka? +6285591169006 11:14 For more options, press left or right arrow key to access context menu',
+        'Maybe Contact D replied Yes to quoted message from Maybe Contact E +62 877-7088-0051: Kontaknya yang ini kan ya ka? +6285591169006 11:14 For more options, press left or right arrow key to access context menu',
         'message',
         multilineQuotedMessage
     ),
-    'Maybe Prima Agus Setiyawan replied Yes to quoted message from Maybe Fransiska Nadia: Kontaknya yang ini kan ya ka? +6285591169006 11:14 For more options, press left or right arrow key to access context menu'
+    'Maybe Contact D replied Yes to quoted message from Maybe Contact E: Kontaknya yang ini kan ya ka? Participant 11:14 For more options, press left or right arrow key to access context menu'
 );
+dynamicReplyLabel.setAttribute(
+    'aria-label',
+    'Maybe Contact A +62 858-7888-3458 replied Oke to quoted message from Maybe Contact B +62 812-9505-8785: Dm aja ya om ðŸ™ðŸ»yg sudah dm cek sudah saya kirim detailnya 10:45'
+);
+assert.equal(
+    dynamicReplyLabel.getAttribute('aria-label'),
+    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Dm aja ya om ðŸ™ðŸ»yg sudah dm cek sudah saya kirim detailnya 10:45'
+);
+dynamicQuoteReady = true;
+cleanNamedAttribute(dynamicReplyLabel, 'aria-label');
+assert.equal(
+    dynamicReplyLabel.getAttribute('aria-label'),
+    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Dm aja ya om ðŸ™ðŸ»yg sudah dm cek sudah saya kirim detailnya 10:45'
+);
+cleanElementAttributes(viewOncePhoneAuthor);
+assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), 'true');
+assert.equal(hasPrivacyState(viewOncePhoneAuthor, 'aria-hidden'), true);
+restorePrivacyAttributes();
+assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), null);
 
 console.log('privacy filter checks passed');

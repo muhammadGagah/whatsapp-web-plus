@@ -6,22 +6,37 @@ const originalSource = fs.readFileSync('whatsapp_web_plus.user.js', 'utf8');
 const debugSource = fs.readFileSync('whatsapp_web_plus.debug.js', 'utf8');
 const source = originalSource.replace('    ensureLiveRegion();', `
     globalThis.__runtime = {
-        OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute,
+        SELECTORS, OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute,
         isMetaAIReply, applyMetaAIMessageName,
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
-        queuePassiveAnnouncements, discardPassiveAnnouncements,
-        isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, restorePrivacyAttributes,
+        queuePassiveAnnouncements, discardPassiveAnnouncements, discardAllPassiveAnnouncements,
+        resetPassiveAnnouncementContext,
+        startStatusTracking, stopStatusTracking,
+        truncateList,
+        announce, clearStatusRegion, getUserAnnouncementUntil,
+        togglePrivacyWithQueueReset,
+        isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, cleanElementAttributes,
+        maskPhoneNumbers,
+        restorePrivacyAttributes,
         focusItem, handleShortcuts, isShortUnreadText, getNextMessageRow, getChatRowTranslateY,
         findUnreadMessageTarget, applyChatRowDescendantMasks, collectChatBadgeLabels,
-        applyChatRowNativeMask, focusChatRow, getPreferredChatRow,
-        focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, getRoleFixRoot, scheduleRoleFix,
-        closeAudioPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
+        getChatPreviewIconLabel,
+        applyChatRowNativeMask, applyMessageGridExperiment, handleMessageGridKeydown,
+        focusChatRow, getPreferredChatRow,
+        getActiveModal,
+        focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
+        getRoleFixRoot, scheduleRoleFix,
+        getHeaderInfoButton, getHeaderText, announceChatHeaderShortcut,
+        closeMediaPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
         CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
         setCleanUi(value) { isCleanUiMode = value; },
         setUnreadTarget(value) { unreadTarget = value; },
-        getChatPulseEnabled() { return isChatPulseEnabled; },
+        setStatusTracking(value) { isStatusTracking = value; },
+        setLanguage, setCustomText, getNavSelector, setOpenChatsAtFirstUnread, setShortcutRemap,
+        appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
+        getChatPulseEnabled() { return isAutomaticReadingEnabled(); },
         getStatusTracking() { return isStatusTracking; },
         getLastTPressTime() { return lastTPressTime; },
         getPassiveAnnouncements() { return passiveAnnouncements.map(entry => ({ ...entry })); }
@@ -56,6 +71,7 @@ class Element {
     getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
     get tabIndex() { return this.hasAttribute('tabindex') ? Number(this.getAttribute('tabindex')) : -1; }
     get childElementCount() { return this.children.length; }
+    get firstElementChild() { return this.children[0] || null; }
     hasAttribute(name) { return this.attributes.has(name); }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     removeAttribute(name) { this.attributes.delete(name); }
@@ -67,6 +83,9 @@ class Element {
         if (selector === 'div[role="row"]') return this.getAttribute('role') === 'row';
         if (selector === '[data-id]') return this.hasAttribute('data-id');
         if (selector === '.focusable-list-item') return this.getAttribute('data-focusable-list-item') === 'true';
+        if (selector === 'span[data-testid="author"]:not([aria-label])') {
+            return this.getAttribute('data-testid') === 'author' && !this.hasAttribute('aria-label');
+        }
         return false;
     }
     closest(selector) { return this.closestHandler ? this.closestHandler(selector) : null; }
@@ -75,6 +94,18 @@ class Element {
     contains(node) { return node === this || this.children.some(child => child.contains ? child.contains(node) : child === node); }
     focus() { if (this.focusSucceeds) documentRef.activeElement = this; }
     click() { this.clickCalls++; if (this.clickHandler) this.clickHandler(); }
+    dispatchEvent(event) {
+        this.dispatchedEvents = this.dispatchedEvents || [];
+        this.dispatchedEvents.push(event);
+        return true;
+    }
+    appendChild(child) { this.children.push(child); child.parentElement = this; return child; }
+    removeChild(child) {
+        const index = this.children.indexOf(child);
+        if (index >= 0) this.children.splice(index, 1);
+        child.parentElement = null;
+        return child;
+    }
     getBoundingClientRect() { return this.rect; }
     scrollIntoView() { this.scrollIntoViewCalls++; }
 }
@@ -84,19 +115,28 @@ class MutationObserver {
 }
 
 const selectorResults = new Map();
+const selectorAllResults = new Map();
 const selectorQueries = new Map();
+const idResults = new Map();
 const liveRegion = new Element();
+const messageLog = new Element();
 const document = {
     readyState: 'complete',
     activeElement: null,
     body: new Element(),
-    documentElement: { clientWidth: 1024, clientHeight: 768 },
+    documentElement: { clientWidth: 1024, clientHeight: 768, lang: 'en' },
     addEventListener() {},
-    getElementById(id) { return id === 'wa-plus-live-region' ? liveRegion : null; },
+    createElement() { return new Element(); },
+    getElementById(id) {
+        if (id === 'wa-plus-live-region') return liveRegion;
+        if (id === 'wa-plus-message-log') return messageLog;
+        return idResults.get(id) || null;
+    },
     querySelector(selector) {
         selectorQueries.set(selector, (selectorQueries.get(selector) || 0) + 1);
         return selectorResults.get(selector) || null;
-    }
+    },
+    querySelectorAll(selector) { return selectorAllResults.get(selector) || []; }
 };
 documentRef = document;
 
@@ -111,10 +151,23 @@ const localStorage = {
 };
 
 const scheduledFrames = [];
+let nextTimeoutId = 1;
+const scheduledTimeouts = new Map();
+function scheduleTimeout(callback) {
+    const id = nextTimeoutId++;
+    scheduledTimeouts.set(id, callback);
+    return id;
+}
+function cancelTimeout(id) { scheduledTimeouts.delete(id); }
+
 const sandbox = {
     Element, HTMLElement: Element, MutationObserver, document, localStorage, console,
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
-    navigator: {}, setTimeout, clearTimeout, setInterval() { return 1; }, clearInterval() {},
+    navigator: {}, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout,
+    KeyboardEvent: class KeyboardEvent {
+        constructor(type, init) { this.type = type; Object.assign(this, init); }
+    },
+    setInterval(callback) { sandbox.intervalCallback = callback; return 1; }, clearInterval() {},
     window: {
         requestAnimationFrame(callback) { scheduledFrames.push(callback); }
     }
@@ -124,6 +177,153 @@ vm.runInNewContext(source, sandbox);
 const runtime = sandbox.__runtime;
 assert.equal(runtime.getChatPulseEnabled(), true);
 assert.equal(runtime.getStatusTracking(), true);
+
+const messageMain = new Element();
+const messageContainerForGrid = new Element();
+const messageViewport = new Element();
+messageViewport.setAttribute('data-tab', '1');
+const messageRow = new Element();
+messageRow.setAttribute('role', 'row');
+const messageCell = new Element();
+messageCell.setAttribute('data-focusable-list-item', 'true');
+messageCell.setAttribute('aria-label', 'Member One Hello 10:00');
+const secondMessageRow = new Element();
+secondMessageRow.setAttribute('role', 'row');
+const secondMessageCell = new Element();
+secondMessageCell.setAttribute('data-focusable-list-item', 'true');
+secondMessageCell.setAttribute('aria-label', 'Member Two Hello 10:01');
+messageRow.appendChild(messageCell);
+secondMessageRow.appendChild(secondMessageCell);
+messageViewport.appendChild(messageRow);
+messageViewport.appendChild(secondMessageRow);
+messageContainerForGrid.appendChild(messageViewport);
+messageMain.queryHandler = selector =>
+    selector.includes(runtime.SELECTORS.conversationMessages) ? messageContainerForGrid : null;
+messageViewport.queryHandler = selector =>
+    selector === 'div[role="row"]' ? messageRow : null;
+messageViewport.queryAllHandler = selector => {
+    if (selector === 'div[role="row"]') return [messageRow, secondMessageRow];
+    if (selector === '[role="gridcell"]') return [messageCell, secondMessageCell];
+    return [];
+};
+messageRow.queryHandler = selector =>
+    selector === '.focusable-list-item' ? messageCell : null;
+secondMessageRow.queryHandler = selector =>
+    selector === '.focusable-list-item' ? secondMessageCell : null;
+messageCell.closestHandler = selector => {
+    if (selector === 'div[role="row"]') return messageRow;
+    if (selector === '[role="gridcell"]') return messageCell;
+    if (selector === '[role="grid"]') return messageViewport;
+    return null;
+};
+secondMessageCell.closestHandler = selector => {
+    if (selector === 'div[role="row"]') return secondMessageRow;
+    if (selector === '[role="gridcell"]') return secondMessageCell;
+    if (selector === '[role="grid"]') return messageViewport;
+    return null;
+};
+selectorResults.set(runtime.SELECTORS.main, messageMain);
+runtime.applyMessageGridExperiment();
+assert.equal(messageViewport.getAttribute('role'), 'grid');
+assert.equal(messageViewport.getAttribute('aria-labelledby'), 'wa-plus-message-grid-label');
+assert.equal(messageViewport.getAttribute('aria-rowcount'), '-1');
+assert.equal(messageCell.getAttribute('role'), 'gridcell');
+assert.equal(secondMessageCell.getAttribute('role'), 'gridcell');
+assert.equal(messageCell.getAttribute('tabindex'), '0');
+assert.equal(secondMessageCell.getAttribute('tabindex'), '-1');
+function gridKey(target, key, overrides = {}) {
+    return {
+        target, key, defaultPrevented: false, isComposing: false,
+        altKey: false, ctrlKey: false, metaKey: false, shiftKey: false,
+        prevented: false, stopped: false,
+        preventDefault() { this.prevented = true; },
+        stopPropagation() { this.stopped = true; },
+        ...overrides
+    };
+}
+let messageGridKey = gridKey(messageCell, 'ArrowDown');
+assert.equal(runtime.handleMessageGridKeydown(messageGridKey), true);
+assert.equal(document.activeElement, secondMessageCell);
+assert.equal(messageCell.getAttribute('tabindex'), '-1');
+assert.equal(secondMessageCell.getAttribute('tabindex'), '0');
+messageGridKey = gridKey(secondMessageCell, 'ArrowDown');
+runtime.handleMessageGridKeydown(messageGridKey);
+assert.equal(document.activeElement, secondMessageCell);
+messageGridKey = gridKey(secondMessageCell, 'Home');
+runtime.handleMessageGridKeydown(messageGridKey);
+assert.equal(document.activeElement, messageCell);
+messageGridKey = gridKey(messageCell, 'End');
+runtime.handleMessageGridKeydown(messageGridKey);
+assert.equal(document.activeElement, secondMessageCell);
+const nestedMessageControl = new Element();
+nestedMessageControl.closestHandler = selector => selector === '[role="gridcell"]' ? secondMessageCell : null;
+assert.equal(runtime.handleMessageGridKeydown(gridKey(nestedMessageControl, 'ArrowUp')), false);
+assert.equal(runtime.handleMessageGridKeydown(gridKey(secondMessageCell, 'ArrowUp', { ctrlKey: true })), false);
+const incompleteRow = new Element();
+incompleteRow.setAttribute('role', 'row');
+const mixedMetaSender = new Element();
+const mixedMetaBody = new Element();
+const mixedMetaMetadata = new Element();
+mixedMetaSender.setAttribute('aria-label', 'Meta AI');
+mixedMetaSender.closestHandler = () => null;
+messageCell.queryAllHandler = selector =>
+    selector === 'span[aria-label]'
+        ? [mixedMetaSender]
+        : [];
+messageCell.queryHandler = selector => {
+    if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return mixedMetaBody;
+    if (selector === '[data-testid="msg-meta"]') return mixedMetaMetadata;
+    return null;
+};
+messageViewport.appendChild(incompleteRow);
+messageViewport.queryAllHandler = selector =>
+    selector === 'div[role="row"]' ? [messageRow, secondMessageRow, incompleteRow] : [];
+runtime.applyMessageGridExperiment();
+assert.equal(messageViewport.getAttribute('role'), null);
+assert.equal(messageViewport.getAttribute('aria-labelledby'), null);
+assert.equal(messageViewport.getAttribute('aria-rowcount'), null);
+assert.equal(messageCell.getAttribute('role'), null);
+assert.equal(secondMessageCell.getAttribute('role'), null);
+assert.equal(messageCell.hasAttribute('aria-label'), false);
+assert.equal(
+    messageCell.getAttribute('aria-labelledby'),
+    [mixedMetaSender, mixedMetaBody, mixedMetaMetadata].map(el => el.getAttribute('id')).join(' ')
+);
+messageCell.queryAllHandler = () => [];
+messageCell.queryHandler = () => null;
+messageViewport.queryAllHandler = selector =>
+    selector === 'div[role="row"]' ? [incompleteRow] : [];
+runtime.applyMessageGridExperiment();
+assert.equal(messageViewport.getAttribute('role'), null);
+assert.equal(messageViewport.getAttribute('aria-labelledby'), null);
+assert.equal(messageViewport.getAttribute('aria-rowcount'), null);
+assert.equal(messageCell.getAttribute('role'), null);
+assert.equal(messageCell.hasAttribute('tabindex'), false);
+assert.equal(messageCell.getAttribute('aria-label'), 'Member One Hello 10:00');
+assert.equal(messageCell.getAttribute('aria-labelledby'), null);
+assert.equal(secondMessageCell.getAttribute('role'), null);
+assert.equal(secondMessageCell.hasAttribute('tabindex'), false);
+selectorResults.delete(runtime.SELECTORS.main);
+
+const firstDialog = new Element();
+const secondDialog = new Element();
+const firstDialogButton = new Element();
+firstDialog.appendChild(firstDialogButton);
+selectorAllResults.set('dialog[open], [role="dialog"], [role="alertdialog"]', [firstDialog, secondDialog]);
+document.activeElement = firstDialogButton;
+assert.equal(runtime.getActiveModal(), firstDialog);
+document.activeElement = document.body;
+assert.equal(runtime.getActiveModal(), secondDialog);
+selectorAllResults.delete('dialog[open], [role="dialog"], [role="alertdialog"]');
+
+liveRegion.textContent = 'Sensitive existing status';
+runtime.clearStatusRegion();
+assert.equal(liveRegion.textContent, '');
+runtime.announce('Sensitive pending status');
+assert.ok(scheduledTimeouts.size > 0);
+runtime.clearStatusRegion();
+assert.equal(scheduledTimeouts.size, 0);
+assert.equal(liveRegion.textContent, '');
 
 const reactOwned = new Element();
 runtime.applyOwnedAttribute(reactOwned, 'role', 'grid', runtime.OWNERS.messageGrid);
@@ -151,7 +351,7 @@ const metaAIMenu = new Element();
 const metaAIConversation = new Element();
 metaAIReply.setAttribute('aria-label', 'Native focus hint');
 metaAIReply.closestHandler = selector => selector === '[data-testid="conversation-panel-messages"]' ? metaAIConversation : null;
-metaAISender.setAttribute('aria-label', 'Meta AI:');
+metaAISender.setAttribute('aria-label', 'Meta AI');
 metaAISender.closestHandler = () => null;
 metaAIBody.closestHandler = selector => {
     if (selector === '.focusable-list-item') return metaAIReply;
@@ -170,8 +370,11 @@ metaAIBody.children.push(metaAILink);
 metaAILink.parentElement = metaAIBody;
 metaAIReply.children.push(metaAISender, metaAIBody, metaAIMetadata, metaAIMenu);
 for (const child of metaAIReply.children) child.parentElement = metaAIReply;
+metaAIReply.queryAllHandler = selector =>
+    selector === 'span[aria-label]'
+        ? [metaAISender]
+        : [];
 metaAIReply.queryHandler = selector => {
-    if (selector === 'span[aria-label="Meta AI:"]') return metaAISender;
     if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return metaAIBody;
     if (selector === '[data-testid="msg-meta"]') return metaAIMetadata;
     return null;
@@ -200,6 +403,7 @@ assert.equal(metaAIReply.getAttribute('aria-labelledby').split(' ')[1], 'react-b
 metaAIReply.setAttribute('aria-label', 'Replacement focus hint');
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
 assert.equal(metaAIReply.hasAttribute('aria-label'), false);
+metaAIReply.queryAllHandler = () => [];
 metaAIReply.queryHandler = () => null;
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), false);
 assert.equal(metaAIReply.getAttribute('aria-label'), 'Replacement focus hint');
@@ -209,9 +413,22 @@ assert.equal(metaAIBody.getAttribute('id'), 'react-body-id');
 assert.equal(metaAIMetadata.hasAttribute('id'), false);
 
 const ordinaryMessage = new Element();
-ordinaryMessage.setAttribute('aria-label', 'Alice Hello 18:53 Read');
+ordinaryMessage.setAttribute('aria-label', 'Member One Hello 18:53 Read');
 assert.equal(runtime.applyMetaAIMessageName(ordinaryMessage), false);
-assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Alice Hello 18:53 Read');
+assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Member One Hello 18:53 Read');
+const ordinaryMetaLabel = new Element();
+ordinaryMetaLabel.setAttribute('aria-label', 'Meta AI');
+ordinaryMetaLabel.closestHandler = selector =>
+    selector.includes('[data-testid="msg-container"]') ? ordinaryMetaLabel : null;
+ordinaryMessage.queryAllHandler = selector =>
+    selector === 'span[aria-label]'
+        ? [ordinaryMetaLabel]
+        : [];
+ordinaryMessage.queryHandler = selector =>
+    selector === '[data-testid="msg-container"] .copyable-text.selectable-text'
+        ? metaAIBody
+        : null;
+assert.equal(runtime.isMetaAIReply(ordinaryMessage), false);
 
 const ordinaryConversation = new Element();
 const ordinaryMenu = new Element();
@@ -225,9 +442,9 @@ assert.equal(
     runtime.prepareNamedAttribute(
         ordinaryMessage,
         'aria-label',
-        'Alice Hello 18:53 Read For more options, press left or right arrow key to access context menu'
+        'Member One Hello 18:53 Read For more options, press left or right arrow key to access context menu'
     ),
-    'Alice Hello 18:53 Read'
+    'Member One Hello 18:53 Read'
 );
 assert.equal(runtime.prepareNamedAttribute(ordinaryMenu, 'aria-label', 'Open message options'), 'Open message options');
 
@@ -239,9 +456,9 @@ assert.equal(
     runtime.prepareNamedAttribute(
         linkedMessage,
         'aria-label',
-        'Alice See https://example.test/options 18:54 Delivered For more options, press left or right arrow key to access context menu'
+        'Member One See https://example.test/options 18:54 Delivered For more options, press left or right arrow key to access context menu'
     ),
-    'Alice See https://example.test/options 18:54 Delivered'
+    'Member One See https://example.test/options 18:54 Delivered'
 );
 
 const pulseStatus = new Element();
@@ -254,14 +471,26 @@ pulseMessage.attributes.set(
     'You test 15:54 Delivered For more options, press left or right arrow key to access context menu'
 );
 pulseMessage.queryHandler = selector => {
-    if (selector === '[data-testid="msg-meta"] [aria-label]') return pulseStatus;
     if (selector === '[data-testid="msg-container"] [data-testid="selectable-text"]') return pulseBody;
     return null;
 };
+pulseMessage.queryAllHandler = selector =>
+    selector.includes('[data-testid="msg-meta"] [aria-label]') ? [pulseStatus] : [];
 assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Delivered');
 assert.equal(runtime.getChatPulseSummary(pulseMessage), 'You test 15:54 Delivered');
 pulseStatus.setAttribute('aria-label', 'Pending');
-assert.equal(runtime.getChatPulseStatus(pulseMessage), '');
+assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Pending');
+
+runtime.setPrivacy(true);
+const privatePulseBody = new Element();
+privatePulseBody.textContent = 'Private message';
+const privatePulseMessage = new Element();
+privatePulseMessage.attributes.set('aria-label', '+62 812-3456-7890 Private message 15:55');
+privatePulseMessage.closestHandler = selector =>
+    selector === '.focusable-list-item' ? privatePulseMessage : null;
+privatePulseMessage.queryHandler = selector =>
+    selector === '[data-testid="msg-container"] [data-testid="selectable-text"]' ? privatePulseBody : null;
+assert.doesNotMatch(runtime.getChatPulseSummary(privatePulseMessage), /812-3456-7890/);
 
 const metadataOnlyMessage = new Element();
 metadataOnlyMessage.attributes.set('aria-label', '15:54 Sent');
@@ -284,8 +513,12 @@ metaPulseMetadata.textContent = '16:29';
 const metaPulseMessage = new Element();
 metaPulseMessage.setAttribute('aria-label', 'Meta AI is thinking');
 let metaPulseFinished = false;
+metaPulseMessage.queryAllHandler = selector =>
+    selector === 'span[aria-label]'
+        ? [metaPulseSender]
+        : [];
 metaPulseMessage.queryHandler = selector => {
-    if (selector === 'span[aria-label="Meta AI:"]' || selector === 'span[aria-label$=":"]') return metaPulseSender;
+    if (selector === 'span[aria-label$=":"]') return metaPulseSender;
     if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return metaPulseBody;
     if (selector === '[data-testid="msg-meta"]') return metaPulseFinished ? metaPulseMetadata : null;
     return null;
@@ -297,55 +530,88 @@ assert.equal(runtime.getChatPulseSummary(metaPulseMessage), 'Meta AI: Final Meta
 
 const pulseEntry = (id, summary, status) => ({ id, summary, status });
 const reconcilePulse = (chatTitle, entries) => Array.from(runtime.reconcileChatPulseEntries(chatTitle, entries));
-runtime.setChatPulseBaseline('Alice', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
+runtime.setLanguage('id');
+assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten, Member Eleven'), 'Member Seven, Member Eight, Member Nine dan 2 lainnya');
+assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten'), 'Member Seven, Member Eight, Member Nine dan 1 lainnya');
+runtime.setCustomText('participant-separator', '،');
+assert.equal(runtime.truncateList('Member Seven، Member Eight، Member Nine، Member Ten'), 'Member Seven, Member Eight, Member Nine dan 1 lainnya');
+assert.equal(
+    runtime.truncateList('الأول، الثالث، الثاني، الرابع'),
+    '\u2068الأول\u2069, \u2068الثالث\u2069, \u2068الثاني\u2069 dan 1 lainnya'
+);
+runtime.setCustomText('participant-separator', '');
+const previewVoiceIcon = new Element();
+previewVoiceIcon.setAttribute('data-icon', 'audio-ptt');
+assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'voice message');
+document.documentElement.lang = 'id-ID';
+assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'pesan suara');
+document.documentElement.lang = 'fr';
+previewVoiceIcon.setAttribute('aria-label', 'message vocal');
+assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'message vocal');
+document.documentElement.lang = 'en';
+runtime.setLanguage('en');
+runtime.setChatPulseBaseline('Member One', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
-    ['Alice second 15:55']
+    ['Member One second 15:55']
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     ['Message status: Delivered']
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [pulseEntry('old-1', 'Historical message', '')]),
+    reconcilePulse('Member One', [pulseEntry('old-1', 'Historical message', '')]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
-        pulseEntry('m2', 'Alice second 15:55', ''),
+    reconcilePulse('Member One', [
+        pulseEntry('m2', 'Member One second 15:55', ''),
         pulseEntry('m3', 'You third 15:56 Sent', 'Sent')
     ]),
     ['You third 15:56 Sent']
 );
-runtime.setChatPulseBaseline('Alice', [pulseEntry('m4', 'You pending 15:57', '')]);
+runtime.setChatPulseBaseline('Member One', [pulseEntry('m4', 'You pending 15:57', '')]);
 assert.deepEqual(
-    reconcilePulse('Alice', [pulseEntry('m4', 'You pending 15:57 Sent', 'Sent')]),
+    reconcilePulse('Member One', [pulseEntry('m4', 'You pending 15:57 Sent', 'Sent')]),
     ['Message status: Sent']
 );
 assert.deepEqual(
-    reconcilePulse('Bob', [pulseEntry('b1', 'Bob old message', '')]),
+    reconcilePulse('Member Two', [pulseEntry('b1', 'Member Two old message', '')]),
     []
 );
+runtime.setCustomText('delivery-sent', 'envoyé');
+runtime.setCustomText('delivery-delivered', 'remis');
+runtime.setChatPulseBaseline('Custom receipt', [
+    pulseEntry('custom-status', 'You first 15:58 envoyé', 'envoyé')
+]);
+assert.deepEqual(
+    reconcilePulse('Custom receipt', [
+        pulseEntry('custom-status', 'You first 15:58 remis', 'remis')
+    ]),
+    ['Message status: Delivered']
+);
+runtime.setCustomText('delivery-sent', '');
+runtime.setCustomText('delivery-delivered', '');
 
 runtime.setChatPulseBaseline('History', [
     pulseEntry('m10', 'Recent ten', ''),
@@ -376,15 +642,83 @@ assert.deepEqual(reconcilePulse('History', [
     pulseEntry('m12', 'Actually new', ''),
     pulseEntry('m13', 'Rendered later', '')
 ]), ['Rendered later']);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m13', 'Rendered later', ''),
+    pulseEntry('m14', '', ''),
+    pulseEntry('m15', 'Ready after incomplete', '')
+]), []);
+assert.deepEqual(reconcilePulse('History', [
+    pulseEntry('m14', 'Incomplete rendered later', ''),
+    pulseEntry('m15', 'Ready after incomplete', '')
+]), ['Incomplete rendered later', 'Ready after incomplete']);
+
+runtime.queuePassiveAnnouncements('pulse', ['Queued for History']);
+assert.deepEqual(reconcilePulse('Other chat', []), []);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
 
 runtime.queuePassiveAnnouncements('pulse', ['Unmasked queued message']);
-runtime.queuePassiveAnnouncements('activity', ['Alice is typing']);
+runtime.queuePassiveAnnouncements('activity', ['Member One is typing']);
 runtime.discardPassiveAnnouncements('pulse');
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Alice is typing' }]
+    [{ source: 'activity', text: 'Member One is typing' }]
 );
 runtime.discardPassiveAnnouncements('activity');
+runtime.queuePassiveAnnouncements('pulse', ['Old language message']);
+runtime.queuePassiveAnnouncements('activity', ['Old language activity']);
+runtime.resetPassiveAnnouncementContext();
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+scheduledTimeouts.clear();
+runtime.appendTestMessages(['Old chat log']);
+runtime.announce('User status survives passive reset');
+const [pendingUserStatusTimerId, pendingUserStatusTimer] =
+    Array.from(scheduledTimeouts.entries()).at(-1);
+const userAnnouncementUntil = runtime.getUserAnnouncementUntil();
+runtime.resetPassiveAnnouncementContext();
+assert.equal(messageLog.textContent, '');
+assert.equal(scheduledTimeouts.has(pendingUserStatusTimerId), true);
+assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
+pendingUserStatusTimer();
+assert.equal(liveRegion.textContent, 'User status survives passive reset');
+const [userStatusCleanupTimerId, userStatusCleanupTimer] =
+    Array.from(scheduledTimeouts.entries()).at(-1);
+runtime.resetPassiveAnnouncementContext();
+assert.equal(liveRegion.textContent, 'User status survives passive reset');
+assert.equal(scheduledTimeouts.has(userStatusCleanupTimerId), true);
+assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
+userStatusCleanupTimer();
+assert.equal(liveRegion.textContent, '');
+
+runtime.clearStatusRegion();
+scheduledTimeouts.clear();
+messageLog.children = [];
+runtime.queuePassiveAnnouncements('pulse', ['New message', 'Message status: Read']);
+runtime.queuePassiveAnnouncements('activity', ['Member One is typing']);
+const passiveFlush = Array.from(scheduledTimeouts.values()).at(-1);
+passiveFlush();
+assert.deepEqual(
+    messageLog.children.map(entry => entry.textContent),
+    ['New message', 'Message status: Read', 'Member One is typing']
+);
+assert.equal(liveRegion.textContent, '');
+
+runtime.setPrivacy(false);
+runtime.queuePassiveAnnouncements('pulse', ['Queued before privacy']);
+runtime.queuePassiveAnnouncements('activity', ['Typing before privacy']);
+assert.equal(runtime.togglePrivacyWithQueueReset(false), true);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+runtime.queuePassiveAnnouncements('pulse', ['Privacy-safe message']);
+runtime.queuePassiveAnnouncements('activity', ['Privacy-safe activity']);
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [
+        { source: 'pulse', text: 'Privacy-safe message' },
+        { source: 'activity', text: 'Privacy-safe activity' }
+    ]
+);
+assert.equal(runtime.togglePrivacyWithQueueReset(false), true);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
+scheduledFrames.length = 0;
 
 const typingRow = new Element();
 const typingSecondary = new Element();
@@ -399,43 +733,101 @@ typingRow.queryHandler = selector => {
 };
 typingSecondary.queryHandler = selector => selector === '[title], [aria-label]' ? typingIndicator : null;
 typingTitleContainer.queryHandler = selector => selector === '[title]' ? typingTitle : null;
-typingTitle.setAttribute('title', 'Achi Yandrika');
-typingIndicator.setAttribute('title', '~\u202fShaun Oliver is typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing…');
-typingIndicator.setAttribute('title', '~ Shaun Oliver and Budi are typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver and Budi are typing…');
+typingTitle.setAttribute('title', 'Sample Account');
+typingIndicator.setAttribute('title', '~\u202fSample Person is typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing…');
+typingIndicator.setAttribute('title', '~ Sample Person and Member Eight are typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person and Member Eight are typing…');
+typingIndicator.setAttribute('title', 'recording audio…');
+typingIndicator.removeAttribute('aria-label');
+assert.equal(
+    runtime.getSelectedChatTypingActivity([typingRow]),
+    'Sample Account is recording a voice message…'
+);
+typingIndicator.setAttribute('aria-label', 'Sample and Member Eight are recording audio…');
+typingIndicator.setAttribute('title', 'stale last message preview');
+assert.equal(
+    runtime.getSelectedChatTypingActivity([typingRow]),
+    'Sample and Member Eight are recording a voice message…'
+);
+runtime.setCustomText('recording-audio', 'está grabando audio');
+typingIndicator.setAttribute('aria-label', 'Sample está grabando audio…');
+assert.equal(
+    runtime.getSelectedChatTypingActivity([typingRow]),
+    'Sample is recording a voice message…'
+);
+runtime.setCustomText('recording-audio', '');
+typingTitle.setAttribute('title', 'الأول');
+typingIndicator.setAttribute('aria-label', 'recording audio…');
+assert.equal(
+    runtime.getSelectedChatTypingActivity([typingRow]),
+    '\u2068الأول\u2069 is recording a voice message…'
+);
+const firstPhoneRecording = new Element();
+const secondPhoneRecording = new Element();
+firstPhoneRecording.setAttribute('aria-label', '+1 202 555 0101 is recording audio…');
+secondPhoneRecording.setAttribute('aria-label', '+1 202 555 0102 is recording audio…');
+typingSecondary.queryAllHandler = selector =>
+    selector === '[title], [aria-label]' ? [firstPhoneRecording, secondPhoneRecording] : [];
+runtime.setPrivacy(true);
+assert.equal(
+    runtime.getSelectedChatTypingActivity([typingRow]),
+    '2 participants are recording a voice message…'
+);
+runtime.setPrivacy(false);
+typingSecondary.queryAllHandler = null;
+typingTitle.setAttribute('title', 'Sample Account');
 typingIndicator.setAttribute('title', 'Last message preview');
+typingIndicator.removeAttribute('aria-label');
 assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '');
 typingIndicator.removeAttribute('title');
-typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('aria-label', 'Maybe Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
+runtime.setCustomText('unknown-contact-prefix', 'Quizás');
+typingIndicator.setAttribute('aria-label', 'Quizás Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
+runtime.setCustomText('unknown-contact-prefix', '');
 typingIndicator.setAttribute('title', 'typing…');
 typingIndicator.setAttribute('aria-label', 'typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Achi Yandrika is typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Account is typing…');
+runtime.setCustomText('typing', '正在输入');
+typingTitle.setAttribute('title', '联系人');
+typingIndicator.setAttribute('title', '联系人正在输入…');
+typingIndicator.setAttribute('aria-label', '联系人正在输入…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '联系人 is typing…');
+runtime.setCustomText('typing', '');
+typingTitle.setAttribute('title', 'Sample Account');
+typingIndicator.setAttribute('title', 'typing…');
+typingIndicator.setAttribute('aria-label', 'typing…');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Achi Yandrika is typing…' }]
+    [{ source: 'activity', text: 'Sample Account is typing…' }]
 );
-typingTitle.setAttribute('title', 'Bob');
+typingTitle.setAttribute('title', 'Member Two');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Bob is typing…' }]
+    [{ source: 'activity', text: 'Member Two is typing…' }]
 );
+typingTitle.setAttribute('title', 'Member Three');
+typingIndicator.setAttribute('title', 'Last message preview');
+typingIndicator.setAttribute('aria-label', 'Last message preview');
+runtime.syncSelectedChatTypingActivity([typingRow]);
+assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
 runtime.discardPassiveAnnouncements('activity');
 typingIndicator.setAttribute('title', 'Last message preview');
-typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('aria-label', 'Maybe Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Shaun Oliver is typing...' }]
+    [{ source: 'activity', text: 'Sample Person is typing...' }]
 );
 typingIndicator.setAttribute('aria-label', 'Last message preview');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
-typingIndicator.setAttribute('title', '~ Budi is typing…');
+typingIndicator.setAttribute('title', '~ Member Eight is typing…');
 document.activeElement = typingRow;
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
@@ -467,15 +859,43 @@ runtime.setPrivacy(false);
 runtime.setPrivacy(true);
 const ariaLink = new Element();
 ariaLink.setAttribute('role', 'link');
-ariaLink.closestHandler = selector => selector === 'div#main' ? main : null;
+ariaLink.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    return null;
+};
 const linkChild = new Element();
 linkChild.closestHandler = selector => {
     if (selector === 'div#main') return main;
     if (selector === 'a[href], [role="link"]') return ariaLink;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
     return null;
 };
-assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', '+62 812-3456-7890'), '+62 812-3456-7890');
-assert.equal(runtime.prepareNamedAttribute(linkChild, 'aria-label', '+62 812-3456-7890'), '+62 812-3456-7890');
+assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', '+62 812-3456-7890'), 'Phone number link');
+assert.equal(runtime.prepareNamedAttribute(linkChild, 'aria-label', '+62 812-3456-7890'), 'Phone number link');
+assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', 'https://example.com'), 'https://example.com');
+runtime.setLanguage('id');
+document.documentElement.lang = 'en';
+assert.equal(runtime.prepareNamedAttribute(ariaLink, 'aria-label', '+62 812-3456-7890'), 'Phone number link');
+assert.equal(runtime.maskPhoneNumbers('+62 812-3456-7890'), 'Peserta');
+runtime.setLanguage('en');
+const phoneAuthor = new Element();
+phoneAuthor.nodeType = 1;
+phoneAuthor.setAttribute('data-testid', 'author');
+phoneAuthor.textContent = '+62 812-3456-7890 1:23';
+assert.equal(runtime.maskPhoneNumbers(phoneAuthor.textContent), 'Participant 1:23');
+phoneAuthor.closestHandler = selector =>
+    selector === '[data-testid="conversation-panel-messages"]' ? conversation : null;
+runtime.cleanElementAttributes(phoneAuthor);
+assert.equal(phoneAuthor.getAttribute('aria-hidden'), 'true');
+phoneAuthor.textContent = 'Named contact 1:23';
+runtime.cleanElementAttributes(phoneAuthor);
+assert.equal(phoneAuthor.hasAttribute('aria-hidden'), false);
+phoneAuthor.textContent = '+62 812-3456-7890 1:23';
+runtime.cleanElementAttributes(phoneAuthor);
+assert.equal(phoneAuthor.getAttribute('aria-hidden'), 'true');
+runtime.restorePrivacyAttributes();
+assert.equal(phoneAuthor.hasAttribute('aria-hidden'), false);
 runtime.setPrivacy(false);
 
 const focusable = new Element();
@@ -495,6 +915,63 @@ const makeEvent = overrides => ({
     getModifierState() { return false; },
     ...overrides
 });
+
+const callContainer = new Element();
+const callSurface = new Element();
+const callToolbar = new Element();
+callToolbar.setAttribute('role', 'toolbar');
+callContainer.closestHandler = selector =>
+    selector === '[data-testid="move_resize_component"]' ? callSurface : null;
+callSurface.queryAllHandler = selector => selector === '[role="toolbar"]' ? [callToolbar] : [];
+function makeCallButton(icon, label) {
+    const button = new Element();
+    const title = new Element();
+    const labelSpan = new Element();
+    title.textContent = icon;
+    labelSpan.textContent = label;
+    button.textContent = `${icon}${label}`;
+    button.setAttribute('aria-label', label);
+    button.queryHandler = selector => selector === 'svg title' ? title : null;
+    button.queryAllHandler = selector => selector === 'span' && label ? [labelSpan] : [];
+    return button;
+}
+for (const acceptIcon of ['ic-call-filled', 'ic-videocam-filled']) {
+    const acceptCall = makeCallButton(acceptIcon, 'Accepter');
+    const declineCall = makeCallButton('ic-call-end-filled', 'Refuser');
+    callToolbar.queryAllHandler = selector => selector === 'button' ? [acceptCall, declineCall] : [];
+    selectorAllResults.set('[data-testid="voip-container-audio-call"]', [callContainer]);
+    const answerEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyA' });
+    runtime.handleShortcuts(answerEvent);
+    assert.equal(answerEvent.prevented, true);
+    assert.equal(acceptCall.clickCalls, 1);
+    const declineEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyD' });
+    runtime.handleShortcuts(declineEvent);
+    assert.equal(declineEvent.prevented, true);
+    assert.equal(declineCall.clickCalls, 1);
+}
+const iconOnlyAnswer = makeCallButton('ic-call-filled', '');
+const iconOnlyEnd = makeCallButton('ic-call-end-filled', '');
+callToolbar.queryAllHandler = selector => selector === 'button' ? [iconOnlyAnswer, iconOnlyEnd] : [];
+const activeCallEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyD' });
+runtime.handleShortcuts(activeCallEvent);
+assert.equal(activeCallEvent.prevented, false);
+assert.equal(iconOnlyEnd.clickCalls, 0);
+const hiddenLabelAnswer = makeCallButton('ic-call-filled', '');
+const hiddenLabelEnd = makeCallButton('ic-call-end-filled', '');
+const hiddenLabel = new Element();
+hiddenLabel.hidden = true;
+hiddenLabel.textContent = 'Accept';
+hiddenLabelAnswer.appendChild(hiddenLabel);
+hiddenLabelAnswer.textContent = 'ic-call-filledAccept';
+hiddenLabelEnd.textContent = 'ic-call-end-filledDecline';
+hiddenLabelAnswer.queryAllHandler = selector => selector === 'span' ? [hiddenLabel] : [];
+hiddenLabelEnd.queryAllHandler = selector => selector === 'span' ? [hiddenLabel] : [];
+callToolbar.queryAllHandler = selector => selector === 'button' ? [hiddenLabelAnswer, hiddenLabelEnd] : [];
+const hiddenLabelEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyD' });
+runtime.handleShortcuts(hiddenLabelEvent);
+assert.equal(hiddenLabelEvent.prevented, false);
+assert.equal(hiddenLabelEnd.clickCalls, 0);
+selectorAllResults.delete('[data-testid="voip-container-audio-call"]');
 
 let event = makeEvent({ altKey: true, code: 'KeyD' });
 runtime.handleShortcuts(event);
@@ -522,11 +999,20 @@ runtime.handleShortcuts(event);
 assert.equal(event.prevented, false);
 assert.equal(event.immediateStopped, false);
 
-selectorResults.set('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]', new Element());
+const modalSelector = 'dialog[open], [role="dialog"], [role="alertdialog"]';
+const vendorDialog = new Element();
+vendorDialog.setAttribute('role', 'dialog');
+selectorAllResults.set(modalSelector, [vendorDialog]);
 const modalBlocked = makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' });
 runtime.handleShortcuts(modalBlocked);
 assert.equal(modalBlocked.prevented, false);
 assert.equal(modalBlocked.immediateStopped, false);
+vendorDialog.hidden = true;
+const hiddenModalIgnored = makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' });
+document.activeElement = null;
+runtime.handleShortcuts(hiddenModalIgnored);
+assert.equal(hiddenModalIgnored.prevented, true);
+selectorAllResults.delete(modalSelector);
 selectorResults.clear();
 
 const retryMain = new Element();
@@ -535,9 +1021,21 @@ selectorResults.set('div#main', retryMain);
 document.activeElement = null;
 runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' }));
 assert.equal(scheduledFrames.length, 1);
-selectorResults.set('dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]', new Element());
+selectorAllResults.set(modalSelector, [vendorDialog]);
+vendorDialog.hidden = false;
 scheduledFrames.shift()();
 assert.equal(document.activeElement, null);
+selectorAllResults.delete(modalSelector);
+
+selectorResults.set('div#main', retryMain);
+document.activeElement = null;
+runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' }));
+assert.equal(scheduledFrames.length, 1);
+const userChosenControl = new Element();
+runtime.handleShortcuts(makeEvent({ key: 'ArrowDown', code: 'ArrowDown' }));
+userChosenControl.focus();
+scheduledFrames.shift()();
+assert.equal(document.activeElement, userChosenControl);
 selectorResults.clear();
 
 event = makeEvent({ altKey: true, shiftKey: true, code: 'KeyL' });
@@ -550,6 +1048,22 @@ runtime.handleShortcuts(event);
 assert.equal(event.prevented, true);
 assert.equal(event.immediateStopped, true);
 assert.equal(localStorage.getItem('wa-plus-automatic-reading'), 'true');
+
+const workingSetItem = localStorage.setItem;
+localStorage.setItem = () => { throw new Error('storage denied'); };
+for (const code of ['Digit8', 'Digit9']) {
+    runtime.clearStatusRegion();
+    const appearanceSaveEvent = makeEvent({ altKey: true, shiftKey: true, code });
+    runtime.handleShortcuts(appearanceSaveEvent);
+    assert.equal(appearanceSaveEvent.prevented, true);
+    assert.equal(appearanceSaveEvent.immediateStopped, true);
+    const [timerId, announceFailure] = Array.from(scheduledTimeouts.entries()).at(-1);
+    scheduledTimeouts.delete(timerId);
+    announceFailure();
+    assert.equal(liveRegion.textContent, 'The setting could not be saved.');
+}
+runtime.clearStatusRegion();
+localStorage.setItem = workingSetItem;
 
 const firstAltT = makeEvent({ altKey: true, code: 'KeyT' });
 const interruptedAltT = makeEvent({ code: 'Space' });
@@ -571,6 +1085,23 @@ assert.equal(restartedAltT.immediateStopped, true);
 assert.equal(secondAltT.prevented, true);
 assert.equal(secondAltT.immediateStopped, true);
 assert.equal(runtime.getLastTPressTime(), 0);
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyT' }));
+assert.ok(runtime.getLastTPressTime() > 0);
+runtime.handleShortcuts(makeEvent({ code: 'ShiftLeft' }));
+assert.equal(runtime.getLastTPressTime(), 0);
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyT' }));
+assert.ok(runtime.getLastTPressTime() > 0);
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyT', repeat: true }));
+assert.equal(runtime.getLastTPressTime(), 0);
+const composingShortcut = makeEvent({ altKey: true, code: 'KeyT', isComposing: true });
+runtime.handleShortcuts(composingShortcut);
+assert.equal(composingShortcut.prevented, false);
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyT' }));
+assert.ok(runtime.getLastTPressTime() > 0);
+const handledShortcut = makeEvent({ altKey: true, code: 'KeyT', defaultPrevented: true });
+runtime.handleShortcuts(handledShortcut);
+assert.equal(handledShortcut.prevented, false);
+assert.equal(runtime.getLastTPressTime(), 0);
 assert.equal(localStorage.getItem('wa-plus-chat-activity-monitor'), 'false');
 
 event = makeEvent({ altKey: true, code: 'Digit1', target: new Element() });
@@ -581,7 +1112,7 @@ assert.equal(scheduledFrames.length, 1);
 scheduledFrames.pop();
 
 const audioPlayerClose = new Element();
-const audioPlayerCloseSelector = '#side button[aria-label="Close"]';
+const audioPlayerCloseSelector = runtime.SELECTORS.audioPlayerClose;
 selectorResults.set(audioPlayerCloseSelector, audioPlayerClose);
 event = makeEvent({ altKey: true, code: 'Digit0' });
 runtime.handleShortcuts(event);
@@ -590,8 +1121,29 @@ assert.equal(event.immediateStopped, true);
 assert.equal(audioPlayerClose.clickCalls, 1);
 selectorResults.delete(audioPlayerCloseSelector);
 const closeQueriesBefore = selectorQueries.get(audioPlayerCloseSelector) || 0;
-runtime.closeAudioPlayerShortcut();
+runtime.closeMediaPlayerShortcut();
 assert.equal(selectorQueries.get(audioPlayerCloseSelector), closeQueriesBefore + 1);
+
+const modalVideoClose = new Element();
+vendorDialog.hidden = false;
+vendorDialog.appendChild(modalVideoClose);
+selectorResults.set(runtime.SELECTORS.videoPlayerClose, modalVideoClose);
+selectorAllResults.set(modalSelector, [vendorDialog]);
+event = makeEvent({ altKey: true, code: 'Digit0' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(modalVideoClose.clickCalls, 1);
+
+const unrelatedVideoClose = new Element();
+selectorResults.set(runtime.SELECTORS.videoPlayerClose, unrelatedVideoClose);
+event = makeEvent({ altKey: true, code: 'Digit0' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, false);
+assert.equal(event.immediateStopped, false);
+assert.equal(unrelatedVideoClose.clickCalls, 0);
+selectorResults.delete(runtime.SELECTORS.videoPlayerClose);
+selectorAllResults.delete(modalSelector);
 
 assert.equal(runtime.isShortUnreadText('Unread messages'), true);
 assert.equal(runtime.isShortUnreadText('1 unread message'), true);
@@ -655,6 +1207,39 @@ runtime.applyChatRowDescendantMasks(chatRow, chatMaskRoot);
 assert.equal(nativeChatText.getAttribute('aria-hidden'), 'true');
 assert.equal(disappearingHint.getAttribute('aria-hidden'), 'true');
 assert.equal(runtime.collectChatBadgeLabels(chatRow).details.join(''), "New messages will disappear from this chat 90 days after they're sent, except when kept.");
+const indonesianBadgeRow = new Element();
+const indonesianCellFrame = new Element();
+const indonesianUnread = new Element();
+const indonesianMuted = new Element();
+indonesianUnread.setAttribute('aria-label', '2 pesan belum dibaca');
+indonesianMuted.setAttribute('aria-label', 'chat dibisukan');
+indonesianBadgeRow.queryHandler = selector =>
+    selector === runtime.SELECTORS.cellFrame ? indonesianCellFrame : null;
+indonesianBadgeRow.queryAllHandler = selector =>
+    selector === '[aria-label]' ? [indonesianUnread, indonesianMuted] : [];
+assert.deepEqual(
+    Array.from(runtime.collectChatBadgeLabels(indonesianBadgeRow).unread),
+    ['2 pesan belum dibaca']
+);
+assert.deepEqual(
+    Array.from(runtime.collectChatBadgeLabels(indonesianBadgeRow).status),
+    ['chat dibisukan']
+);
+const customStatusBadge = new Element();
+const customViewStatus = new Element();
+customStatusBadge.setAttribute('aria-label', 'silenciado [chat]');
+customViewStatus.setAttribute('aria-label', 'ver novedades de Member Six');
+runtime.setCustomText('chat-status-labels', 'silenciado [chat]|fijado');
+runtime.setCustomText('view-status', 'ver novedades');
+indonesianBadgeRow.queryAllHandler = selector =>
+    selector === '[aria-label]' ? [customStatusBadge, customViewStatus] : [];
+assert.deepEqual(
+    Array.from(runtime.collectChatBadgeLabels(indonesianBadgeRow).status),
+    ['silenciado [chat]']
+);
+assert.deepEqual(Array.from(runtime.collectChatBadgeLabels(indonesianBadgeRow).details), []);
+runtime.setCustomText('chat-status-labels', '');
+runtime.setCustomText('view-status', '');
 
 const nestedTabStop = new Element();
 nestedTabStop.setAttribute('tabindex', '0');
@@ -673,11 +1258,14 @@ outerGridcell.setAttribute('role', 'gridcell');
 outerGridcell.setAttribute('tabindex', '0');
 activator.setAttribute('tabindex', '-1');
 activator.setAttribute('aria-selected', 'false');
+activator.setAttribute('aria-labelledby', 'host-chat-name');
 titled.setAttribute('title', 'Focused chat');
 focusRow.children = [outerGridcell];
 outerGridcell.children = [activator, focusCellFrame];
 focusRow.queryHandler = selector => {
-    if (selector === ':scope > [role="gridcell"]') return outerGridcell;
+    if (selector === ':scope > [role="gridcell"]') {
+        return outerGridcell.getAttribute('role') === 'gridcell' ? outerGridcell : null;
+    }
     if (selector === '[data-testid="cell-frame-container"]') return focusCellFrame;
     if (selector === '[data-testid="cell-frame-title"]') return titleContainer;
     return null;
@@ -692,6 +1280,20 @@ assert.equal(document.activeElement, activator);
 assert.equal(outerGridcell.getAttribute('role'), 'presentation');
 assert.equal(activator.getAttribute('role'), 'gridcell');
 assert.equal(activator.getAttribute('aria-selected'), 'false');
+assert.equal(activator.getAttribute('aria-labelledby'), null);
+
+outerGridcell.setAttribute('role', 'rowheader');
+assert.equal(runtime.applyChatRowNativeMask(focusRow), false);
+assert.equal(outerGridcell.getAttribute('role'), 'rowheader');
+outerGridcell.setAttribute('role', 'gridcell');
+document.activeElement = outerGridcell;
+assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
+activator.setAttribute('role', 'button');
+assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
+assert.equal(outerGridcell.getAttribute('role'), 'gridcell');
+assert.equal(activator.getAttribute('role'), 'button');
+assert.equal(activator.getAttribute('aria-labelledby'), 'host-chat-name');
+assert.equal(outerGridcell.getAttribute('aria-label'), 'Focused chat');
 
 document.activeElement = null;
 assert.equal(runtime.focusChatRow(focusRow), true);
@@ -724,6 +1326,16 @@ mutationTarget.closestHandler = selector => {
     return null;
 };
 assert.equal(runtime.getRoleFixRoot(mutationTarget), conversationRoot);
+assert.equal(
+    runtime.handleAttributeMutation({ target: mutationTarget, attributeName: 'tabindex' }),
+    conversationRoot
+);
+runtime.applyOwnedAttribute(mutationTarget, 'aria-labelledby', null, runtime.OWNERS.chatLabel);
+mutationTarget.setAttribute('aria-labelledby', 'host-updated-label');
+assert.equal(
+    runtime.handleAttributeMutation({ target: mutationTarget, attributeName: 'aria-labelledby' }),
+    conversationRoot
+);
 
 selectorResults.clear();
 const roleRootA = new Element();
@@ -733,7 +1345,7 @@ runtime.scheduleRoleFix(roleRootA);
 runtime.scheduleRoleFix(roleRootB);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
-assert.equal((selectorQueries.get('div#main') || 0) - mainQueriesBefore, 1);
+assert.equal((selectorQueries.get('div#main') || 0) - mainQueriesBefore, 0);
 
 const activeMain = new Element();
 const latestMessageContainer = new Element();
@@ -783,7 +1395,15 @@ const headerSpacer = new Element();
 const headerInfo = new Element();
 const headerTitle = new Element();
 headerTitle.textContent = 'Cached chat';
-header.queryAllHandler = selector => selector === 'div[role="button"]' ? [headerSpacer, headerInfo] : [];
+header.appendChild(headerSpacer);
+header.appendChild(headerInfo);
+headerInfo.appendChild(headerTitle);
+header.queryHandler = selector =>
+    selector.includes('[data-testid="conversation-info-header-chat-title"]') ? headerTitle : null;
+headerTitle.closestHandler = selector =>
+    selector.includes('[data-testid="conversation-info-header"]') || selector === '[role="button"]'
+        ? headerInfo
+        : null;
 headerInfo.queryHandler = selector => selector === '[data-testid="conversation-info-header-chat-title"]' ? headerTitle : null;
 activeMain.queryHandler = selector => {
     if (selector.includes('[data-testid="conversation-panel-messages"]')) return latestMessageContainer;
@@ -791,6 +1411,15 @@ activeMain.queryHandler = selector => {
     if (selector === 'header') return header;
     return null;
 };
+headerInfo.innerText = 'Study Group\nMember One, Member Two, Member Three, Member Four, Member Five';
+runtime.clearStatusRegion();
+scheduledTimeouts.clear();
+const focusBeforeHeaderAnnouncement = document.activeElement;
+runtime.announceChatHeaderShortcut();
+Array.from(scheduledTimeouts.values()).at(-1)();
+assert.equal(liveRegion.textContent, 'Study Group. Member One, Member Two, Member Three and 2 others');
+assert.equal(document.activeElement, focusBeforeHeaderAnnouncement);
+headerInfo.innerText = '';
 const cachedMessage = new Element();
 const cachedRow = new Element();
 cachedMessage.setAttribute('data-id', 'cached-id');
@@ -816,11 +1445,43 @@ latestMessageContainer.queryHandler = selector => selector === '[data-id="cached
 scheduledFrames.shift()();
 assert.equal(document.activeElement, cachedMessage);
 assert.equal(cachedRow.scrollIntoViewCalls, 1);
+
+runtime.setOpenChatsAtFirstUnread(true);
+const chatList = new Element();
+const unreadChatRow = new Element();
+const unreadGridcell = new Element();
+const chatRowActivator = new Element();
+const nestedChatControl = new Element();
+unreadGridcell.setAttribute('role', 'gridcell');
+unreadChatRow.queryHandler = selector => selector === ':scope > [role="gridcell"]' ? unreadGridcell : null;
+unreadGridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]') ? chatRowActivator : null;
+chatRowActivator.setAttribute('tabindex', '0');
+chatRowActivator.setAttribute('aria-selected', 'false');
+chatRowActivator.appendChild(nestedChatControl);
+chatRowActivator.closestHandler = selector => selector === 'div[role="row"]' ? unreadChatRow : null;
+nestedChatControl.closestHandler = selector => selector === 'div[role="row"]' ? unreadChatRow : null;
+unreadChatRow.closestHandler = selector => selector === runtime.SELECTORS.chatListInSide ? chatList : null;
+event = makeEvent({ code: 'Enter', key: 'Enter', target: nestedChatControl });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, false);
+assert.equal(scheduledFrames.length, 0);
+document.activeElement = chatRowActivator;
+event = makeEvent({ code: 'Enter', key: 'Enter', target: chatRowActivator });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, false);
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, cachedMessage);
+runtime.setOpenChatsAtFirstUnread(false);
 runtime.setUnreadTarget(null);
 
 const navButton = new Element();
-selectorResults.set('button[aria-label="Chats"]', navButton);
-runtime.activateNav('navChats', 'Chats');
+selectorResults.set(runtime.SELECTORS.navChats, navButton);
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit1' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(navButton.clickCalls, 1);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(scheduledFrames.length, 1);
@@ -828,9 +1489,24 @@ navButton.setAttribute('aria-pressed', 'true');
 scheduledFrames.shift()();
 assert.equal(document.activeElement, navButton);
 
+const guardedNav = new Element();
+selectorResults.set(runtime.SELECTORS.navStatus, guardedNav);
+runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'Digit2' }));
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(scheduledFrames.length, 1);
+const focusBeforeModal = new Element();
+focusBeforeModal.focus();
+selectorAllResults.set(modalSelector, [vendorDialog]);
+vendorDialog.hidden = false;
+guardedNav.setAttribute('aria-pressed', 'true');
+scheduledFrames.shift()();
+assert.equal(document.activeElement, focusBeforeModal);
+selectorAllResults.delete(modalSelector);
+
 const statusNavButton = new Element();
 const firstStatusRow = new Element();
-const statusNavSelector = 'button[aria-label="Status"], button[aria-label="Updates in Status"]';
+const statusNavSelector = runtime.SELECTORS.navStatus;
 const firstStatusRowSelector = '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]';
 selectorResults.set(statusNavSelector, statusNavButton);
 event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit2' });
@@ -848,7 +1524,7 @@ assert.equal(document.activeElement, firstStatusRow);
 
 const communitiesNavButton = new Element();
 const firstCommunityRow = new Element();
-const communitiesNavSelector = 'button[aria-label="Communities"]';
+const communitiesNavSelector = runtime.SELECTORS.navCommunities;
 const firstCommunityRowSelector = '[data-testid="community-tab-drawer"] [data-testid="community-tab-community-cell"]';
 selectorResults.set(communitiesNavSelector, communitiesNavButton);
 event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit3' });
@@ -866,7 +1542,7 @@ assert.equal(document.activeElement, firstCommunityRow);
 
 const channelsNavButton = new Element();
 const firstChannelRow = new Element();
-const channelsNavSelector = 'button[aria-label="Channels"]';
+const channelsNavSelector = runtime.SELECTORS.navChannels;
 const firstChannelRowSelector = '[data-testid="newsletter-tab-drawer"] [data-testid="newsletter-tab-newsletter-cell"]';
 selectorResults.set(channelsNavSelector, channelsNavButton);
 event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit4' });
@@ -881,6 +1557,165 @@ assert.notEqual(document.activeElement, firstChannelRow);
 selectorResults.set(firstChannelRowSelector, firstChannelRow);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, firstChannelRow);
+
+const metaAiNavButton = new Element();
+selectorResults.set(runtime.SELECTORS.navMetaAI, metaAiNavButton);
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit5' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(metaAiNavButton.clickCalls, 1);
+const metaAiEditor = new Element();
+const metaAiEditorLabel = new Element();
+metaAiEditorLabel.textContent = 'Ask Meta AI';
+idResults.set('meta-ai-editor-label', metaAiEditorLabel);
+metaAiEditor.setAttribute('contenteditable', 'true');
+metaAiEditor.setAttribute('role', 'textbox');
+metaAiEditor.setAttribute('aria-labelledby', 'meta-ai-editor-label');
+metaAiEditor.setAttribute('aria-label', 'Message');
+selectorResults.set(runtime.SELECTORS.messageInput, metaAiEditor);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, metaAiEditor);
+assert.equal(metaAiNavButton.getAttribute('aria-pressed'), null);
+document.activeElement = document.body;
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit5' });
+runtime.handleShortcuts(event);
+assert.equal(metaAiNavButton.clickCalls, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, metaAiEditor);
+metaAiEditor.removeAttribute('aria-labelledby');
+metaAiEditor.setAttribute('aria-label', 'Message');
+metaAiNavButton.setAttribute('aria-current', 'page');
+document.activeElement = document.body;
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit5' });
+runtime.handleShortcuts(event);
+assert.equal(metaAiNavButton.clickCalls, 1);
+scheduledFrames.shift()();
+assert.notEqual(document.activeElement, metaAiEditor);
+metaAiEditor.setAttribute('aria-labelledby', 'meta-ai-editor-label');
+scheduledFrames.shift()();
+assert.equal(document.activeElement, metaAiEditor);
+runtime.cancelPendingFocusRequests();
+scheduledFrames.length = 0;
+selectorResults.delete(runtime.SELECTORS.messageInput);
+idResults.delete('meta-ai-editor-label');
+
+assert.match(runtime.SELECTORS.navChats, /button\[aria-label="Chats"\]/);
+assert.match(runtime.SELECTORS.navStatus, /button\[aria-label="Status"\]/);
+assert.match(runtime.SELECTORS.navStatus, /button\[aria-label="Updates in Status"\]/);
+assert.match(runtime.SELECTORS.navChannels, /button\[aria-label="Channels"\]/);
+assert.match(runtime.SELECTORS.navCommunities, /button\[aria-label="Communities"\]/);
+assert.match(runtime.SELECTORS.navMetaAI, /button\[aria-label="Meta AI"\]/);
+assert.doesNotMatch(runtime.SELECTORS.navChats, /data-navbar-item-index/);
+
+assert.equal(runtime.setCustomText('nav-chats', 'Daftar "Chat"'), true);
+const customChatsSelector = runtime.getNavSelector('navChats');
+assert.equal(
+    customChatsSelector,
+    '[data-testid="navbar-primary-section"] button[aria-label="Daftar \\"Chat\\""]'
+);
+selectorResults.delete(runtime.SELECTORS.navChats);
+const customChatsButton = new Element();
+selectorResults.set(customChatsSelector, customChatsButton);
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit1' });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(customChatsButton.clickCalls, 1);
+customChatsButton.setAttribute('aria-current', 'page');
+scheduledFrames.shift()();
+assert.equal(document.activeElement, customChatsButton);
+assert.equal(runtime.setCustomText('nav-chats', ''), true);
+selectorResults.delete(customChatsSelector);
+selectorResults.set(runtime.SELECTORS.navChats, navButton);
+
+assert.equal(runtime.setCustomText('nav-meta-ai', 'Asistente [IA]'), true);
+const customMetaSelector = runtime.getNavSelector('navMetaAI');
+const customMetaButton = new Element();
+selectorResults.delete(runtime.SELECTORS.navMetaAI);
+selectorResults.set(customMetaSelector, customMetaButton);
+metaAiEditorLabel.textContent = 'Enviar mensaje a Asistente [IA]';
+idResults.set('meta-ai-editor-label', metaAiEditorLabel);
+event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit5' });
+runtime.handleShortcuts(event);
+assert.equal(customMetaButton.clickCalls, 1);
+selectorResults.set(runtime.SELECTORS.messageInput, metaAiEditor);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, metaAiEditor);
+assert.equal(runtime.setCustomText('nav-meta-ai', ''), true);
+selectorResults.delete(customMetaSelector);
+selectorResults.set(runtime.SELECTORS.navMetaAI, metaAiNavButton);
+selectorResults.delete(runtime.SELECTORS.messageInput);
+idResults.delete('meta-ai-editor-label');
+
+const remapTarget = new Element();
+event = makeEvent({ altKey: true, code: 'KeyM', target: remapTarget });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(remapTarget.dispatchedEvents[0].code, 'KeyR');
+assert.equal(remapTarget.dispatchedEvents[0].ctrlKey, true);
+assert.equal(remapTarget.dispatchedEvents[0].shiftKey, true);
+assert.equal(runtime.setShortcutRemap('previous-chat', true), true);
+assert.equal(runtime.setShortcutRemap('next-chat', true), true);
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowUp', target: remapTarget }));
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowDown', target: remapTarget }));
+assert.deepEqual(
+    remapTarget.dispatchedEvents.map(dispatched => dispatched.code),
+    ['KeyR', 'BracketLeft', 'BracketRight']
+);
+
+runtime.discardAllPassiveAnnouncements();
+runtime.setStatusTracking(true);
+statusNavButton.setAttribute('aria-pressed', 'false');
+headerInfo.innerText = 'Cached chat\nonline';
+assert.equal(runtime.getHeaderInfoButton(), headerInfo);
+runtime.startStatusTracking();
+headerInfo.innerText = 'Cached chat\nlast seen today at 10:00';
+sandbox.intervalCallback();
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'last seen today at 10:00' }]
+);
+runtime.stopStatusTracking();
+runtime.discardAllPassiveAnnouncements();
+
+headerInfo.innerText = '';
+headerInfo.textContent = '';
+headerInfo.setAttribute('aria-labelledby', 'chat-title-label chat-status-label');
+const chatTitleLabel = new Element();
+const chatStatusLabel = new Element();
+chatTitleLabel.innerText = 'ARIA chat';
+chatStatusLabel.innerText = 'online';
+document.getElementById = id => ({
+    'chat-title-label': chatTitleLabel,
+    'chat-status-label': chatStatusLabel
+}[id] || null);
+assert.equal(runtime.getHeaderInfoButton(), headerInfo);
+runtime.setStatusTracking(true);
+runtime.startStatusTracking();
+chatStatusLabel.innerText = 'last seen today at 11:00';
+sandbox.intervalCallback();
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'last seen today at 11:00' }]
+);
+runtime.stopStatusTracking();
+runtime.discardAllPassiveAnnouncements();
+runtime.setCustomText('online-status', 'en línea');
+runtime.setCustomText('last-seen-prefix', 'visto por última vez');
+headerInfo.removeAttribute('aria-labelledby');
+headerInfo.innerText = 'Custom activity\nen línea';
+runtime.setStatusTracking(true);
+runtime.startStatusTracking();
+headerInfo.innerText = 'Custom activity\nvisto por última vez hoy a las 12:00';
+sandbox.intervalCallback();
+assert.deepEqual(
+    Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
+    [{ source: 'activity', text: 'last seen hoy a las 12:00' }]
+);
+runtime.stopStatusTracking();
+runtime.discardAllPassiveAnnouncements();
+runtime.setCustomText('online-status', '');
+runtime.setCustomText('last-seen-prefix', '');
 
 const introPanel = new Element();
 const promo = new Element();
@@ -912,7 +1747,7 @@ actionGroup.children.push(...actionButtons);
 for (const button of actionButtons) button.parentElement = actionGroup;
 encryptionNotice.children.push(encryptionButton);
 encryptionButton.parentElement = encryptionNotice;
-promo.queryHandler = selector => selector === ':scope > button[type="button"]' ? downloadButton : null;
+promo.queryHandler = selector => (selector === 'button[type="button"]' || selector === ':scope > button[type="button"]') ? downloadButton : null;
 promo.queryAllHandler = selector => selector === 'span'
     ? [titleSpan, copySpan]
     : (selector === 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]' ? [downloadButton] : []);
@@ -923,7 +1758,7 @@ introPanel.queryHandler = selector => {
 selectorResults.set('section[data-testid="intro-panel"]', introPanel);
 selectorResults.set('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]', actionGroup);
 selectorResults.set('#side [data-testid="chatlist-e2e-message"]', encryptionNotice);
-selectorResults.set('[data-testid="chat-list"], [aria-label="Chat list"][role="grid"]', chatListFallback);
+selectorResults.set(runtime.SELECTORS.chatList, chatListFallback);
 
 runtime.setCleanUi(true);
 assert.equal(runtime.getDesktopAppPromo(), promo);
@@ -986,6 +1821,11 @@ for (const target of [promo, actionGroup, encryptionNotice]) {
 copySpan.textContent = 'Unrelated introduction content';
 runtime.setCleanUi(true);
 assert.equal(runtime.getDesktopAppPromo(), null);
+runtime.setCustomText('desktop-promo', 'WhatsApp für Windows herunterladen');
+titleSpan.textContent = 'WhatsApp für Windows herunterladen';
+assert.equal(runtime.getDesktopAppPromo(), promo);
+runtime.setCustomText('desktop-promo', '');
+titleSpan.textContent = 'Download WhatsApp for Windows';
 assert.equal(runtime.syncCleanUi(), true);
 assert.equal(promo.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 assert.equal(actionGroup.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
@@ -1037,85 +1877,70 @@ assert.match(runtime.CLEAN_UI_CSS, new RegExp(`\\[${runtime.CLEAN_UI_HIDDEN_ATTR
 assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1);
 assert.doesNotMatch(runtime.CLEAN_UI_CSS, /outline\s*:\s*none|\[role="tooltip"\]|\[role="tablist"\]/);
 assert.match(runtime.CLEAN_UI_CSS, /:focus-within/);
+assert.match(runtime.CLEAN_UI_CSS, /\[role="row"\]\s+\[data-testid="context-btn"\][\s\S]*opacity\s*:\s*0\s*!important/);
 
-assert.match(originalSource, /const SCRIPT_VERSION = '2\.6\.66'/);
-assert.match(originalSource, /const ALT_T_DOUBLE_PRESS_MS = 300/);
+assert.match(originalSource, /^\/\/ @version\s+2\.6\.70$/m);
+assert.match(originalSource, /Generated from src\/; do not edit this file directly/);
+assert.match(originalSource, /ALT_T_DOUBLE_PRESS_MS = 300/);
 assert.match(originalSource, /Automatic reading of messages is enabled/);
 assert.match(originalSource, /Automatic reading of new messages is disabled/);
-assert.match(originalSource, /automaticReading: 'wa-plus-automatic-reading'/);
-assert.match(originalSource, /chatActivity: 'wa-plus-chat-activity-monitor'/);
+assert.match(originalSource, /automaticReading: ["']wa-plus-automatic-reading["']/);
+assert.match(originalSource, /chatActivity: ["']wa-plus-chat-activity-monitor["']/);
 assert.match(originalSource, /\[data-testid="cell-frame-secondary"\]/);
-assert.match(originalSource, /announce\("Audio player closed\."\)/);
+assert.match(originalSource, /announce\(t\(["']mediaClosed["']\)\)/);
 assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
-assert.match(originalSource, /e\.stopImmediatePropagation\(\)/);
+assert.match(originalSource, /stopImmediatePropagation\(\)/);
 assert.match(originalSource, /applyChatRowNativeMask\(row\);\s+lastFocusedChatRowNode = row;/);
-assert.match(originalSource, /attrName === 'aria-hidden' \|\| attrName === 'tabindex'/);
+assert.match(originalSource, /attrName === ["']aria-hidden["'] \|\| attrName === ["']tabindex["']/);
 assert.doesNotMatch(originalSource, /fixGenericSectionBug|focusChatRowActivator|unreadMessageId|toggleMessageInputShortcut/);
 assert.match(originalSource, /function getChatRowActivator/);
-assert.equal((originalSource.match(/normalizeChatListTabStops\(/g) || []).length, 4);
+assert.equal((originalSource.match(/normalizeChatListTabStops\(/g) || []).length, 5);
 assert.doesNotMatch(originalSource, /scheduleRoleFix\(document\.body\)/);
 assert.doesNotMatch(originalSource, /attempt < 20|setTimeout\(\(\) => tryFocus/);
 assert.doesNotMatch(originalSource, /setTimeout\(confirmDestination, 100\)|innerText \|\| row\.textContent/);
 assert.doesNotMatch(originalSource, /\(e\.ctrlKey && e\.altKey\)|toggleMessageInputShortcut/);
-assert.match(originalSource, /applyOwnedMessageRole\(viewport, 'grid'/);
-assert.match(originalSource, /applyOwnedMessageRole\(message, 'gridcell'/);
+assert.match(originalSource, /applyOwnedMessageRole\(viewport, ["']grid["']/);
+assert.match(originalSource, /applyOwnedMessageRole\(message, ["']gridcell["']/);
+assert.match(originalSource, /aria-labelledby["'],\s*ensureMessageGridLabel\(\)\.id/);
+assert.match(originalSource, /messages\d*\.every\(/);
+assert.match(originalSource, /if \(e\.isComposing \|\| e\.defaultPrevented\) \{\s+lastTPressTime = 0;\s+return;/);
+assert.match(originalSource, /chatPulseSyncTimer = setTimeout[\s\S]*\}, 300\)/);
 assert.match(originalSource, /function isMetaAIReply/);
-assert.match(originalSource, /MESSAGE_CONTEXT_INSTRUCTION_RE/);
+assert.match(originalSource, /function getMessageContextInstructionRegex/);
 assert.match(originalSource, /\.focusable-list-item/);
 assert.match(originalSource, /icon-down-context/);
-assert.match(originalSource, /MESSAGE_DELIVERY_STATUS_RANK/);
+assert.match(originalSource, /function getDeliveryStatusRank/);
 assert.match(originalSource, /\[data-testid\^="conv-msg-"\]\[data-id\]/);
 assert.doesNotMatch(originalSource, /chatPulseLastMessageId/);
 assert.match(originalSource, /chatPulseTailId/);
-assert.match(originalSource, /queuePassiveAnnouncements\('activity'/);
-assert.match(originalSource, /if \(isPrivacyMode\) discardPassiveAnnouncements\('pulse'\)/);
+assert.match(originalSource, /queuePassiveAnnouncements\(["']activity["']/);
+assert.match(originalSource, /announcePassiveMessages\(ready\.map/);
+assert.doesNotMatch(originalSource, /announcePassive\(briefUpdates/);
+assert.match(originalSource, /role["'], ["']log["']/);
+assert.match(originalSource, /aria-relevant["'], ["']additions["']/);
+assert.match(originalSource, /aria-atomic["'], ["']false["']/);
+assert.match(originalSource, /if \(!announcements\.length\) return/);
+assert.doesNotMatch(originalSource, /addEventListener\(["']contextmenu["']|handleContextMenu|NATIVE_CONTEXT_SELECTOR/);
+assert.match(originalSource, /event\.key === ["']ContextMenu["'] \|\| event\.key === ["']F10["'] && event\.shiftKey/);
 const altTShortcutBlock = originalSource.slice(
-    originalSource.indexOf('    function handleAltTShortcut() {'),
-    originalSource.indexOf('    function getActiveModal() {')
+    originalSource.indexOf('  function handleAltTShortcut() {'),
+    originalSource.indexOf('  function handleNavShortcut(')
 );
 assert.doesNotMatch(altTShortcutBlock, /setTimeout/);
 assert.match(altTShortcutBlock, /announceChatHeaderShortcut\(\)/);
-
-function removeDebugOnlyBlock(sourceText, startMarker, endMarker) {
-    const start = sourceText.indexOf(startMarker);
-    const end = sourceText.indexOf(endMarker, start);
-    assert.notEqual(start, -1);
-    assert.notEqual(end, -1);
-    return sourceText.slice(0, start) + sourceText.slice(end);
-}
-
-let normalizedDebugSource = debugSource.replace(
-    '// @namespace    http://tampermonkey.net/',
-    '// @namespace    https://github.com/muhammadGagah/whatsapp-web-plus'
-);
-normalizedDebugSource = removeDebugOnlyBlock(
-    normalizedDebugSource,
-    '    function copyDebugHtmlShortcut() {',
-    '    function focusMessageInputShortcut() {'
-);
-normalizedDebugSource = removeDebugOnlyBlock(
-    normalizedDebugSource,
-    "        if (e.altKey && e.shiftKey && !e.ctrlKey && e.code === 'Digit0') {",
-    "        if (getActiveModal()) return;"
-);
-normalizedDebugSource = normalizedDebugSource.replace(
-    /        if \(e\.repeat \|\| e\.metaKey \|\| e\.getModifierState\('AltGraph'\)\) return;\r?\n        if \(getActiveModal\(\)\) return;/,
-    "        if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || getActiveModal()) return;"
-);
-assert.equal(
-    normalizedDebugSource.replace(/\r\n/g, '\n'),
-    originalSource.replace(/\r\n/g, '\n')
-);
 assert.match(debugSource, /navigator\.clipboard\.writeText\(debugData\)/);
-assert.match(debugSource, /const SCRIPT_VERSION = '2\.6\.66'/);
-assert.match(debugSource, /const debugData = document\.documentElement\.outerHTML/);
+assert.equal(
+    debugSource.match(/SCRIPT_VERSION = ["']([^"']+)["']/)?.[1],
+    originalSource.match(/SCRIPT_VERSION = ["']([^"']+)["']/)?.[1]
+);
+assert.match(debugSource, /document\.documentElement\.outerHTML/);
 assert.doesNotMatch(originalSource, /document\.documentElement\.outerHTML/);
 const debugCaptureBlock = debugSource.slice(
-    debugSource.indexOf('    function copyDebugHtmlShortcut() {'),
-    debugSource.indexOf('    function focusMessageInputShortcut() {')
+    debugSource.indexOf('async function copyDebugHtml()'),
+    debugSource.lastIndexOf('window.addEventListener')
 );
 assert.match(debugCaptureBlock, /redact before sharing/);
 assert.match(debugSource, /Sensitive chat and contact data included; redact before sharing/);
-assert.match(debugSource, /if \(e\.altKey && e\.shiftKey && !e\.ctrlKey && e\.code === 'Digit0'\) \{\s+e\.preventDefault\(\);\s+copyDebugHtmlShortcut\(\);\s+e\.stopImmediatePropagation\(\);/);
+assert.match(debugSource, /!event\.altKey \|\| !event\.shiftKey \|\|/);
 
 console.log('accessibility runtime checks passed');

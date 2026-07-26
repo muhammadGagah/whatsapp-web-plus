@@ -1,0 +1,9 @@
+# Normalize line endings: store LF in the repository and let Git
+# convert on checkout according to each machine's settings.
+# Run once after adding this file:  git add --renormalize .
+* text=auto
+
+# Generated build output: tracked for Greasy Fork/Tampermonkey installs,
+# but marked as generated so GitHub collapses it in pull-request diffs.
+whatsapp_web_plus.user.js linguist-generated=true
+whatsapp_web_plus.debug.js linguist-generated=true
