@@ -773,33 +773,21 @@ export function clearStatusRegion() {
 
 export function invalidatePassiveAnnouncements() {
   announcementGeneration++;
-  clearTimeout(announcementTimer);
-  announcementTimer = null;
-  userAnnouncementUntil = 0;
-  const liveRegion = document.getElementById('wa-plus-live-region');
-  if (liveRegion) liveRegion.textContent = '';
-  const messageLog = document.getElementById('wa-plus-message-log');
-  if (messageLog) messageLog.textContent = '';
+  clearMessageLog();
 }
 
-function announceWithGeneration(text, generation) {
+export function announce(text) {
   if (!text) return;
-  if (generation !== announcementGeneration) return;
   userAnnouncementUntil = Date.now() + 3000;
   const liveRegion = ensureLiveRegion();
   clearTimeout(announcementTimer);
   liveRegion.textContent = '';
   announcementTimer = setTimeout(() => {
-    if (generation !== announcementGeneration) return;
     liveRegion.textContent = text;
     announcementTimer = setTimeout(() => {
-      if (generation === announcementGeneration) liveRegion.textContent = '';
+      liveRegion.textContent = '';
     }, 3000);
   }, 0);
-}
-
-export function announce(text) {
-  announceWithGeneration(text, announcementGeneration);
 }
 
 export function announcePassiveMessages(messages, generation) {

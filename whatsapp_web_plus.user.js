@@ -1941,31 +1941,20 @@
   }
   function invalidatePassiveAnnouncements() {
     announcementGeneration++;
-    clearTimeout(announcementTimer);
-    announcementTimer = null;
-    userAnnouncementUntil = 0;
-    const liveRegion = document.getElementById("wa-plus-live-region");
-    if (liveRegion) liveRegion.textContent = "";
-    const messageLog = document.getElementById("wa-plus-message-log");
-    if (messageLog) messageLog.textContent = "";
+    clearMessageLog();
   }
-  function announceWithGeneration(text, generation) {
+  function announce(text) {
     if (!text) return;
-    if (generation !== announcementGeneration) return;
     userAnnouncementUntil = Date.now() + 3e3;
     const liveRegion = ensureLiveRegion();
     clearTimeout(announcementTimer);
     liveRegion.textContent = "";
     announcementTimer = setTimeout(() => {
-      if (generation !== announcementGeneration) return;
       liveRegion.textContent = text;
       announcementTimer = setTimeout(() => {
-        if (generation === announcementGeneration) liveRegion.textContent = "";
+        liveRegion.textContent = "";
       }, 3e3);
     }, 0);
-  }
-  function announce(text) {
-    announceWithGeneration(text, announcementGeneration);
   }
   function announcePassiveMessages(messages2, generation) {
     appendMessages(messages2, generation);

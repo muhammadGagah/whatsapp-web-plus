@@ -14,7 +14,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         resetPassiveAnnouncementContext,
         startStatusTracking, stopStatusTracking,
         truncateList,
-        announce, clearStatusRegion,
+        announce, clearStatusRegion, getUserAnnouncementUntil,
         togglePrivacyWithQueueReset,
         isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, cleanElementAttributes,
         maskPhoneNumbers,
@@ -670,11 +670,23 @@ runtime.resetPassiveAnnouncementContext();
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
 scheduledTimeouts.clear();
 runtime.appendTestMessages(['Old chat log']);
-runtime.announce('Old delayed status');
-const staleStatusTimer = Array.from(scheduledTimeouts.values()).at(-1);
+runtime.announce('User status survives passive reset');
+const [pendingUserStatusTimerId, pendingUserStatusTimer] =
+    Array.from(scheduledTimeouts.entries()).at(-1);
+const userAnnouncementUntil = runtime.getUserAnnouncementUntil();
 runtime.resetPassiveAnnouncementContext();
 assert.equal(messageLog.textContent, '');
-staleStatusTimer();
+assert.equal(scheduledTimeouts.has(pendingUserStatusTimerId), true);
+assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
+pendingUserStatusTimer();
+assert.equal(liveRegion.textContent, 'User status survives passive reset');
+const [userStatusCleanupTimerId, userStatusCleanupTimer] =
+    Array.from(scheduledTimeouts.entries()).at(-1);
+runtime.resetPassiveAnnouncementContext();
+assert.equal(liveRegion.textContent, 'User status survives passive reset');
+assert.equal(scheduledTimeouts.has(userStatusCleanupTimerId), true);
+assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
+userStatusCleanupTimer();
 assert.equal(liveRegion.textContent, '');
 
 runtime.clearStatusRegion();
