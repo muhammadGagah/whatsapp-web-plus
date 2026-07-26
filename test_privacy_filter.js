@@ -88,13 +88,13 @@ assert.equal(setCustomText('delivery-delivered', 'remis'), true);
 assert.equal(setSenderDeviceAnnouncement(true), true);
 sandbox.document.documentElement = { lang: 'fr' };
 assert.equal(
-    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Jean 12:00 remis'),
-    'Jean 12:00 remis'
+    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Member Six 12:00 remis'),
+    'Member Six 12:00 remis'
 );
 sandbox.document.documentElement.lang = 'en';
 assert.equal(
-    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Jean 12:00 Delivered'),
-    'Jean 12:00 Delivered. Sent from iPhone'
+    prepareNamedAttribute(unsupportedMessageLabel, 'aria-label', 'Member Six 12:00 Delivered'),
+    'Member Six 12:00 Delivered. Sent from iPhone'
 );
 assert.equal(setSenderDeviceAnnouncement(false), true);
 assert.equal(setCustomText('delivery-delivered', ''), true);

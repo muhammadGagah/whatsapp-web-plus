@@ -55,24 +55,24 @@ assert.equal(
   'Contact A and Contact B sedang merekam pesan suara...'
 );
 assert.equal(
-  settings.translateRecordingAudioActivity('أحمد is recording audio…'),
-  '\u2068أحمد\u2069 sedang merekam pesan suara…'
+  settings.translateRecordingAudioActivity('الأول is recording audio…'),
+  '\u2068الأول\u2069 sedang merekam pesan suara…'
 );
 assert.equal(settings.translateActivityStatus('last seen today at 10:00'), 'terakhir dilihat today at 10:00');
 assert.equal(settings.setCustomText('typing', 'está escribiendo'), true);
-assert.equal(settings.getTypingRegex().test('Jean está escribiendo…'), true);
+assert.equal(settings.getTypingRegex().test('Member Six está escribiendo…'), true);
 assert.equal(settings.getGenericTypingRegex().test('está escribiendo…'), true);
-assert.equal(settings.translateTypingActivity('Jean está escribiendo…'), 'Jean sedang mengetik…');
+assert.equal(settings.translateTypingActivity('Member Six está escribiendo…'), 'Member Six sedang mengetik…');
 assert.equal(settings.setCustomText('typing', 'écrit'), true);
-assert.equal(settings.getTypingRegex().test('Jean écrit…'), true);
-assert.equal(settings.getTypingRegex().test('Jean décrit…'), false);
+assert.equal(settings.getTypingRegex().test('Member Six écrit…'), true);
+assert.equal(settings.getTypingRegex().test('Member Six décrit…'), false);
 assert.equal(settings.setCustomText('recording-audio', 'está grabando audio'), true);
 assert.equal(settings.getCustomText('recording-audio'), 'está grabando audio');
-assert.equal(settings.getRecordingAudioRegex().test('Jean está grabando audio…'), true);
+assert.equal(settings.getRecordingAudioRegex().test('Member Six está grabando audio…'), true);
 assert.equal(settings.getGenericRecordingAudioRegex().test('está grabando audio…'), true);
 assert.equal(
-  settings.translateRecordingAudioActivity('Jean está grabando audio…'),
-  'Jean sedang merekam pesan suara…'
+  settings.translateRecordingAudioActivity('Member Six está grabando audio…'),
+  'Member Six sedang merekam pesan suara…'
 );
 assert.equal(values.get('wa-plus-custom-recording-audio-text'), 'está grabando audio');
 assert.equal(settings.setCustomText('delivery-status', 'Pending|Sent|Delivered|Read'), true);
@@ -104,16 +104,16 @@ assert.equal(
 assert.equal(settings.getMessageContextInstructionRegex().test('Para más opciones usa flechas'), false);
 
 assert.equal(settings.setCustomText('unknown-contact-prefix', 'Quizás'), true);
-assert.equal('Quizás: Jean está escribiendo'.replace(settings.getUnknownContactRegex(), ''), 'Jean está escribiendo');
+assert.equal('Quizás: Member Six está escribiendo'.replace(settings.getUnknownContactRegex(), ''), 'Member Six está escribiendo');
 assert.equal(settings.getUnknownContactRegex().test('Quizás no es un prefijo'), true);
 assert.equal(settings.getUnknownContactRegex().test('Quizásmente'), false);
 
 assert.equal(settings.setCustomText('participant-prefix', 'Teilnehmer'), true);
 assert.equal('Teilnehmer: +49 123'.replace(settings.getParticipantPrefixRegex(), ''), '+49 123');
-assert.equal('Alice Teilnehmer Bob'.replace(settings.getParticipantWordRegex(), ' ').trim(), 'Alice Bob');
+assert.equal('Member One Teilnehmer Member Two'.replace(settings.getParticipantWordRegex(), ' ').trim(), 'Member One Member Two');
 
 assert.equal(settings.setCustomText('quote-prefix', 'mensaje citado de'), true);
-assert.equal(settings.getQuotePrefixRegex().exec('respuesta a mensaje citado de Jean:')?.[0], 'mensaje citado de ');
+assert.equal(settings.getQuotePrefixRegex().exec('respuesta a mensaje citado de Member Six:')?.[0], 'mensaje citado de ');
 
 assert.equal(settings.setCustomText('online-status', 'en línea'), true);
 assert.equal(settings.translateActivityStatus('en línea'), 'online');
@@ -130,12 +130,12 @@ assert.equal(settings.getChatStatusRegex().test('fijado [importante]'), true);
 assert.equal(settings.getChatStatusRegex().test('fijado importante'), false);
 assert.equal(settings.getChatStatusRegex().test('mengetik…'), true);
 assert.equal(settings.setCustomText('view-status', 'ver novedades'), true);
-assert.equal(settings.getViewStatusRegex().test('ver novedades de Jean'), true);
+assert.equal(settings.getViewStatusRegex().test('ver novedades de Member Six'), true);
 
 assert.equal(settings.setCustomText('participant-separator', '،'), true);
 assert.deepEqual(
-  Array.from(settings.splitParticipantList('Ana، Budi، Cici، Dodi')),
-  ['Ana', 'Budi', 'Cici', 'Dodi']
+  Array.from(settings.splitParticipantList('Member Seven، Member Eight، Member Nine، Member Ten')),
+  ['Member Seven', 'Member Eight', 'Member Nine', 'Member Ten']
 );
 
 assert.equal(settings.setCustomText('nav-meta-ai', 'Asistente [IA]'), true);

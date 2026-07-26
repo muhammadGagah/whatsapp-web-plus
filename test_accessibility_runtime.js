@@ -186,12 +186,12 @@ const messageRow = new Element();
 messageRow.setAttribute('role', 'row');
 const messageCell = new Element();
 messageCell.setAttribute('data-focusable-list-item', 'true');
-messageCell.setAttribute('aria-label', 'Alice Hello 10:00');
+messageCell.setAttribute('aria-label', 'Member One Hello 10:00');
 const secondMessageRow = new Element();
 secondMessageRow.setAttribute('role', 'row');
 const secondMessageCell = new Element();
 secondMessageCell.setAttribute('data-focusable-list-item', 'true');
-secondMessageCell.setAttribute('aria-label', 'Bob Hello 10:01');
+secondMessageCell.setAttribute('aria-label', 'Member Two Hello 10:01');
 messageRow.appendChild(messageCell);
 secondMessageRow.appendChild(secondMessageCell);
 messageViewport.appendChild(messageRow);
@@ -299,7 +299,7 @@ assert.equal(messageViewport.getAttribute('aria-labelledby'), null);
 assert.equal(messageViewport.getAttribute('aria-rowcount'), null);
 assert.equal(messageCell.getAttribute('role'), null);
 assert.equal(messageCell.hasAttribute('tabindex'), false);
-assert.equal(messageCell.getAttribute('aria-label'), 'Alice Hello 10:00');
+assert.equal(messageCell.getAttribute('aria-label'), 'Member One Hello 10:00');
 assert.equal(messageCell.getAttribute('aria-labelledby'), null);
 assert.equal(secondMessageCell.getAttribute('role'), null);
 assert.equal(secondMessageCell.hasAttribute('tabindex'), false);
@@ -413,9 +413,9 @@ assert.equal(metaAIBody.getAttribute('id'), 'react-body-id');
 assert.equal(metaAIMetadata.hasAttribute('id'), false);
 
 const ordinaryMessage = new Element();
-ordinaryMessage.setAttribute('aria-label', 'Alice Hello 18:53 Read');
+ordinaryMessage.setAttribute('aria-label', 'Member One Hello 18:53 Read');
 assert.equal(runtime.applyMetaAIMessageName(ordinaryMessage), false);
-assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Alice Hello 18:53 Read');
+assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Member One Hello 18:53 Read');
 const ordinaryMetaLabel = new Element();
 ordinaryMetaLabel.setAttribute('aria-label', 'Meta AI');
 ordinaryMetaLabel.closestHandler = selector =>
@@ -442,9 +442,9 @@ assert.equal(
     runtime.prepareNamedAttribute(
         ordinaryMessage,
         'aria-label',
-        'Alice Hello 18:53 Read For more options, press left or right arrow key to access context menu'
+        'Member One Hello 18:53 Read For more options, press left or right arrow key to access context menu'
     ),
-    'Alice Hello 18:53 Read'
+    'Member One Hello 18:53 Read'
 );
 assert.equal(runtime.prepareNamedAttribute(ordinaryMenu, 'aria-label', 'Open message options'), 'Open message options');
 
@@ -456,9 +456,9 @@ assert.equal(
     runtime.prepareNamedAttribute(
         linkedMessage,
         'aria-label',
-        'Alice See https://example.test/options 18:54 Delivered For more options, press left or right arrow key to access context menu'
+        'Member One See https://example.test/options 18:54 Delivered For more options, press left or right arrow key to access context menu'
     ),
-    'Alice See https://example.test/options 18:54 Delivered'
+    'Member One See https://example.test/options 18:54 Delivered'
 );
 
 const pulseStatus = new Element();
@@ -531,13 +531,13 @@ assert.equal(runtime.getChatPulseSummary(metaPulseMessage), 'Meta AI: Final Meta
 const pulseEntry = (id, summary, status) => ({ id, summary, status });
 const reconcilePulse = (chatTitle, entries) => Array.from(runtime.reconcileChatPulseEntries(chatTitle, entries));
 runtime.setLanguage('id');
-assert.equal(runtime.truncateList('Ana, Budi, Cici, Dodi, Evi'), 'Ana, Budi, Cici dan 2 lainnya');
-assert.equal(runtime.truncateList('Ana, Budi, Cici, Dodi'), 'Ana, Budi, Cici dan 1 lainnya');
+assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten, Member Eleven'), 'Member Seven, Member Eight, Member Nine dan 2 lainnya');
+assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten'), 'Member Seven, Member Eight, Member Nine dan 1 lainnya');
 runtime.setCustomText('participant-separator', '،');
-assert.equal(runtime.truncateList('Ana، Budi، Cici، Dodi'), 'Ana, Budi, Cici dan 1 lainnya');
+assert.equal(runtime.truncateList('Member Seven، Member Eight، Member Nine، Member Ten'), 'Member Seven, Member Eight, Member Nine dan 1 lainnya');
 assert.equal(
-    runtime.truncateList('أحمد، ليلى، عمر، نور'),
-    '\u2068أحمد\u2069, \u2068ليلى\u2069, \u2068عمر\u2069 dan 1 lainnya'
+    runtime.truncateList('الأول، الثالث، الثاني، الرابع'),
+    '\u2068الأول\u2069, \u2068الثالث\u2069, \u2068الثاني\u2069 dan 1 lainnya'
 );
 runtime.setCustomText('participant-separator', '');
 const previewVoiceIcon = new Element();
@@ -550,53 +550,53 @@ previewVoiceIcon.setAttribute('aria-label', 'message vocal');
 assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'message vocal');
 document.documentElement.lang = 'en';
 runtime.setLanguage('en');
-runtime.setChatPulseBaseline('Alice', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
+runtime.setChatPulseBaseline('Member One', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
-    ['Alice second 15:55']
+    ['Member One second 15:55']
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     ['Message status: Delivered']
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Sent', 'Sent'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [pulseEntry('old-1', 'Historical message', '')]),
+    reconcilePulse('Member One', [pulseEntry('old-1', 'Historical message', '')]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
+    reconcilePulse('Member One', [
         pulseEntry('m1', 'You first 15:54 Delivered', 'Delivered'),
-        pulseEntry('m2', 'Alice second 15:55', '')
+        pulseEntry('m2', 'Member One second 15:55', '')
     ]),
     []
 );
 assert.deepEqual(
-    reconcilePulse('Alice', [
-        pulseEntry('m2', 'Alice second 15:55', ''),
+    reconcilePulse('Member One', [
+        pulseEntry('m2', 'Member One second 15:55', ''),
         pulseEntry('m3', 'You third 15:56 Sent', 'Sent')
     ]),
     ['You third 15:56 Sent']
 );
-runtime.setChatPulseBaseline('Alice', [pulseEntry('m4', 'You pending 15:57', '')]);
+runtime.setChatPulseBaseline('Member One', [pulseEntry('m4', 'You pending 15:57', '')]);
 assert.deepEqual(
-    reconcilePulse('Alice', [pulseEntry('m4', 'You pending 15:57 Sent', 'Sent')]),
+    reconcilePulse('Member One', [pulseEntry('m4', 'You pending 15:57 Sent', 'Sent')]),
     ['Message status: Sent']
 );
 assert.deepEqual(
-    reconcilePulse('Bob', [pulseEntry('b1', 'Bob old message', '')]),
+    reconcilePulse('Member Two', [pulseEntry('b1', 'Member Two old message', '')]),
     []
 );
 runtime.setCustomText('delivery-sent', 'envoyé');
@@ -657,11 +657,11 @@ assert.deepEqual(reconcilePulse('Other chat', []), []);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
 
 runtime.queuePassiveAnnouncements('pulse', ['Unmasked queued message']);
-runtime.queuePassiveAnnouncements('activity', ['Alice is typing']);
+runtime.queuePassiveAnnouncements('activity', ['Member One is typing']);
 runtime.discardPassiveAnnouncements('pulse');
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Alice is typing' }]
+    [{ source: 'activity', text: 'Member One is typing' }]
 );
 runtime.discardPassiveAnnouncements('activity');
 runtime.queuePassiveAnnouncements('pulse', ['Old language message']);
@@ -693,12 +693,12 @@ runtime.clearStatusRegion();
 scheduledTimeouts.clear();
 messageLog.children = [];
 runtime.queuePassiveAnnouncements('pulse', ['New message', 'Message status: Read']);
-runtime.queuePassiveAnnouncements('activity', ['Alice is typing']);
+runtime.queuePassiveAnnouncements('activity', ['Member One is typing']);
 const passiveFlush = Array.from(scheduledTimeouts.values()).at(-1);
 passiveFlush();
 assert.deepEqual(
     messageLog.children.map(entry => entry.textContent),
-    ['New message', 'Message status: Read', 'Alice is typing']
+    ['New message', 'Message status: Read', 'Member One is typing']
 );
 assert.equal(liveRegion.textContent, '');
 
@@ -733,35 +733,35 @@ typingRow.queryHandler = selector => {
 };
 typingSecondary.queryHandler = selector => selector === '[title], [aria-label]' ? typingIndicator : null;
 typingTitleContainer.queryHandler = selector => selector === '[title]' ? typingTitle : null;
-typingTitle.setAttribute('title', 'Achi Yandrika');
-typingIndicator.setAttribute('title', '~\u202fShaun Oliver is typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing…');
-typingIndicator.setAttribute('title', '~ Shaun Oliver and Budi are typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver and Budi are typing…');
+typingTitle.setAttribute('title', 'Sample Account');
+typingIndicator.setAttribute('title', '~\u202fSample Person is typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing…');
+typingIndicator.setAttribute('title', '~ Sample Person and Member Eight are typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person and Member Eight are typing…');
 typingIndicator.setAttribute('title', 'recording audio…');
 typingIndicator.removeAttribute('aria-label');
 assert.equal(
     runtime.getSelectedChatTypingActivity([typingRow]),
-    'Achi Yandrika is recording a voice message…'
+    'Sample Account is recording a voice message…'
 );
-typingIndicator.setAttribute('aria-label', 'Achi and Budi are recording audio…');
+typingIndicator.setAttribute('aria-label', 'Sample and Member Eight are recording audio…');
 typingIndicator.setAttribute('title', 'stale last message preview');
 assert.equal(
     runtime.getSelectedChatTypingActivity([typingRow]),
-    'Achi and Budi are recording a voice message…'
+    'Sample and Member Eight are recording a voice message…'
 );
 runtime.setCustomText('recording-audio', 'está grabando audio');
-typingIndicator.setAttribute('aria-label', 'Achi está grabando audio…');
+typingIndicator.setAttribute('aria-label', 'Sample está grabando audio…');
 assert.equal(
     runtime.getSelectedChatTypingActivity([typingRow]),
-    'Achi is recording a voice message…'
+    'Sample is recording a voice message…'
 );
 runtime.setCustomText('recording-audio', '');
-typingTitle.setAttribute('title', 'أحمد');
+typingTitle.setAttribute('title', 'الأول');
 typingIndicator.setAttribute('aria-label', 'recording audio…');
 assert.equal(
     runtime.getSelectedChatTypingActivity([typingRow]),
-    '\u2068أحمد\u2069 is recording a voice message…'
+    '\u2068الأول\u2069 is recording a voice message…'
 );
 const firstPhoneRecording = new Element();
 const secondPhoneRecording = new Element();
@@ -776,58 +776,58 @@ assert.equal(
 );
 runtime.setPrivacy(false);
 typingSecondary.queryAllHandler = null;
-typingTitle.setAttribute('title', 'Achi Yandrika');
+typingTitle.setAttribute('title', 'Sample Account');
 typingIndicator.setAttribute('title', 'Last message preview');
 typingIndicator.removeAttribute('aria-label');
 assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '');
 typingIndicator.removeAttribute('title');
-typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('aria-label', 'Maybe Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
 runtime.setCustomText('unknown-contact-prefix', 'Quizás');
-typingIndicator.setAttribute('aria-label', 'Quizás Shaun Oliver is typing...');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('aria-label', 'Quizás Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
 runtime.setCustomText('unknown-contact-prefix', '');
 typingIndicator.setAttribute('title', 'typing…');
 typingIndicator.setAttribute('aria-label', 'typing…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Achi Yandrika is typing…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Account is typing…');
 runtime.setCustomText('typing', '正在输入');
-typingTitle.setAttribute('title', '小明');
-typingIndicator.setAttribute('title', '小明正在输入…');
-typingIndicator.setAttribute('aria-label', '小明正在输入…');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '小明 is typing…');
+typingTitle.setAttribute('title', '联系人');
+typingIndicator.setAttribute('title', '联系人正在输入…');
+typingIndicator.setAttribute('aria-label', '联系人正在输入…');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), '联系人 is typing…');
 runtime.setCustomText('typing', '');
-typingTitle.setAttribute('title', 'Achi Yandrika');
+typingTitle.setAttribute('title', 'Sample Account');
 typingIndicator.setAttribute('title', 'typing…');
 typingIndicator.setAttribute('aria-label', 'typing…');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Achi Yandrika is typing…' }]
+    [{ source: 'activity', text: 'Sample Account is typing…' }]
 );
-typingTitle.setAttribute('title', 'Bob');
+typingTitle.setAttribute('title', 'Member Two');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Bob is typing…' }]
+    [{ source: 'activity', text: 'Member Two is typing…' }]
 );
-typingTitle.setAttribute('title', 'Carol');
+typingTitle.setAttribute('title', 'Member Three');
 typingIndicator.setAttribute('title', 'Last message preview');
 typingIndicator.setAttribute('aria-label', 'Last message preview');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
 runtime.discardPassiveAnnouncements('activity');
 typingIndicator.setAttribute('title', 'Last message preview');
-typingIndicator.setAttribute('aria-label', 'Maybe Shaun Oliver is typing...');
-assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Shaun Oliver is typing...');
+typingIndicator.setAttribute('aria-label', 'Maybe Sample Person is typing...');
+assert.equal(runtime.getSelectedChatTypingActivity([typingRow]), 'Sample Person is typing...');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(
     Array.from(runtime.getPassiveAnnouncements(), entry => ({ source: entry.source, text: entry.text })),
-    [{ source: 'activity', text: 'Shaun Oliver is typing...' }]
+    [{ source: 'activity', text: 'Sample Person is typing...' }]
 );
 typingIndicator.setAttribute('aria-label', 'Last message preview');
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
-typingIndicator.setAttribute('title', '~ Budi is typing…');
+typingIndicator.setAttribute('title', '~ Member Eight is typing…');
 document.activeElement = typingRow;
 runtime.syncSelectedChatTypingActivity([typingRow]);
 assert.deepEqual(Array.from(runtime.getPassiveAnnouncements()), []);
@@ -1228,7 +1228,7 @@ assert.deepEqual(
 const customStatusBadge = new Element();
 const customViewStatus = new Element();
 customStatusBadge.setAttribute('aria-label', 'silenciado [chat]');
-customViewStatus.setAttribute('aria-label', 'ver novedades de Jean');
+customViewStatus.setAttribute('aria-label', 'ver novedades de Member Six');
 runtime.setCustomText('chat-status-labels', 'silenciado [chat]|fijado');
 runtime.setCustomText('view-status', 'ver novedades');
 indonesianBadgeRow.queryAllHandler = selector =>
@@ -1411,13 +1411,13 @@ activeMain.queryHandler = selector => {
     if (selector === 'header') return header;
     return null;
 };
-headerInfo.innerText = 'Study Group\nAlice, Bob, Carol, Dave, Erin';
+headerInfo.innerText = 'Study Group\nMember One, Member Two, Member Three, Member Four, Member Five';
 runtime.clearStatusRegion();
 scheduledTimeouts.clear();
 const focusBeforeHeaderAnnouncement = document.activeElement;
 runtime.announceChatHeaderShortcut();
 Array.from(scheduledTimeouts.values()).at(-1)();
-assert.equal(liveRegion.textContent, 'Study Group. Alice, Bob, Carol and 2 others');
+assert.equal(liveRegion.textContent, 'Study Group. Member One, Member Two, Member Three and 2 others');
 assert.equal(document.activeElement, focusBeforeHeaderAnnouncement);
 headerInfo.innerText = '';
 const cachedMessage = new Element();

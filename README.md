@@ -4,7 +4,7 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current repository version is **2.6.70**. Read the [WhatsApp Web Plus 2.6.70 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.70**. Read the [WhatsApp Web Plus 2.6.70 changes and earlier release history](CHANGELOG.md).
 
 ## What Tampermonkey does
 
@@ -27,7 +27,7 @@ On browser pages and dialogs, use **Tab** or **Shift+Tab** to move between contr
 ### 1. Install the Tampermonkey extension
 
 1. Open the [official Tampermonkey download page](https://www.tampermonkey.net/).
-2. Find the **Download** heading. As an optional shortcut, press **H** while NVDA is in browse mode to move through headings. You can also open the Elements List with **NVDA+F7** and select **Headings**. In a browser dialog, use **Tab** and **Shift+Tab** instead.
+2. Find the **Download** heading. As an optional shortcut, press **H** while NVDA is in browse mode (the normal reading mode on a web page) to move through headings. You can also open the Elements List with **NVDA+F7** and select **Headings**. In a browser dialog, use **Tab** and **Shift+Tab** instead.
 3. Check that the page has selected your browser. If necessary, activate the **Chrome** or **Microsoft Edge** link near the top of the page.
 4. Find and activate the **Get from Store** link.
 5. Complete the browser's installation prompt:
@@ -38,11 +38,11 @@ Only install Tampermonkey from its official website or the extension store linke
 
 #### Alternative: install Tampermonkey from an official CRX package
 
-Use this advanced method only if installation from the browser's extension store is unavailable. A **CRX** file is a packaged Chrome extension. Tampermonkey's official package instructions use Developer mode and drag-and-drop, but drag-and-drop is not a reliable keyboard-only workflow. The steps below extract the package and load its folder instead.
+Most people never need this method; if the store installation above worked, skip to step 2. Use this method only if installation from the browser's extension store is unavailable. A **CRX** file is a packaged Chrome extension. Tampermonkey's official package instructions use Developer mode and drag-and-drop, but drag-and-drop is not a reliable keyboard-only workflow. The steps below extract the package and load its folder instead.
 
 If you previously chose **Download** instead of **Get from Store** and already have `tampermonkey_stable.crx`, skip steps 1 and 2.
 
-**Load unpacked** cannot open a CRX or ZIP file. It accepts an extension folder whose top level contains a file named `manifest.json`.
+Later in these steps you will use a browser button named **Load unpacked**. That button cannot open a CRX or ZIP file directly; it needs a folder whose top level contains a file named `manifest.json`. The steps below create that folder.
 
 1. Open the [official Tampermonkey versions page](https://www.tampermonkey.net/faq.php?q=Q406).
 2. In the stable **Tampermonkey** row, activate the **crx** link. The downloaded file is normally named `tampermonkey_stable.crx`.
@@ -69,7 +69,7 @@ Renaming a file does not convert its format. A modern CRX contains a signed head
 
 ### 2. Allow Tampermonkey to run userscripts
 
-Tampermonkey 5.3 and later requires one extra permission on Chrome-based browsers. **Allow User Scripts** authorizes Tampermonkey to use the browser feature that executes userscripts. Without this permission, WhatsApp Web Plus may be installed but not run.
+Tampermonkey 5.3 and later requires one extra permission on Chrome-based browsers. **Allow User Scripts** gives Tampermonkey permission to run userscripts. Without this permission, WhatsApp Web Plus may be installed but not run.
 
 1. Press **Ctrl+L** to focus the address bar.
 2. Type or paste the address for your browser, then press **Enter**:
@@ -89,7 +89,7 @@ Do this only if WhatsApp Web Plus does not start after installation. **Site acce
 
 1. Open [WhatsApp Web](https://web.whatsapp.com/). Site-access controls describe the page that is currently open, so do not perform these steps on an extension-store or browser-settings page.
 2. Press and release the **left Alt** key. Then press **Left Arrow** repeatedly until NVDA announces the **Extensions** button, and press **Enter**. Do not hold Alt while pressing Left Arrow; **Alt+Left Arrow** goes back to the previous page.
-3. If that method does not reach the toolbar, press **Alt+Shift+T** to focus its first item, then press **Right Arrow** until you reach **Extensions**. You can also press **F10**, then use **Left Arrow**. **F6** or **Shift+F6** cycles through major browser areas as another fallback.
+3. If that method does not reach the toolbar, press **Alt+Shift+T** (a browser shortcut that moves focus to the toolbar) to focus its first item, then press **Right Arrow** until you reach **Extensions**. You can also press **F10**, then use **Left Arrow**. **F6** or **Shift+F6** cycles through major browser areas as another fallback.
 4. Find **Tampermonkey**, then find the nearby **More actions** or **More options** button and press **Enter**.
 5. Find **This can read and change site data** or **Site access**, open its submenu, and choose **On all sites** for full Tampermonkey functionality.
 
@@ -112,13 +112,13 @@ If Tampermonkey reports that some URLs are restricted while you are on a browser
 
 ## Main features
 
-- Presents the message history as a keyboard-friendly structure and preserves useful focus when WhatsApp updates the page.
-- Makes chats, messages, times, delivery states, sender devices, and activity information easier to hear.
+- Lets you move through the message history with the arrow keys and keeps your place when WhatsApp refreshes the page.
+- Makes chats, messages, times, delivery status (sent, delivered, read), sender devices, and activity information easier to hear.
 - Removes repeated or unhelpful screen-reader announcements while retaining meaningful changes.
 - Automatic reading can announce new incoming or outgoing messages in the open chat and delivery changes for outgoing messages.
 - Can open a chat at its first unread message instead of leaving focus in the message editor.
 - Announce sender device can add a detected device or platform to focused messages and automatic message announcements.
-- Adds shortcuts for navigation, voice recording, media players, and verified incoming calls.
+- Adds shortcuts for navigation, voice recording, media players, and incoming calls.
 - Privacy Mode keeps contact names available while masking phone numbers in conversation summaries and script announcements. Visible phone links keep their native name for speech-input compatibility.
 - Clean UI hides promotional and extra controls without hiding the chat list.
 - Original Dark Mode restores WhatsApp's older dark colors. It does not change screen-reader output.
@@ -150,7 +150,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 
 ### Incoming call controls
 
-These shortcuts work only while a verified incoming voice or video call is visibly ringing. They activate WhatsApp's native call buttons; the native **Accept** and **Decline** buttons remain available as the primary fallback.
+These shortcuts work only while an incoming voice or video call is ringing and WhatsApp is showing its **Accept** and **Decline** buttons. They press those same buttons for you; if a shortcut does nothing, you can always move to the buttons and press them yourself.
 
 | Shortcut | Action |
 | --- | --- |
@@ -171,9 +171,9 @@ Your optional feature choices are remembered after you refresh WhatsApp Web.
 
 ## Settings menu
 
-Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The root menu provides **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, and a command to open the WhatsApp Web Plus update page. The update command remains directly in the root menu so it is easy to find.
+Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, and a command to open the WhatsApp Web Plus update page. The update command stays in the main menu so it is easy to find.
 
-Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Arrow` or `Escape` to return to its parent, `Enter` or `Space` to change a setting, and `Escape` again to close the root menu.
+Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Arrow` or `Escape` to go back to the previous menu, `Enter` or `Space` to change a setting, and `Escape` again to close the menu.
 
 ### What each setting does
 
@@ -191,7 +191,7 @@ Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Ar
 
 ### Custom language string reference
 
-These fields are detectors for text supplied by WhatsApp, not translations of WhatsApp Web Plus announcements. Enter the exact text shown or announced by WhatsApp in your interface language. The script treats your entry as literal text, so do not enter a regular expression, a CSS selector, or explanatory text.
+These fields are detectors for text supplied by WhatsApp, not translations of WhatsApp Web Plus announcements. Enter the exact text shown or announced by WhatsApp in your interface language. The script treats your entry as plain literal text, so do not enter computer code, search patterns, or explanations — only the exact text itself.
 
 English and Indonesian wording is already built in. Change a field only when the related feature does not recognize WhatsApp in another language. Examples below show the expected shape of each value; WhatsApp may use different wording in your version. Leave a field blank and save it to restore the built-in behavior.
 
@@ -233,11 +233,13 @@ Navigation accessible names must match WhatsApp exactly, including capitalizatio
 - **View status action text** identifies the beginning of WhatsApp's View status action so it is treated as an action instead of chat-preview content. Example: `View status`.
 - **Participant list separator** tells the script how names are separated in group participant lists. This lets long lists be split and shortened correctly in activity announcements. Enter only the separator, without surrounding names or spaces. Example: `;`.
 
-To update, choose **Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)**, review the version, and confirm it in Tampermonkey. The script does not install updates automatically.
+## Update WhatsApp Web Plus
 
-Right-click, `Shift + F10`, and the keyboard's `Application` key remain available to WhatsApp and the browser; WhatsApp Web Plus never replaces their context menus.
+WhatsApp Web Plus does not install updates automatically. To update, press `Shift + F8`, choose **Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)**, review the version shown, and confirm it in Tampermonkey.
 
 ## Open a message context menu with NVDA
+
+Right-click, `Shift + F10`, and the keyboard's `Application` key remain available to WhatsApp and the browser; WhatsApp Web Plus never replaces their context menus.
 
 First try `Shift + F10` or the `Application` key on the focused message. If WhatsApp does not open the message menu from keyboard focus, use NVDA's mouse commands below.
 
