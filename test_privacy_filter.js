@@ -103,6 +103,8 @@ delete sandbox.document.documentElement;
 assert.equal(setCustomText('nav-meta-ai', 'Asistente [IA]'), true);
 const customMetaSender = new Element();
 customMetaSender.setAttribute('aria-label', 'Asistente [IA]:');
+customMetaSender.closestHandler = selector =>
+    selector.includes('[data-testid="msg-container"]') ? customMetaSender : null;
 const customMetaMessage = {
     querySelectorAll(selector) {
         return selector === 'span[aria-label]' ? [customMetaSender] : [];

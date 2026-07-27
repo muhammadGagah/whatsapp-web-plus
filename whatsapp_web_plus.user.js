@@ -1061,7 +1061,7 @@
     const metaAIRegex = getMetaAIRegex(true);
     return Array.from(candidates).find(
       (sender) => metaAIRegex.test((sender.getAttribute("aria-label") || "").trim()) && !sender.closest('[data-testid="quoted-message"]') && !sender.closest(
-        '[data-testid="msg-container"], [data-testid="msg-meta"], a, button, [role="link"], [role="button"]'
+        '.copyable-text.selectable-text, [data-testid="msg-meta"], a, button, [role="link"], [role="button"]'
       )
     ) || null;
   }
@@ -1627,7 +1627,7 @@
     const messages2 = rows.map((row) => row.querySelector(".focusable-list-item"));
     const metaAIReplies = new Set(messages2.filter(isMetaAIReply));
     const completeGrid = active && rows.length > 0 && messages2.every(
-      (message, index) => message && message.closest('div[role="row"]') === rows[index] && (message.hasAttribute("aria-label") || metaAIReplies.has(message)) && canApplyOwnedMessageRole(message, "gridcell", OWNERS.messageCell)
+      (message, index) => message && message.closest('div[role="row"]') === rows[index] && canApplyOwnedMessageRole(message, "gridcell", OWNERS.messageCell)
     ) && new Set(messages2).size === messages2.length && canApplyOwnedMessageRole(viewport, "grid", OWNERS.messageGrid);
     const messageSet = new Set(messages2);
     const staleMetaAIMessageNames = /* @__PURE__ */ new Set();

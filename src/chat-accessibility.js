@@ -395,7 +395,6 @@ function applyMessageGridExperiment() {
   const completeGrid = active && rows.length > 0 && messages.every((message, index) =>
     message &&
     message.closest('div[role="row"]') === rows[index] &&
-    (message.hasAttribute('aria-label') || metaAIReplies.has(message)) &&
     canApplyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell)
   ) && new Set(messages).size === messages.length &&
     canApplyOwnedMessageRole(viewport, 'grid', OWNERS.messageGrid);

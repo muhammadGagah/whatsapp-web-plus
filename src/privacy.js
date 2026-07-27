@@ -330,7 +330,7 @@ export function getDirectMetaAISender(message) {
     metaAIRegex.test((sender.getAttribute('aria-label') || '').trim()) &&
     !sender.closest('[data-testid="quoted-message"]') &&
     !sender.closest(
-      '[data-testid="msg-container"], [data-testid="msg-meta"], a, button, [role="link"], [role="button"]'
+      '.copyable-text.selectable-text, [data-testid="msg-meta"], a, button, [role="link"], [role="button"]'
     )
   ) || null;
 }

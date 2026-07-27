@@ -190,8 +190,13 @@ messageCell.setAttribute('aria-label', 'Member One Hello 10:00');
 const secondMessageRow = new Element();
 secondMessageRow.setAttribute('role', 'row');
 const secondMessageCell = new Element();
+const callLogButton = new Element();
 secondMessageCell.setAttribute('data-focusable-list-item', 'true');
-secondMessageCell.setAttribute('aria-label', 'Member Two Hello 10:01');
+secondMessageCell.textContent = 'Missed voice call Click to call back';
+callLogButton.setAttribute('role', 'button');
+callLogButton.setAttribute('aria-label', 'Click to call back');
+callLogButton.setAttribute('data-testid', 'call-log-system-message');
+secondMessageCell.appendChild(callLogButton);
 messageRow.appendChild(messageCell);
 secondMessageRow.appendChild(secondMessageCell);
 messageViewport.appendChild(messageRow);
@@ -352,7 +357,8 @@ const metaAIConversation = new Element();
 metaAIReply.setAttribute('aria-label', 'Native focus hint');
 metaAIReply.closestHandler = selector => selector === '[data-testid="conversation-panel-messages"]' ? metaAIConversation : null;
 metaAISender.setAttribute('aria-label', 'Meta AI');
-metaAISender.closestHandler = () => null;
+metaAISender.closestHandler = selector =>
+    selector.includes('[data-testid="msg-container"]') ? metaAIReply : null;
 metaAIBody.closestHandler = selector => {
     if (selector === '.focusable-list-item') return metaAIReply;
     if (selector === '[data-testid="conversation-panel-messages"]') return metaAIConversation;
@@ -419,7 +425,7 @@ assert.equal(ordinaryMessage.getAttribute('aria-label'), 'Member One Hello 18:53
 const ordinaryMetaLabel = new Element();
 ordinaryMetaLabel.setAttribute('aria-label', 'Meta AI');
 ordinaryMetaLabel.closestHandler = selector =>
-    selector.includes('[data-testid="msg-container"]') ? ordinaryMetaLabel : null;
+    selector.includes('.copyable-text.selectable-text') ? ordinaryMetaLabel : null;
 ordinaryMessage.queryAllHandler = selector =>
     selector === 'span[aria-label]'
         ? [ordinaryMetaLabel]
@@ -505,7 +511,8 @@ assert.equal(runtime.getChatPulseSummary(metadataOnlyMessage), 'You Rendered mes
 
 const metaPulseSender = new Element();
 metaPulseSender.setAttribute('aria-label', 'Meta AI:');
-metaPulseSender.closestHandler = () => null;
+metaPulseSender.closestHandler = selector =>
+    selector.includes('[data-testid="msg-container"]') ? metaPulseSender : null;
 const metaPulseBody = new Element();
 metaPulseBody.textContent = 'Thinking';
 const metaPulseMetadata = new Element();
