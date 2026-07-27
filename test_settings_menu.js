@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const vm = require('node:vm');
 const { buildSync } = require('esbuild');
 
+const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
+    .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 let documentRef;
 
 class Element {
@@ -157,7 +160,7 @@ const output = buildSync({
     format: 'iife',
     platform: 'browser',
     globalName: 'SettingsMenu',
-    define: { __SCRIPT_VERSION__: JSON.stringify('2.6.70') }
+    define: { __SCRIPT_VERSION__: JSON.stringify(expectedVersion) }
 }).outputFiles[0].text;
 
 const context = {

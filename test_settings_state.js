@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const { buildSync } = require('esbuild');
 const vm = require('node:vm');
 
+const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
+  .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 const result = buildSync({
   entryPoints: ['src/settings-state.js'],
   bundle: true,
@@ -9,7 +12,7 @@ const result = buildSync({
   format: 'iife',
   platform: 'browser',
   globalName: 'SettingsState',
-  define: { __SCRIPT_VERSION__: JSON.stringify('2.6.70') }
+  define: { __SCRIPT_VERSION__: JSON.stringify(expectedVersion) }
 });
 
 const values = new Map();
