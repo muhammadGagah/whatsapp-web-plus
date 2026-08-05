@@ -1,4 +1,5 @@
 export const SCRIPT_VERSION = __SCRIPT_VERSION__;
+export const IS_DEBUG_BUILD = __DEBUG_BUILD__;
 export const SHORTCUT_RENDER_RETRIES = 12;
 export const ALT_T_DOUBLE_PRESS_MS = 300;
 export const CHAT_LIST_TOP_FALLBACK_MAX_Y = 1000;
@@ -11,12 +12,18 @@ export const STORAGE_KEYS = Object.freeze({
   language: 'wa-plus-language',
   reduceAnnouncements: 'wa-plus-reduce-announcements',
   automaticReading: 'wa-plus-automatic-reading',
+  statusReadingCleanup: 'wa-plus-status-reading-cleanup',
   senderDeviceAnnouncements: 'wa-plus-sender-device-announcements',
   openChatsAtFirstUnread: 'wa-plus-open-chats-at-first-unread',
   remapVoiceRecording: 'wa-plus-remap-voice-recording',
   remapPreviousChat: 'wa-plus-remap-previous-chat',
   remapNextChat: 'wa-plus-remap-next-chat',
   chatActivity: 'wa-plus-chat-activity-monitor',
+  audioExperiment: 'wa-plus-audio-experiment',
+  audioExperimentProfile: 'wa-plus-audio-experiment-profile',
+  audioExperimentReports: 'wa-plus-audio-experiment-reports',
+  callAudioExperiment: 'wa-plus-call-audio-experiment',
+  callAudioExperimentProfile: 'wa-plus-call-audio-experiment-profile',
   customUnreadDivider: 'wa-plus-custom-unread-divider',
   customTypingText: 'wa-plus-custom-typing-text',
   customRecordingAudioText: 'wa-plus-custom-recording-audio-text',
@@ -38,6 +45,10 @@ export const STORAGE_KEYS = Object.freeze({
   customChatStatusLabels: 'wa-plus-custom-chat-status-labels',
   customViewStatus: 'wa-plus-custom-view-status',
   customParticipantSeparator: 'wa-plus-custom-participant-separator',
+  customStatusPauseLabels: 'wa-plus-custom-status-pause-labels',
+  customStatusReadMoreLabels: 'wa-plus-custom-status-read-more-labels',
+  customStatusMediaFallback: 'wa-plus-custom-status-media-fallback',
+  customScrollToBottom: 'wa-plus-custom-scroll-to-bottom',
   customDeliveryPending: 'wa-plus-custom-delivery-pending',
   customDeliverySent: 'wa-plus-custom-delivery-sent',
   customDeliveryDelivered: 'wa-plus-custom-delivery-delivered',
@@ -48,10 +59,21 @@ export const SELECTORS = Object.freeze({
   side: 'div#side',
   main: 'div#main',
   messageInput: 'div#main footer div[contenteditable="true"]',
-  navChats: '[data-testid="navbar-primary-section"] button[aria-label="Chats"]',
+  navChats: '[data-testid="navbar-primary-section"] button[aria-label="Chats"], [data-testid="navbar-primary-section"] button[aria-label="Chat"]',
   navStatus: '[data-testid="navbar-primary-section"] button[aria-label="Status"], [data-testid="navbar-primary-section"] button[aria-label="Updates in Status"]',
-  navCommunities: '[data-testid="navbar-primary-section"] button[aria-label="Communities"]',
-  navChannels: '[data-testid="navbar-primary-section"] button[aria-label="Channels"]',
+  statusPlayerRoot: '[data-testid="status-player-uie"]',
+  statusActiveMarker: '[data-animate-status-viewer="true"]',
+  statusContactName: '[data-testid="status-player-contact-name"]',
+  statusText: '[data-testid="status-text"]',
+  statusVideo: '[data-testid="status-video"]',
+  statusVoice: '[data-testid="ptt-status"]',
+  statusAudio: 'audio',
+  statusImage: '[data-testid="status-image"]',
+  statusAttribution: '[data-testid="status-subtitle-attribution-content"]',
+  statusTitle: '[data-testid="music-attribution-song-metadata"]',
+  statusProgressSegment: '[data-testid="status-progress-bar-segment"]',
+  navCommunities: '[data-testid="navbar-primary-section"] button[aria-label="Communities"], [data-testid="navbar-primary-section"] button[aria-label="Komunitas"]',
+  navChannels: '[data-testid="navbar-primary-section"] button[aria-label="Channels"], [data-testid="navbar-primary-section"] button[aria-label="Saluran"]',
   navMetaAI: '[data-testid="navbar-primary-section"] button[aria-label="Meta AI"]',
   videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
   audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
@@ -73,7 +95,8 @@ export const OWNERS = Object.freeze({
   messageGrid: 'message-grid',
   messageCell: 'message-cell',
   metaAIMessageName: 'meta-ai-message-name',
-  cleanUiHidden: 'clean-ui-hidden'
+  cleanUiHidden: 'clean-ui-hidden',
+  statusViewer: 'status-viewer'
 });
 
 export const CHAT_LABEL_NOISE_RE = Object.freeze({

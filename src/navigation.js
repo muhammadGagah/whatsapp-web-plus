@@ -6,6 +6,8 @@ import {
   SHORTCUT_RENDER_RETRIES,
   STORAGE_KEYS
 } from './config.js';
+import { armNextVoiceMessageCapture } from './audio-experiment.js';
+import { refreshStatusAccessibility } from './status-accessibility.js';
 import {
   appendSenderDevice,
   cleanString,
@@ -48,6 +50,8 @@ import {
   scheduleRoleFix
 } from './chat-accessibility.js';
 import {
+  getDesktopAppPromo,
+  getDesktopAppPromoCloseButton,
   toggleCleanUiMode,
   toggleOriginalDarkMode
 } from './appearance.js';
@@ -59,8 +63,10 @@ import {
   getGenericTypingRegex,
   getMessageContextInstructionRegex,
   getMetaAIRegex,
+  getNavButton,
   getNavSelector,
   getRecordingAudioRegex,
+  getScrollToBottomSelector,
   getUnknownContactRegex,
   getTypingSuffix,
   getTypingRegex,
@@ -407,6 +413,7 @@ export function togglePrivacyWithQueueReset(announceChange = true) {
     return false;
   }
   const enabled = isPrivacyModeEnabled();
+  refreshStatusAccessibility();
   resetPassiveAnnouncementContext();
   clearMessageLog();
   clearStatusRegion();
@@ -796,11 +803,23 @@ export function focusChatListShortcut(origin = document.activeElement) {
 export function focusLastMessageShortcut() {
   const request = beginFocusRequest();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+  let clickedScrollToBottom = false;
   const tryFocus = attempt => {
     if (!isFocusRequestCurrent(request) || getActiveModal()) return;
     const main = document.querySelector(SELECTORS.main);
     if (!isChatMainActive(main)) {
       announce(t('noMessages'));
+      return;
+    }
+
+    const scrollToBottomButton = !clickedScrollToBottom &&
+      main.querySelector(getScrollToBottomSelector());
+    if (isRenderedElement(scrollToBottomButton) && !scrollToBottomButton.disabled &&
+      scrollToBottomButton.getAttribute('aria-disabled') !== 'true') {
+      clickedScrollToBottom = true;
+      scrollToBottomButton.click();
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
+      else announce(t('messageNotReady'));
       return;
     }
 
@@ -913,8 +932,30 @@ function activateMediaPlayerClose(closeButton) {
   return true;
 }
 
-export function closeMediaPlayerShortcut() {
-  return activateMediaPlayerClose(getMediaPlayerCloseButton());
+export function closeMediaPlayerShortcut(origin = document.activeElement) {
+  const mediaCloseButton = getMediaPlayerCloseButton();
+  if (mediaCloseButton && isRenderedElement(mediaCloseButton)) {
+    return activateMediaPlayerClose(mediaCloseButton);
+  }
+
+  const promo = getDesktopAppPromo();
+  const promoCloseButton = getDesktopAppPromoCloseButton(promo);
+  if (!promoCloseButton || !isRenderedElement(promoCloseButton)) {
+    return activateMediaPlayerClose(null);
+  }
+
+  const recoverFocus = promo.contains(origin) || promo.contains(document.activeElement);
+  promoCloseButton.click();
+  if (recoverFocus) {
+    const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+    schedule(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) return;
+      [getNavButton('navChats'), document.querySelector(SELECTORS.chatList)].some(focusItem);
+    });
+  }
+  announce(t('desktopPromoClosed'));
+  return true;
 }
 
 function focusMessageInputShortcut() {
@@ -991,6 +1032,7 @@ function remapWhatsAppShortcut(e) {
   const target = e.target?.dispatchEvent ? e.target : (document.activeElement || document.body);
   if (!target?.dispatchEvent || typeof KeyboardEvent !== 'function') return false;
 
+  if (remap[0] === 'voice-recording') armNextVoiceMessageCapture();
   e.preventDefault();
   target.dispatchEvent(new KeyboardEvent('keydown', {
     key: remap[1],

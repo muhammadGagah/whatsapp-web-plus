@@ -8,7 +8,7 @@ const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
     .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 const source = originalSource.replace('    ensureLiveRegion();', `
     globalThis.__runtime = {
-        SELECTORS, OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute,
+        SELECTORS, OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute, releaseOwnedWithin,
         isMetaAIReply, applyMetaAIMessageName,
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
@@ -19,6 +19,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         announce, clearStatusRegion, getUserAnnouncementUntil,
         togglePrivacyWithQueueReset,
         isOwnedMutation, handleAttributeMutation, prepareNamedAttribute, cleanElementAttributes,
+        pruneDetachedOwnedElements,
         maskPhoneNumbers,
         restorePrivacyAttributes,
         focusItem, handleShortcuts, isShortUnreadText, getNextMessageRow, getChatRowTranslateY,
@@ -31,12 +32,14 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         getRoleFixRoot, scheduleRoleFix,
         getHeaderInfoButton, getHeaderText, announceChatHeaderShortcut,
         closeMediaPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
-        CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getCleanUiHiddenTargets, syncCleanUi,
+        CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getDesktopAppPromoCloseButton,
+        getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
         setCleanUi(value) { isCleanUiMode = value; },
         setUnreadTarget(value) { unreadTarget = value; },
         setStatusTracking(value) { isStatusTracking = value; },
-        setLanguage, setCustomText, getNavSelector, setOpenChatsAtFirstUnread, setShortcutRemap,
+        setLanguage, setCustomText, getNavSelector, getScrollToBottomSelector,
+        setOpenChatsAtFirstUnread, setShortcutRemap,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
         getChatPulseEnabled() { return isAutomaticReadingEnabled(); },
         getStatusTracking() { return isStatusTracking; },
@@ -343,6 +346,45 @@ const cleanRole = new Element();
 runtime.applyOwnedAttribute(cleanRole, 'role', 'grid', runtime.OWNERS.messageGrid);
 runtime.releaseOwnedAttribute(cleanRole, 'role', runtime.OWNERS.messageGrid);
 assert.equal(cleanRole.hasAttribute('role'), false);
+
+const hostRemovedNullOwned = new Element();
+hostRemovedNullOwned.setAttribute('aria-labelledby', 'host-id');
+runtime.applyOwnedAttribute(hostRemovedNullOwned, 'aria-labelledby', null, runtime.OWNERS.statusViewer);
+hostRemovedNullOwned.removeAttribute('aria-labelledby');
+runtime.releaseOwnedAttribute(hostRemovedNullOwned, 'aria-labelledby', runtime.OWNERS.statusViewer);
+assert.equal(hostRemovedNullOwned.hasAttribute('aria-labelledby'), false,
+    'a host removal after a script-owned null value is preserved');
+
+const sameValueOwned = new Element();
+sameValueOwned.setAttribute('aria-label', 'Host label');
+runtime.applyOwnedAttribute(sameValueOwned, 'aria-label', 'Script label', runtime.OWNERS.statusViewer);
+sameValueOwned.removeAttribute('aria-label');
+sameValueOwned.setAttribute('aria-label', 'Script label');
+assert.equal(runtime.isOwnedMutation(sameValueOwned, 'aria-label'), true, 'same-value host rewrites keep ownership');
+runtime.releaseOwnedAttribute(sameValueOwned, 'aria-label', runtime.OWNERS.statusViewer);
+assert.equal(sameValueOwned.getAttribute('aria-label'), 'Host label', 'same-value host rewrites still restore the original value');
+
+const detachedOwned = new Element();
+detachedOwned.setAttribute('aria-label', 'Host label');
+runtime.applyOwnedAttribute(detachedOwned, 'aria-label', 'Script label', runtime.OWNERS.statusViewer);
+detachedOwned.setAttribute('role', 'grid');
+runtime.applyOwnedAttribute(detachedOwned, 'role', 'list', runtime.OWNERS.messageGrid);
+detachedOwned.isConnected = false;
+runtime.releaseOwnedWithin(detachedOwned, runtime.OWNERS.statusViewer);
+assert.equal(detachedOwned.getAttribute('role'), 'list', 'releasing one owner does not clear another owner on a detached node');
+runtime.pruneDetachedOwnedElements();
+assert.equal(detachedOwned.getAttribute('aria-label'), 'Host label', 'detached owned attributes restore the host value');
+assert.equal(detachedOwned.getAttribute('role'), 'grid', 'detached attributes restore after all owners are pruned');
+
+const reattachedOwned = new Element();
+reattachedOwned.setAttribute('aria-label', 'Reattached host label');
+runtime.applyOwnedAttribute(reattachedOwned, 'aria-label', 'Reattached script label', runtime.OWNERS.statusViewer);
+reattachedOwned.isConnected = false;
+reattachedOwned.isConnected = true;
+runtime.pruneDetachedOwnedElements();
+assert.equal(reattachedOwned.getAttribute('aria-label'), 'Reattached script label', 'reattached nodes keep active ownership');
+runtime.releaseOwnedAttribute(reattachedOwned, 'aria-label', runtime.OWNERS.statusViewer);
+assert.equal(reattachedOwned.getAttribute('aria-label'), 'Reattached host label');
 
 const nativeRole = new Element();
 nativeRole.setAttribute('role', 'feed');
@@ -1360,13 +1402,26 @@ const activeMain = new Element();
 const latestMessageContainer = new Element();
 const latestMessageRow = new Element();
 const latestMessage = new Element();
+const scrollToBottomButton = new Element();
+const focusLastMessageOrder = [];
 latestMessageContainer.scrollHeight = 1000;
 latestMessageContainer.clientHeight = 200;
+scrollToBottomButton.setAttribute('aria-label', 'Scroll to bottom');
+scrollToBottomButton.setAttribute('aria-disabled', 'false');
+scrollToBottomButton.clickHandler = () => {
+    focusLastMessageOrder.push('click');
+    latestMessageContainer.scrollTop = latestMessageContainer.scrollHeight;
+};
+latestMessage.focus = () => {
+    focusLastMessageOrder.push('focus');
+    documentRef.activeElement = latestMessage;
+};
 latestMessageRow.rect = { top: 150, bottom: 180, left: 0, right: 100, width: 100, height: 30 };
 latestMessageRow.closestHandler = selector => selector.includes('conversation-panel-messages') ? latestMessageContainer : null;
 latestMessageContainer.queryAllHandler = selector => selector === 'div[role="row"]' ? [latestMessageRow] : [];
 latestMessageRow.queryHandler = selector => selector.includes('.focusable-list-item') ? latestMessage : null;
 activeMain.queryHandler = selector => {
+    if (selector.includes('button[aria-label="Scroll to bottom"]')) return scrollToBottomButton;
     if (selector.includes('[data-testid="conversation-panel-messages"]')) return latestMessageContainer;
     if (selector === 'footer div[contenteditable="true"]') return new Element();
     return null;
@@ -1374,11 +1429,13 @@ activeMain.queryHandler = selector => {
 selectorResults.set('div#main', activeMain);
 document.activeElement = null;
 runtime.focusLastMessageShortcut();
+assert.equal(scrollToBottomButton.clickCalls, 1);
 assert.equal(latestMessageContainer.scrollTop, 1000);
 assert.equal(document.activeElement, null);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, latestMessage);
+assert.deepEqual(focusLastMessageOrder, ['click', 'focus']);
 assert.equal(latestMessageRow.scrollIntoViewCalls, 1);
 
 activeMain.children.push(latestMessageContainer, composer);
@@ -1663,6 +1720,11 @@ assert.equal(event.prevented, true);
 assert.equal(remapTarget.dispatchedEvents[0].code, 'KeyR');
 assert.equal(remapTarget.dispatchedEvents[0].ctrlKey, true);
 assert.equal(remapTarget.dispatchedEvents[0].shiftKey, true);
+assert.match(
+    originalSource,
+    /if \(remap\[0\] === ["']voice-recording["']\) armNextVoiceMessageCapture\(\);\s+e\.preventDefault\(\);\s+target\.dispatchEvent/
+);
+assert.doesNotMatch(originalSource, /addEventListener\(["']keydown["'], handleVoiceCaptureActivation/);
 assert.equal(runtime.setShortcutRemap('previous-chat', true), true);
 assert.equal(runtime.setShortcutRemap('next-chat', true), true);
 runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowUp', target: remapTarget }));
@@ -1881,6 +1943,130 @@ assert.equal(rerenderedEncryptionNotice.getAttribute(runtime.CLEAN_UI_HIDDEN_ATT
 assert.equal(actionGroup.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 assert.equal(encryptionNotice.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 
+runtime.setCleanUi(false);
+runtime.syncCleanUi();
+selectorResults.delete('section[data-testid="intro-panel"]');
+selectorResults.delete('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]');
+const sidebarPromo = new Element();
+const sidebarPromoIcon = new Element();
+const sidebarPromoTitle = new Element();
+const sidebarPromoClose = new Element();
+const sidebarPromoCloseLabel = new Element();
+const sidebarPromoCloseTitle = new Element();
+const duplicatePromoClose = new Element();
+const duplicatePromoCloseLabel = new Element();
+const duplicatePromoCloseTitle = new Element();
+sidebarPromo.setAttribute('role', 'button');
+sidebarPromo.setAttribute('tabindex', '0');
+sidebarPromoIcon.setAttribute('data-testid', 'wa-square-icon');
+sidebarPromoTitle.textContent = 'Dapatkan WhatsApp untuk Windows';
+sidebarPromoClose.setAttribute('role', 'button');
+sidebarPromoClose.setAttribute('tabindex', '0');
+sidebarPromoCloseLabel.setAttribute('aria-label', 'Tutup');
+sidebarPromoCloseTitle.textContent = 'ic-close';
+duplicatePromoClose.setAttribute('role', 'button');
+duplicatePromoCloseLabel.setAttribute('aria-label', 'Tutup');
+duplicatePromoCloseTitle.textContent = 'ic-close';
+sidebarPromo.appendChild(sidebarPromoIcon);
+sidebarPromo.appendChild(sidebarPromoTitle);
+sidebarPromo.appendChild(sidebarPromoClose);
+sidebarPromoClose.appendChild(sidebarPromoCloseLabel);
+sidebarPromoCloseLabel.appendChild(sidebarPromoCloseTitle);
+sidebarPromoIcon.closestHandler = selector => selector === '[role="button"][tabindex="0"]' ? sidebarPromo : null;
+sidebarPromoCloseTitle.closestHandler = selector => selector === 'button, [role="button"]' ? sidebarPromoClose : null;
+duplicatePromoCloseTitle.closestHandler = selector => selector === 'button, [role="button"]' ? duplicatePromoClose : null;
+sidebarPromoClose.queryHandler = selector => selector === '[aria-label]' ? sidebarPromoCloseLabel : null;
+duplicatePromoClose.queryHandler = selector => selector === '[aria-label]' ? duplicatePromoCloseLabel : null;
+sidebarPromo.queryAllHandler = selector => {
+    if (selector === 'span') return [sidebarPromoTitle, sidebarPromoCloseLabel];
+    if (selector === 'svg title') return [sidebarPromoCloseTitle];
+    return [];
+};
+selectorAllResults.set('[data-testid="wa-square-icon"]', [sidebarPromoIcon]);
+
+assert.equal(runtime.getDesktopAppPromo(), sidebarPromo);
+assert.equal(runtime.getDesktopAppPromoCloseButton(sidebarPromo), sidebarPromoClose);
+sidebarPromoTitle.textContent = 'Unduh WhatsApp untuk Windows';
+assert.equal(runtime.getDesktopAppPromo(), sidebarPromo);
+sidebarPromoTitle.textContent = 'Not a WhatsApp desktop promotion';
+assert.equal(runtime.getDesktopAppPromo(), null);
+sidebarPromoTitle.textContent = 'Dapatkan WhatsApp untuk Windows';
+sidebarPromoClose.setAttribute('aria-disabled', 'true');
+assert.equal(runtime.getDesktopAppPromo(), null);
+sidebarPromoClose.removeAttribute('aria-disabled');
+sidebarPromo.queryAllHandler = selector => selector === 'span'
+    ? [sidebarPromoTitle, sidebarPromoCloseLabel]
+    : [];
+assert.equal(runtime.getDesktopAppPromo(), null);
+sidebarPromo.queryAllHandler = selector => {
+    if (selector === 'span') return [sidebarPromoTitle, sidebarPromoCloseLabel];
+    if (selector === 'svg title') return [sidebarPromoCloseTitle, duplicatePromoCloseTitle];
+    return [];
+};
+assert.equal(runtime.getDesktopAppPromo(), null);
+sidebarPromo.queryAllHandler = selector => {
+    if (selector === 'span') return [sidebarPromoTitle, sidebarPromoCloseLabel];
+    if (selector === 'svg title') return [sidebarPromoCloseTitle];
+    return [];
+};
+
+document.activeElement = unrelatedFocus;
+runtime.setCleanUi(true);
+assert.equal(runtime.syncCleanUi(), true);
+assert.equal(sidebarPromo.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(sidebarPromoClose.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+runtime.setCleanUi(false);
+runtime.syncCleanUi();
+
+vendorDialog.hidden = false;
+selectorAllResults.set(modalSelector, [vendorDialog]);
+event = makeEvent({ altKey: true, code: 'Digit0', target: sidebarPromoClose });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, false);
+assert.equal(sidebarPromoClose.clickCalls, 0);
+selectorAllResults.delete(modalSelector);
+
+const preferredMediaClose = new Element();
+selectorResults.set(runtime.SELECTORS.audioPlayerClose, preferredMediaClose);
+event = makeEvent({ altKey: true, code: 'Digit0', target: sidebarPromoClose });
+runtime.handleShortcuts(event);
+assert.equal(preferredMediaClose.clickCalls, 1);
+assert.equal(sidebarPromoClose.clickCalls, 0);
+selectorResults.delete(runtime.SELECTORS.audioPlayerClose);
+
+preferredMediaClose.hidden = true;
+selectorResults.set(runtime.SELECTORS.audioPlayerClose, preferredMediaClose);
+document.activeElement = unrelatedFocus;
+const unrelatedPromoFrameCount = scheduledFrames.length;
+event = makeEvent({ altKey: true, code: 'Digit0', target: unrelatedFocus });
+runtime.handleShortcuts(event);
+assert.equal(preferredMediaClose.clickCalls, 1);
+assert.equal(sidebarPromoClose.clickCalls, 1);
+assert.equal(scheduledFrames.length, unrelatedPromoFrameCount);
+assert.equal(document.activeElement, unrelatedFocus);
+selectorResults.delete(runtime.SELECTORS.audioPlayerClose);
+sidebarPromoClose.clickCalls = 0;
+scheduledTimeouts.clear();
+runtime.setLanguage('id');
+document.activeElement = sidebarPromoClose;
+sidebarPromoClose.clickHandler = () => {
+    sidebarPromo.isConnected = false;
+    sidebarPromoClose.isConnected = false;
+    document.activeElement = document.body;
+};
+const promoFocusFrameCount = scheduledFrames.length;
+event = makeEvent({ altKey: true, code: 'Digit0', target: sidebarPromoClose });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(sidebarPromoClose.clickCalls, 1);
+assert.equal(scheduledTimeouts.size, 1);
+assert.equal(scheduledFrames.length, promoFocusFrameCount + 1);
+scheduledFrames.pop()();
+assert.equal(document.activeElement, navButton);
+runtime.setLanguage('en');
+selectorAllResults.delete('[data-testid="wa-square-icon"]');
+
 assert.doesNotMatch(runtime.CLEAN_UI_CSS, /#side\s*>\s*div:last-child|#pane-side\s*>\s*div:last-child/);
 assert.match(runtime.CLEAN_UI_CSS, new RegExp(`\\[${runtime.CLEAN_UI_HIDDEN_ATTRIBUTE}="true"\\][\\s\\S]*display\\s*:\\s*none`));
 assert.equal((runtime.CLEAN_UI_CSS.match(/display\s*:\s*none/g) || []).length, 1);
@@ -1897,7 +2083,10 @@ assert.match(originalSource, /automaticReading: ["']wa-plus-automatic-reading["'
 assert.match(originalSource, /chatActivity: ["']wa-plus-chat-activity-monitor["']/);
 assert.match(originalSource, /\[data-testid="cell-frame-secondary"\]/);
 assert.match(originalSource, /announce\(t\(["']mediaClosed["']\)\)/);
-assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|navigator\.clipboard|Debug HTML copied/);
+assert.match(originalSource, /Promo aplikasi desktop ditutup\./);
+assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|Debug HTML copied/);
+assert.match(originalSource, /getAudioExperimentDiagnosticText/);
+assert.match(originalSource, /navigator\.clipboard\?\.writeText/);
 assert.match(originalSource, /stopImmediatePropagation\(\)/);
 assert.match(originalSource, /applyChatRowNativeMask\(row\);\s+lastFocusedChatRowNode = row;/);
 assert.match(originalSource, /attrName === ["']aria-hidden["'] \|\| attrName === ["']tabindex["']/);
@@ -1937,7 +2126,11 @@ const altTShortcutBlock = originalSource.slice(
 );
 assert.doesNotMatch(altTShortcutBlock, /setTimeout/);
 assert.match(altTShortcutBlock, /announceChatHeaderShortcut\(\)/);
-assert.match(debugSource, /navigator\.clipboard\.writeText\(debugData\)/);
+assert.match(debugSource, /navigator\.clipboard\.writeText\(text\)/);
+assert.match(originalSource, /var IS_DEBUG_BUILD = false/);
+assert.match(debugSource, /var IS_DEBUG_BUILD = true/);
+assert.match(originalSource, /if \(IS_DEBUG_BUILD\) \{/);
+assert.match(debugSource, /if \(IS_DEBUG_BUILD\) \{/);
 assert.equal(
     debugSource.match(/SCRIPT_VERSION = ["']([^"']+)["']/)?.[1],
     originalSource.match(/SCRIPT_VERSION = ["']([^"']+)["']/)?.[1]
@@ -1950,6 +2143,30 @@ const debugCaptureBlock = debugSource.slice(
 );
 assert.match(debugCaptureBlock, /redact before sharing/);
 assert.match(debugSource, /Sensitive chat and contact data included; redact before sharing/);
-assert.match(debugSource, /!event\.altKey \|\| !event\.shiftKey \|\|/);
+assert.match(debugSource, /function startStatusTransitionDiagnostic/);
+assert.match(debugSource, /wa-plus-status-change-diagnostic/);
+const statusDiagnosticToggleBlock = debugSource.slice(
+    debugSource.indexOf('async function toggleStatusTransitionDiagnostic'),
+    debugSource.lastIndexOf('window.addEventListener("keydown"')
+);
+assert.match(statusDiagnosticToggleBlock, /copyText\(pendingStatusTransitionReport, false\)/,
+    'Status diagnostic copying must not use the focus-changing fallback');
+assert.match(statusDiagnosticToggleBlock, /if \(copied\) pendingStatusTransitionReport = ["']["']/,
+    'a failed clipboard copy keeps the report available for retry');
+const debugShortcutBlock = debugSource.slice(debugSource.lastIndexOf('window.addEventListener("keydown"'));
+assert.match(debugShortcutBlock, /!event\.altKey \|\| !event\.shiftKey \|\|/);
+assert.match(debugShortcutBlock, /event\.code === ["']Digit7["']/);
+assert.match(debugShortcutBlock, /}, true\);/,
+    'the debug shortcut must run in capture phase before page handlers can consume it');
+const navShortcutBlock = originalSource.slice(
+    originalSource.indexOf('function handleNavShortcut'),
+    originalSource.indexOf('function handleAltShortcut')
+);
+assert.doesNotMatch(navShortcutBlock, /Digit7/,
+    'the debug Status diagnostic shortcut must not be consumed by navigation shortcuts');
+assert.doesNotMatch(originalSource, /function startStatusTransitionDiagnostic/);
+assert.doesNotMatch(originalSource, /wa-plus-status-change-diagnostic/);
+assert.doesNotMatch(originalSource, /event\.code === ["']Digit7["']/,
+    'Alt+Shift+7 must exist only in the debug userscript');
 
 console.log('accessibility runtime checks passed');

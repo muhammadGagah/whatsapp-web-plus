@@ -262,7 +262,14 @@ function filterMessageIdentities(text, el) {
       text.slice(quotedSenderStart + quotedSenderIdentity.length);
   }
 
-  return maskMessagePhones(text, el);
+  const currentBody = bodyCandidates.find(candidate => text.includes(candidate));
+  if (!currentBody) return maskMessagePhones(text, el);
+
+  const currentBodyStart = text.indexOf(currentBody);
+  const currentBodyEnd = currentBodyStart + currentBody.length;
+  return maskMessagePhones(text.slice(0, currentBodyStart), el) +
+    maskMessagePhones(currentBody, el) +
+    maskMessagePhones(text.slice(currentBodyEnd), el);
 }
 
 function applyPrivacyFilter(text, context, el) {

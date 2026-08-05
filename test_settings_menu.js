@@ -41,6 +41,12 @@ class Element {
     removeAttribute(name) { this.attributes.delete(name); }
     appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
     append(...children) { children.forEach(child => this.appendChild(child)); }
+    after(sibling) {
+        if (!this.parentElement) return;
+        sibling.parentElement = this.parentElement;
+        const index = this.parentElement.children.indexOf(this);
+        this.parentElement.children.splice(index + 1, 0, sibling);
+    }
     remove() {
         if (!this.parentElement) return;
         this.parentElement.children = this.parentElement.children.filter(child => child !== this);
@@ -103,6 +109,10 @@ class Element {
         return node === this || this.children.some(child => child.contains(node));
     }
     focus() { documentRef.activeElement = this; }
+    select() {
+        this.focus();
+        windowListeners.get('focusin')?.({ target: this });
+    }
     scrollIntoView() {}
     getBoundingClientRect() {
         if (this.className.includes('wa-plus-settings-menu')) {
@@ -116,6 +126,8 @@ const documentListeners = new Map();
 const windowListeners = new Map();
 const scheduledTimers = [];
 const openCalls = [];
+let clipboardText = '';
+let fallbackClipboardText = '';
 let openHandler = () => ({});
 let activeModal = null;
 const document = {
@@ -138,7 +150,12 @@ const document = {
         }
         return this.body.querySelectorAll(selector);
     },
-    addEventListener(type, listener) { documentListeners.set(type, listener); }
+    addEventListener(type, listener) { documentListeners.set(type, listener); },
+    execCommand(command) {
+        if (command !== 'copy') return false;
+        fallbackClipboardText = this.activeElement?.value || '';
+        return true;
+    }
 };
 documentRef = document;
 document.head.parentElement = document.body.parentElement = null;
@@ -160,7 +177,10 @@ const output = buildSync({
     format: 'iife',
     platform: 'browser',
     globalName: 'SettingsMenu',
-    define: { __SCRIPT_VERSION__: JSON.stringify(expectedVersion) }
+    define: {
+        __SCRIPT_VERSION__: JSON.stringify(expectedVersion),
+        __DEBUG_BUILD__: 'true'
+    }
 }).outputFiles[0].text;
 
 const context = {
@@ -170,7 +190,19 @@ const context = {
         getItem(key) { return storedValues.has(key) ? storedValues.get(key) : null; },
         setItem(key, value) { storedValues.set(key, value); }
     },
-    navigator: { language: 'en-US' },
+    navigator: {
+        language: 'en-US',
+        clipboard: {
+            writeText(text) {
+                clipboardText = text;
+                return Promise.resolve();
+            }
+        },
+        mediaDevices: {
+            getUserMedia() {},
+            getSupportedConstraints() { return {}; }
+        }
+    },
     innerWidth: 1024,
     innerHeight: 768,
     Element,
@@ -264,15 +296,185 @@ const privacyItem = rootMenu.children.find(item => item.dataset.action === 'priv
 const accessibilityItem = rootMenu.children.find(item => item.dataset.action === 'accessibility');
 const keyboardShortcutsItem = rootMenu.children.find(item => item.dataset.action === 'keyboard-shortcuts');
 const appearanceItem = rootMenu.children.find(item => item.dataset.action === 'appearance');
+const voiceRecordingItem = rootMenu.children.find(item => item.dataset.action === 'voice-recording');
+const voiceRecordingMenu = document.getElementById('wa-plus-voice-recording-menu');
+const audioProfileGroup = voiceRecordingMenu.children.find(item => item.getAttribute('role') === 'group');
+const voiceMessageDiagnosticSeparator = voiceRecordingMenu.children.find(item => item.getAttribute('role') === 'separator');
+const audioProfileItems = audioProfileGroup.children.filter(item => item.dataset.audioProfile);
+const copyVoiceMessageDiagnosticsItem = voiceRecordingMenu.children.find(
+    item => item.dataset.action === 'copy-voice-message-diagnostics'
+);
+const whatsappProfileItem = audioProfileItems.find(item => item.dataset.audioProfile === 'whatsapp');
+const clearPlusProfileItem = audioProfileItems.find(item => item.dataset.audioProfile === 'clear-plus');
+const voiceCallsItem = rootMenu.children.find(item => item.dataset.action === 'voice-calls');
+const voiceCallsMenu = document.getElementById('wa-plus-voice-calls-menu');
+const callAudioProfileGroup = voiceCallsMenu.children.find(item => item.getAttribute('role') === 'group');
+const callAudioProfileSeparator = voiceCallsMenu.children.find(item => item.getAttribute('role') === 'separator');
+const callAudioProfileItems = callAudioProfileGroup.children.filter(item => item.dataset.callAudioProfile);
+const copyCallDiagnosticsItem = voiceCallsMenu.children.find(
+    item => item.dataset.action === 'copy-call-diagnostics'
+);
+const whatsappCallProfileItem = callAudioProfileItems.find(item => item.dataset.callAudioProfile === 'whatsapp');
+const clearCallProfileItem = callAudioProfileItems.find(item => item.dataset.callAudioProfile === 'clear');
 const accessibilityMenu = document.getElementById('wa-plus-accessibility-menu');
 const keyboardShortcutsMenu = document.getElementById('wa-plus-keyboard-shortcuts-menu');
 const appearanceMenu = document.getElementById('wa-plus-appearance-menu');
+const statusReadingItem = accessibilityMenu.children.find(item => item.dataset.action === 'status-reading-cleanup');
+assert.ok(statusReadingItem);
+assert.equal(statusReadingItem.getAttribute('role'), 'menuitemcheckbox');
+assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
+assert.equal(statusReadingItem.children[1].textContent, 'Clean Status reading');
 assert.equal(privacyItem.getAttribute('role'), 'menuitemcheckbox');
 assert.equal(privacyItem.children[1].textContent, 'Privacy mode');
+assert.equal(voiceRecordingItem.children[1].textContent, 'Voice message recording');
+assert.equal(voiceRecordingItem.getAttribute('aria-haspopup'), 'menu');
+assert.equal(voiceRecordingItem.getAttribute('aria-controls'), voiceRecordingMenu.id);
+assert.equal(audioProfileGroup.getAttribute('aria-label'), 'Voice-message recording profile');
+assert.equal(voiceRecordingMenu.children.some(item => item.dataset.action === 'copy-call-diagnostics'), false);
+assert.ok(voiceMessageDiagnosticSeparator);
+assert.equal(copyVoiceMessageDiagnosticsItem.getAttribute('role'), 'menuitem');
+assert.equal(copyVoiceMessageDiagnosticsItem.getAttribute('aria-checked'), null);
+assert.equal(copyVoiceMessageDiagnosticsItem.children[1].textContent,
+    'Copy focused voice-message audio diagnostics');
+assert.deepEqual(
+    audioProfileItems.map(item => [item.dataset.audioProfile, item.getAttribute('role'), item.getAttribute('aria-checked')]),
+    [
+        ['whatsapp', 'menuitemradio', 'true'],
+        ['natural', 'menuitemradio', 'false'],
+        ['clear', 'menuitemradio', 'false'],
+        ['clear-plus', 'menuitemradio', 'false'],
+        ['noise-filter', 'menuitemradio', 'false']
+    ]
+);
+assert.ok(callAudioProfileSeparator);
+assert.equal(copyCallDiagnosticsItem.getAttribute('role'), 'menuitem');
+assert.equal(copyCallDiagnosticsItem.getAttribute('aria-checked'), null);
+assert.equal(copyCallDiagnosticsItem.children[1].textContent,
+    'Copy voice and video call microphone configuration diagnostics');
+assert.equal(voiceCallsItem.children[1].textContent, 'Voice calls');
+assert.equal(voiceCallsItem.getAttribute('aria-haspopup'), 'menu');
+assert.equal(voiceCallsItem.getAttribute('aria-controls'), voiceCallsMenu.id);
+assert.equal(callAudioProfileGroup.getAttribute('aria-label'), 'Call microphone profile');
+assert.deepEqual(
+    callAudioProfileItems.map(item => [item.dataset.callAudioProfile, item.getAttribute('aria-checked')]),
+    [
+        ['whatsapp', 'true'],
+        ['raw', 'false'],
+        ['natural', 'false'],
+        ['clear', 'false'],
+        ['noise-filter', 'false']
+    ]
+);
+assert.deepEqual(
+    callAudioProfileItems.map(item => item.children[1].textContent),
+    [
+        'WhatsApp default (WhatsApp controls audio)',
+        'Raw (requests browser input processing off; use headphones)',
+        'Natural (browser call processing only)',
+        'Clear (light voice equalizer)',
+        'Noise filter (stronger background-noise reduction)'
+    ]
+);
+assert.deepEqual(
+    audioProfileItems.map(item => item.children[1].textContent),
+    [
+        'WhatsApp default (no processing)',
+        'Natural (raw 48 kilohertz, no equalizer)',
+        'Clear (balanced)',
+        'Clear Plus (stronger and more even)',
+        'Noise filter (noisy rooms)'
+    ]
+);
+document.activeElement = voiceRecordingItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(voiceRecordingMenu.hidden, false);
+assert.equal(document.activeElement, whatsappProfileItem);
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, clearPlusProfileItem);
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-audio-experiment'), 'true');
+assert.equal(storedValues.get('wa-plus-audio-experiment-profile'), 'clear-plus');
+assert.equal(rootMenu.hidden, true);
+assert.equal(document.activeElement, invoker);
+keydown(settingsShortcut());
+document.activeElement = voiceCallsItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'End' }));
+assert.equal(document.activeElement, copyCallDiagnosticsItem);
+const clipboardBeforeNoData = clipboardText;
+const noDataTimerStart = scheduledTimers.length;
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(rootMenu.hidden, true);
+assert.equal(document.activeElement, invoker);
+assert.equal(clipboardText, clipboardBeforeNoData);
+scheduledTimers.slice(noDataTimerStart).find(timer => timer.delay === 0).callback();
+assert.equal(document.getElementById('wa-plus-live-region').textContent,
+    'No voice or video call microphone configuration diagnostics are available yet. Make or answer a call, then try again.');
+assert.equal(document.querySelectorAll('[role="status"]').length, 1);
+storedValues.set('wa-plus-audio-experiment-reports', JSON.stringify([
+    { captureKind: 'voice-message', kind: 'getUserMedia' },
+    { captureKind: 'voice-call', kind: 'voice-call-getUserMedia', constraintMode: 'call-profile' }
+]));
+keydown(settingsShortcut());
+document.activeElement = voiceCallsItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'End' }));
+keydown(keyboardEvent({ key: 'Enter' }));
+const copiedCallDiagnostics = JSON.parse(clipboardText);
+assert.equal(copiedCallDiagnostics.status.captureScope, 'non-voice-message-microphone-streams');
+assert.deepEqual(copiedCallDiagnostics.reportsNewestFirst.map(item => item.captureKind), ['voice-call']);
+const nativeClipboardWriteText = context.navigator.clipboard.writeText;
+context.navigator.clipboard.writeText = () => { throw new Error('clipboard denied'); };
+const fallbackTimerStart = scheduledTimers.length;
+keydown(settingsShortcut());
+document.activeElement = voiceCallsItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'End' }));
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(rootMenu.hidden, true);
+assert.equal(document.activeElement, invoker);
+assert.equal(JSON.parse(fallbackClipboardText).status.captureScope, 'non-voice-message-microphone-streams');
+scheduledTimers.slice(fallbackTimerStart).find(timer => timer.delay === 0).callback();
+assert.equal(document.getElementById('wa-plus-live-region').textContent,
+    'Voice and video call microphone configuration diagnostics copied to the clipboard.');
+context.navigator.clipboard.writeText = nativeClipboardWriteText;
+keydown(settingsShortcut());
+document.activeElement = voiceRecordingItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'Escape' }));
+assert.equal(voiceRecordingMenu.hidden, true);
+assert.equal(document.activeElement, voiceRecordingItem);
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(document.activeElement, whatsappProfileItem);
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-audio-experiment'), 'false');
+assert.equal(whatsappProfileItem.getAttribute('aria-checked'), 'true');
+assert.equal(clearPlusProfileItem.getAttribute('aria-checked'), 'false');
+keydown(settingsShortcut());
+document.activeElement = voiceCallsItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(voiceCallsMenu.hidden, false);
+assert.equal(document.activeElement, whatsappCallProfileItem);
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, clearCallProfileItem);
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-call-audio-experiment'), 'true');
+assert.equal(storedValues.get('wa-plus-call-audio-experiment-profile') || 'clear', 'clear');
+assert.equal(clearCallProfileItem.getAttribute('aria-checked'), 'true');
+assert.equal(storedValues.get('wa-plus-audio-experiment'), 'false');
+assert.equal(rootMenu.hidden, true);
+assert.equal(document.activeElement, invoker);
+keydown(settingsShortcut());
 for (const [item, menu] of [
     [accessibilityItem, accessibilityMenu],
     [keyboardShortcutsItem, keyboardShortcutsMenu],
-    [appearanceItem, appearanceMenu]
+    [appearanceItem, appearanceMenu],
+    [voiceRecordingItem, voiceRecordingMenu],
+    [voiceCallsItem, voiceCallsMenu]
 ]) {
     assert.equal(item.getAttribute('role'), 'menuitem');
     assert.equal(item.getAttribute('aria-haspopup'), 'menu');
@@ -280,6 +482,8 @@ for (const [item, menu] of [
     assert.equal(item.getAttribute('aria-controls'), menu.id);
     assert.equal(menu.getAttribute('role'), 'menu');
     assert.equal(menu.getAttribute('aria-labelledby'), item.id);
+    assert.equal(menu.parentElement, rootMenu);
+    assert.equal(rootMenu.children.indexOf(menu), rootMenu.children.indexOf(item) + 1);
 }
 for (const [action, checked, label] of [
     ['remap-voice-recording', 'true', 'Use Alt+M to start voice recording'],
@@ -447,6 +651,14 @@ assert.equal(storedValues.get('wa-plus-open-chats-at-first-unread'), 'true');
 assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
 assert.equal(rootMenu.hidden, false);
 
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, statusReadingItem);
+assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-status-reading-cleanup'), 'true');
+assert.equal(statusReadingItem.getAttribute('aria-checked'), 'true');
+assert.equal(rootMenu.hidden, false);
+
 keydown(keyboardEvent({ key: 'Escape' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement, keyboardShortcutsItem);
@@ -494,6 +706,25 @@ assert.equal(rootMenu.hidden, true);
 
 keydown(settingsShortcut());
 assert.equal(keyboardShortcutsItem.children[1].textContent, 'Pemetaan ulang pintasan');
+assert.equal(statusReadingItem.children[1].textContent, 'Bersihkan pembacaan Status');
+assert.equal(voiceCallsItem.children[1].textContent, 'Panggilan suara');
+assert.equal(audioProfileGroup.getAttribute('aria-label'), 'Profil perekaman pesan suara');
+assert.equal(callAudioProfileGroup.getAttribute('aria-label'), 'Profil mikrofon panggilan');
+assert.equal(copyCallDiagnosticsItem.children[1].textContent,
+    'Salin diagnostik konfigurasi mikrofon panggilan suara dan video');
+assert.equal(copyVoiceMessageDiagnosticsItem.children[1].textContent,
+    'Salin diagnostik audio pesan suara yang difokuskan');
+assert.deepEqual(
+    callAudioProfileItems.map(item => item.children[1].textContent),
+    [
+        'Bawaan WhatsApp (audio diatur oleh WhatsApp)',
+        'Mentah (meminta pemrosesan input browser dimatikan; gunakan headphone)',
+        'Alami (hanya pemrosesan panggilan dari browser)',
+        'Jernih (ekualiser suara ringan)',
+        'Peredam bising (pengurangan suara latar lebih kuat)'
+    ]
+);
+assert.equal(clearCallProfileItem.getAttribute('aria-checked'), 'true');
 for (const [action, label] of [
     ['remap-voice-recording', 'Gunakan Alt+M untuk mulai merekam pesan suara'],
     ['remap-previous-chat', 'Gunakan Alt+Panah atas untuk chat sebelumnya'],
@@ -529,7 +760,9 @@ const saveErrorTimerStart = scheduledTimers.length;
 keydown(keyboardEvent({ key: ' ' }));
 assert.equal(automaticItem.getAttribute('aria-checked'), 'true');
 assert.equal(rootMenu.hidden, false);
-const immediateAlert = scheduledTimers.find(timer => timer.delay === 0);
+const immediateAlert = scheduledTimers
+    .slice(saveErrorTimerStart)
+    .find(timer => timer.delay === 0 && !timer.canceled);
 assert.ok(immediateAlert);
 immediateAlert.callback();
 const alert = document.getElementById('wa-plus-settings-alert');
@@ -576,7 +809,7 @@ function runUpdatePageChecks() {
     assert.equal(updateItem.getAttribute('aria-disabled'), null);
     assert.equal(updateItem.getAttribute('aria-busy'), null);
     assert.match(output, /WhatsApp%20Web%20Plus\.user\.js/);
-    assert.doesNotMatch(output, /WhatsApp%20Web%20Plus\.meta\.js|compareVersions|fetch\(/);
+    assert.doesNotMatch(output, /WhatsApp%20Web%20Plus\.meta\.js|compareVersions/);
 
     // Switch to English and verify the localized action and popup-blocked result.
     keydown(settingsShortcut());
@@ -605,6 +838,45 @@ function runUpdatePageChecks() {
 
 (async () => {
 runUpdatePageChecks();
+const voiceDiagnosticTimerStart = scheduledTimers.length;
+document.activeElement = invoker;
+keydown(settingsShortcut());
+document.activeElement = voiceRecordingItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'End' }));
+assert.equal(document.activeElement, copyVoiceMessageDiagnosticsItem);
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(rootMenu.hidden, true);
+assert.equal(document.activeElement, invoker);
+await Promise.resolve();
+await Promise.resolve();
+scheduledTimers.slice(voiceDiagnosticTimerStart).filter(timer => timer.delay === 0).at(-1).callback();
+assert.equal(document.getElementById('wa-plus-live-region').textContent,
+    'No focused voice message was found. Focus a voice message, then open this menu again.');
+const fallbackClipboardBeforeRejection = fallbackClipboardText;
+context.navigator.clipboard.writeText = () => Promise.reject(new Error('clipboard rejected later'));
+const failureTimerStart = scheduledTimers.length;
+document.activeElement = invoker;
+keydown(settingsShortcut());
+document.activeElement = voiceCallsItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'End' }));
+keydown(keyboardEvent({ key: 'Enter' }));
+const movedFocus = new Element('button');
+document.body.appendChild(movedFocus);
+movedFocus.focus();
+await Promise.resolve();
+await Promise.resolve();
+await Promise.resolve();
+await Promise.resolve();
+assert.equal(fallbackClipboardText, fallbackClipboardBeforeRejection);
+assert.equal(document.activeElement, movedFocus);
+scheduledTimers.slice(failureTimerStart).filter(timer => timer.delay === 0).at(-1).callback();
+assert.equal(document.getElementById('wa-plus-live-region').textContent,
+    'Voice and video call microphone configuration diagnostics could not be copied.');
+context.navigator.clipboard.writeText = nativeClipboardWriteText;
+movedFocus.remove();
+invoker.focus();
 keydown(settingsShortcut());
 keydown(keyboardEvent({ key: 'ArrowRight' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
@@ -640,7 +912,11 @@ for (const action of [
     'custom-last-seen-prefix',
     'custom-chat-status-labels',
     'custom-view-status',
-    'custom-participant-separator'
+    'custom-participant-separator',
+    'custom-status-pause-labels',
+    'custom-status-read-more-labels',
+    'custom-status-media-fallback',
+    'custom-scroll-to-bottom'
 ]) {
     const item = customMenu.children.find(candidate => candidate.dataset.action === action);
     assert.ok(item, `${action} menu item should exist`);

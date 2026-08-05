@@ -4,7 +4,7 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current version is **2.6.70**. Read the [WhatsApp Web Plus 2.6.70 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.72**. Read the [WhatsApp Web Plus 2.6.72 changes and earlier release history](CHANGELOG.md).
 
 ## What Tampermonkey does
 
@@ -119,6 +119,8 @@ If Tampermonkey reports that some URLs are restricted while you are on a browser
 - Can open a chat at its first unread message instead of leaving focus in the message editor.
 - Announce sender device can add a detected device or platform to focused messages and automatic message announcements.
 - Adds shortcuts for navigation, voice recording, media players, and incoming calls.
+- Offers selectable Natural, Clear, Clear Plus, and Noise filter profiles for native WhatsApp voice-message recordings without replacing WhatsApp's recorder, preview, or send flow.
+- Offers separate Natural, Clear, and Noise filter microphone profiles for WhatsApp voice calls.
 - Privacy Mode keeps contact names available while masking phone numbers in conversation summaries and script announcements. Visible phone links keep their native name for speech-input compatibility.
 - Clean UI hides promotional and extra controls without hiding the chat list.
 - Original Dark Mode restores WhatsApp's older dark colors. It does not change screen-reader output.
@@ -145,7 +147,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | `Alt + Up Arrow` | Open the previous chat when enabled in Shortcut remapping |
 | `Alt + Down Arrow` | Open the next chat when enabled in Shortcut remapping |
 | `Alt + T` | Read the current chat title; press twice quickly to turn Chat activity monitor on or off |
-| `Alt + 0` | Close the open WhatsApp audio or video player |
+| `Alt + 0` | Close the open WhatsApp audio or video player, or dismiss the desktop app promotion |
 | `Alt + M` | Start recording a voice message when enabled in Shortcut remapping |
 
 ### Incoming call controls
@@ -171,7 +173,7 @@ Your optional feature choices are remembered after you refresh WhatsApp Web.
 
 ## Settings menu
 
-Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, and a command to open the WhatsApp Web Plus update page. The update command stays in the main menu so it is easy to find.
+Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, **Voice message recording**, **Voice calls**, and a command to open the WhatsApp Web Plus update page. The update command stays in the main menu so it is easy to find.
 
 Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Arrow` or `Escape` to go back to the previous menu, `Enter` or `Space` to change a setting, and `Escape` again to close the menu.
 
@@ -184,7 +186,10 @@ Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Ar
 - **Open chats at first unread message** moves focus to the first unread message when you press `Enter` on a chat in the chat list. If the chat has no unread messages, WhatsApp focuses the message editor as usual. It is off by default.
 - **Announce sender device** adds a best-effort indicator such as iPhone, iPad, Mac, Android, or WhatsApp Web or Desktop to focused messages and automatic message announcements. It is off by default, and no indicator is added when the device cannot be recognized.
 - **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
+- **Clean Status reading** gives each Status a concise accessible name, expands captions when possible, and disables automatic Status advancement while enabled. Use `Left Arrow` and `Right Arrow` to move manually.
 - **Shortcut remapping** enables or disables the additional `Alt+M`, `Alt+Up Arrow`, and `Alt+Down Arrow` shortcuts individually. `Alt+M` is on by default. The two chat-navigation shortcuts are off until you enable them because they can conflict with commands used by some screen readers and other platforms. All three shortcuts trigger WhatsApp's existing commands.
+- **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`; selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
+- **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually; select **WhatsApp default** immediately if a call loses audio or develops echo.
 - **Custom language strings** lets users enter the exact WhatsApp text used for unread markers, activity, delivery states, navigation, privacy filtering, and appearance cleanup. The five navigation names control `Alt + Shift + 1` through `5`. See the reference below before changing these fields.
 - **Clean UI** hides promotional and extra controls while keeping the chat list and conversation available.
 - **Original Dark Mode** restores WhatsApp's older dark colors. It changes only the visual appearance, not screen-reader output.
@@ -275,6 +280,18 @@ npm test
 ```
 
 Use `npm run build` for the installable userscript or `npm run build:debug` for the local debug build. For translation changes, see the [WhatsApp Web Plus translation guide](translator.md).
+
+### Capture a Status transition diagnostic
+
+This diagnostic is available only in `whatsapp_web_plus.debug.js` and does not collect contact names, captions, media URLs, or WhatsApp identifiers.
+
+1. Install or reload `whatsapp_web_plus.debug.js`, turn off **Clean Status reading**, then open a video Status.
+2. Press `Alt+Shift+7` once. NVDA announces that recording has started.
+3. Let the video play until WhatsApp automatically opens the next Status. Do not manually pause or move to the next Status.
+4. Press `Alt+Shift+7` again. The diagnostic stops and is copied to the clipboard.
+5. Paste it into a file named `debug_status_transition.txt`.
+
+If copying fails, the diagnostic remains in memory. Restore clipboard access and press `Alt+Shift+7` again to retry the same report.
 
 ## Official references
 

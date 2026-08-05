@@ -12,7 +12,10 @@ const result = buildSync({
   format: 'iife',
   platform: 'browser',
   globalName: 'SettingsState',
-  define: { __SCRIPT_VERSION__: JSON.stringify(expectedVersion) }
+  define: {
+    __SCRIPT_VERSION__: JSON.stringify(expectedVersion),
+    __DEBUG_BUILD__: 'false'
+  }
 });
 
 const values = new Map();
@@ -31,6 +34,7 @@ const settings = context.SettingsState;
 assert.equal(settings.getLanguage(), 'en');
 assert.equal(settings.isAnnouncementReductionEnabled(), true);
 assert.equal(settings.isAutomaticReadingEnabled(), false);
+assert.equal(settings.isStatusReadingCleanupEnabled(), false);
 assert.equal(settings.isSenderDeviceAnnouncementEnabled(), false);
 assert.equal(settings.shouldOpenChatsAtFirstUnread(), false);
 assert.equal(settings.isShortcutRemapEnabled('voice-recording'), true);
@@ -41,13 +45,15 @@ assert.equal(settings.isShortcutRemapEnabled('unknown'), false);
 assert.equal(settings.setLanguage('id'), true);
 assert.equal(settings.getLanguage(), 'id');
 assert.equal(settings.t('settings'), 'Pengaturan WhatsApp Web Plus');
+assert.equal(settings.t('desktopAppPromoDefault'), 'Unduh WhatsApp untuk Windows');
 assert.equal(settings.t('participant'), 'Peserta');
 assert.equal(settings.t('voiceMessage'), 'pesan suara');
 assert.equal(settings.t('mutedChat'), 'chat dibisukan');
-assert.equal(settings.t('messageStatusSingle', { status: 'Tersampaikan' }), 'Status pesan: Tersampaikan');
+assert.equal(settings.t('messageStatusSingle', { status: 'Disampaikan' }), 'Status pesan: Disampaikan');
 assert.equal(settings.t('messageStatusPlural', { count: 2, status: 'Dibaca' }), '2 status pesan: Dibaca');
-assert.equal(settings.translateDeliveryStatus('Delivered'), 'Tersampaikan');
-assert.equal(settings.translateDeliveryStatusInText('Contact A 15:54 Delivered'), 'Contact A 15:54 Tersampaikan');
+assert.equal(settings.translateDeliveryStatus('Delivered'), 'Disampaikan');
+assert.equal(settings.translateDeliveryStatus('Tersampaikan'), 'Disampaikan');
+assert.equal(settings.translateDeliveryStatusInText('Contact A 15:54 Delivered'), 'Contact A 15:54 Disampaikan');
 assert.equal(settings.translateTypingActivity('Contact A is typing…'), 'Contact A sedang mengetik…');
 assert.equal(
   settings.translateRecordingAudioActivity('Contact A is recording audio…'),
@@ -91,7 +97,7 @@ for (const [customKey, value, expectedKey, rank, storageKey] of [
   assert.equal(settings.getDeliveryStatusRank(value), rank);
   assert.equal(values.get(storageKey), value);
 }
-assert.equal(settings.translateDeliveryStatus('remis'), 'Tersampaikan');
+assert.equal(settings.translateDeliveryStatus('remis'), 'Disampaikan');
 assert.equal(settings.translateDeliveryStatusInText('Contact A 15:54 lu'), 'Contact A 15:54 Dibaca');
 assert.equal(settings.getDeliveryStatusRank('unknown status'), -1);
 assert.equal(settings.setCustomText('delivery-sent', 'Delivered'), true);
@@ -105,6 +111,11 @@ assert.equal(
   'Mensaje.'
 );
 assert.equal(settings.getMessageContextInstructionRegex().test('Para más opciones usa flechas'), false);
+assert.equal(
+  'Pesan. Untuk opsi lainnya, tekan tombol panah kiri atau kanan untuk mengakses menu konteks'
+    .replace(settings.getMessageContextInstructionRegex(), ''),
+  'Pesan.'
+);
 
 assert.equal(settings.setCustomText('unknown-contact-prefix', 'Quizás'), true);
 assert.equal('Quizás: Member Six está escribiendo'.replace(settings.getUnknownContactRegex(), ''), 'Member Six está escribiendo');
@@ -152,7 +163,16 @@ assert.equal(settings.getMetaAIRegex().test('Ask Meta AI'), true);
 assert.equal(settings.setCustomText('desktop-promo', 'WhatsApp für Windows herunterladen'), true);
 assert.equal(settings.getDesktopPromoRegex().test('WhatsApp für Windows herunterladen'), true);
 assert.equal(settings.getDesktopPromoRegex().test('Download WhatsApp for Windows'), true);
-assert.match(settings.getNavSelector('navChats'), /button\[aria-label="Chats"\]/);
+assert.equal(settings.getDesktopPromoRegex().test('Unduh WhatsApp untuk Windows'), true);
+assert.equal(settings.getDesktopPromoRegex().test('Dapatkan WhatsApp untuk Windows'), true);
+assert.match(settings.getScrollToBottomSelector(), /button\[aria-label="Scroll to bottom"\]/);
+assert.match(settings.getScrollToBottomSelector(), /button\[aria-label="Gulir ke bawah"\]/);
+assert.equal(settings.setCustomText('scroll-to-bottom', 'Ir al final'), true);
+assert.match(settings.getScrollToBottomSelector(), /button\[aria-label="Ir al final"\]/);
+assert.equal(values.get('wa-plus-custom-scroll-to-bottom'), 'Ir al final');
+assert.match(settings.getNavSelector('navChats'), /button\[aria-label="Chat"\]/);
+assert.match(settings.getNavSelector('navCommunities'), /button\[aria-label="Komunitas"\]/);
+assert.match(settings.getNavSelector('navChannels'), /button\[aria-label="Saluran"\]/);
 for (const [customKey, selectorKey, storageKey, label] of [
   ['nav-chats', 'navChats', 'wa-plus-custom-nav-chats', 'Chat Saya'],
   ['nav-status', 'navStatus', 'wa-plus-custom-nav-status', 'Pembaruan'],
@@ -180,6 +200,16 @@ assert.equal(settings.setAutomaticReading(true), true);
 assert.equal(settings.isAutomaticReadingEnabled(), true);
 assert.equal(values.get('wa-plus-automatic-reading'), 'true');
 
+assert.equal(settings.setStatusReadingCleanup(true), true);
+assert.equal(settings.isStatusReadingCleanupEnabled(), true);
+assert.equal(values.get('wa-plus-status-reading-cleanup'), 'true');
+assert.equal(settings.setCustomText('status-pause-labels', 'Jeda|Pause'), true);
+assert.equal(settings.setCustomText('status-read-more-labels', 'Baca selengkapnya|Read more'), true);
+assert.equal(settings.setCustomText('status-media-fallback', 'Status media'), true);
+assert.equal(settings.getCustomText('status-pause-labels'), 'Jeda|Pause');
+assert.equal(settings.getCustomText('status-read-more-labels'), 'Baca selengkapnya|Read more');
+assert.equal(settings.getCustomText('status-media-fallback'), 'Status media');
+
 assert.equal(settings.setSenderDeviceAnnouncement(true), true);
 assert.equal(settings.isSenderDeviceAnnouncementEnabled(), true);
 assert.equal(values.get('wa-plus-sender-device-announcements'), 'true');
@@ -198,6 +228,8 @@ assert.equal(settings.setLanguage('en'), false);
 assert.equal(settings.getLanguage(), 'id');
 assert.equal(settings.setAutomaticReading(false), false);
 assert.equal(settings.isAutomaticReadingEnabled(), true);
+assert.equal(settings.setStatusReadingCleanup(false), false);
+assert.equal(settings.isStatusReadingCleanupEnabled(), true);
 assert.equal(settings.setSenderDeviceAnnouncement(false), false);
 assert.equal(settings.isSenderDeviceAnnouncementEnabled(), true);
 assert.equal(settings.setOpenChatsAtFirstUnread(false), false);
