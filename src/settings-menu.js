@@ -1,4 +1,16 @@
-import { SELECTORS } from './config.js';
+import { IS_DEBUG_BUILD, SELECTORS } from './config.js';
+import {
+  getAudioExperimentProfile,
+  getCallAudioExperimentDiagnosticText,
+  getCallAudioExperimentProfile,
+  getCallAudioExperimentReports,
+  getFocusedVoiceMessageDiagnosticText,
+  installAudioExperimentHooks,
+  isAudioExperimentEnabled,
+  isCallAudioExperimentEnabled,
+  selectAudioExperimentProfile,
+  selectCallAudioExperimentProfile
+} from './audio-experiment.js';
 import { isPrivacyModeEnabled, refreshPrivacyAttributes, refreshSenderDeviceLabels } from './privacy.js';
 import {
   isCleanUiEnabled,
@@ -7,12 +19,14 @@ import {
   toggleOriginalDarkMode
 } from './appearance.js';
 import { announce, focusItem, getActiveModal, refreshAnnouncementReduction } from './chat-accessibility.js';
+import { refreshStatusAccessibility } from './status-accessibility.js';
 import {
   getCustomText,
   getLanguage,
   getNavButton,
   isAnnouncementReductionEnabled,
   isAutomaticReadingEnabled,
+  isStatusReadingCleanupEnabled,
   isSenderDeviceAnnouncementEnabled,
   isShortcutRemapEnabled,
   shouldOpenChatsAtFirstUnread,
@@ -21,6 +35,7 @@ import {
   setCustomText,
   setLanguage,
   setOpenChatsAtFirstUnread,
+  setStatusReadingCleanup,
   setSenderDeviceAnnouncement,
   setShortcutRemap,
   t
@@ -37,6 +52,25 @@ import {
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 const UPDATE_DOWNLOAD_URL = 'https://update.greasyfork.org/scripts/587557/WhatsApp%20Web%20Plus.user.js';
+const AUDIO_PROFILE_MENU_OPTIONS = [
+  ['whatsapp', 'audioProfileWhatsApp'],
+  ['natural', 'audioProfileNatural'],
+  ['clear', 'audioProfileClear'],
+  ['clear-plus', 'audioProfileClearPlus'],
+  ['noise-filter', 'audioProfileNoiseFilter']
+];
+const CALL_AUDIO_PROFILE_MENU_OPTIONS = [
+  ['whatsapp', 'callAudioProfileWhatsApp'],
+  ['raw', 'callAudioProfileRaw'],
+  ['natural', 'callAudioProfileNatural'],
+  ['clear', 'callAudioProfileClear'],
+  ['noise-filter', 'callAudioProfileNoiseFilter']
+];
+const STATUS_CUSTOM_KEYS = new Set([
+  'status-pause-labels',
+  'status-read-more-labels',
+  'status-media-fallback'
+]);
 let rootMenu = null;
 let languageMenu = null;
 let languageItem = null;
@@ -126,7 +160,7 @@ function createMenu() {
       font: 0.9375rem/1.4 system-ui, sans-serif;
     }
     .wa-plus-settings-menu[hidden] { display: none !important; }
-    .wa-plus-settings-menu > button {
+    .wa-plus-settings-menu button {
       display: grid;
       grid-template-columns: 1.5rem minmax(0, 1fr) 1rem;
       width: 100%;
@@ -148,12 +182,12 @@ function createMenu() {
       grid-column: 3;
       justify-self: end;
     }
-    .wa-plus-settings-menu > [role="menuitemcheckbox"] > .wa-plus-menu-indicator,
-    .wa-plus-settings-menu > [role="menuitemradio"] > .wa-plus-menu-indicator {
+    .wa-plus-settings-menu [role="menuitemcheckbox"] > .wa-plus-menu-indicator,
+    .wa-plus-settings-menu [role="menuitemradio"] > .wa-plus-menu-indicator {
       visibility: hidden;
     }
-    .wa-plus-settings-menu > [aria-checked="true"] > .wa-plus-menu-indicator { visibility: visible; }
-    .wa-plus-settings-menu > button:focus {
+    .wa-plus-settings-menu [aria-checked="true"] > .wa-plus-menu-indicator { visibility: visible; }
+    .wa-plus-settings-menu button:focus {
       outline: 2px solid Highlight;
       outline-offset: -2px;
       background: Highlight;
@@ -232,7 +266,7 @@ function createMenu() {
     @media (forced-colors: active) {
       .wa-plus-settings-menu,
       .wa-plus-custom-text-dialog { forced-color-adjust: auto; }
-      .wa-plus-settings-menu > button:focus { outline: 2px solid Highlight; }
+      .wa-plus-settings-menu button:focus { outline: 2px solid Highlight; }
     }
   `;
   document.head.appendChild(style);
@@ -258,7 +292,61 @@ function createMenu() {
   const keyboardShortcuts = createSubmenu('keyboard-shortcuts', 'keyboardShortcuts', 'wa-plus-keyboard-shortcuts-menu');
   const appearance = createSubmenu('appearance', 'appearance', 'wa-plus-appearance-menu');
   const customLanguageStrings = createSubmenu('custom-language-strings', 'customLanguageStrings', 'wa-plus-custom-language-strings-menu');
-  rootMenu.append(accessibility.item, keyboardShortcuts.item, appearance.item, customLanguageStrings.item);
+  const audioExperimentsAvailable = installAudioExperimentHooks();
+  const voiceRecording = audioExperimentsAvailable
+    ? createSubmenu('voice-recording', 'voiceRecording', 'wa-plus-voice-recording-menu')
+    : null;
+  const voiceCalls = audioExperimentsAvailable
+    ? createSubmenu('voice-calls', 'voiceCalls', 'wa-plus-voice-calls-menu')
+    : null;
+  rootMenu.append(
+    accessibility.item,
+    keyboardShortcuts.item,
+    appearance.item,
+    customLanguageStrings.item,
+    ...(voiceRecording ? [voiceRecording.item] : []),
+    ...(voiceCalls ? [voiceCalls.item] : [])
+  );
+
+  if (voiceRecording) {
+    const profileGroup = document.createElement('div');
+    profileGroup.setAttribute('role', 'group');
+    profileGroup.dataset.labelKey = 'audioProfiles';
+    for (const [profile, labelKey] of AUDIO_PROFILE_MENU_OPTIONS) {
+      const item = createMenuItem('menuitemradio', `audio-profile-${profile}`);
+      item.dataset.audioProfile = profile;
+      item.dataset.labelKey = labelKey;
+      profileGroup.appendChild(item);
+    }
+    voiceRecording.menu.append(profileGroup);
+    if (IS_DEBUG_BUILD) {
+      const separator = document.createElement('div');
+      separator.setAttribute('role', 'separator');
+      const copyDiagnosticsItem = createMenuItem('menuitem', 'copy-voice-message-diagnostics');
+      copyDiagnosticsItem.dataset.labelKey = 'copyVoiceMessageDiagnostics';
+      voiceRecording.menu.append(separator, copyDiagnosticsItem);
+    }
+  }
+
+  if (voiceCalls) {
+    const profileGroup = document.createElement('div');
+    profileGroup.setAttribute('role', 'group');
+    profileGroup.dataset.labelKey = 'callAudioProfiles';
+    for (const [profile, labelKey] of CALL_AUDIO_PROFILE_MENU_OPTIONS) {
+      const item = createMenuItem('menuitemradio', `call-audio-profile-${profile}`);
+      item.dataset.callAudioProfile = profile;
+      item.dataset.labelKey = labelKey;
+      profileGroup.appendChild(item);
+    }
+    voiceCalls.menu.append(profileGroup);
+    if (IS_DEBUG_BUILD) {
+      const separator = document.createElement('div');
+      separator.setAttribute('role', 'separator');
+      const copyDiagnosticsItem = createMenuItem('menuitem', 'copy-call-diagnostics');
+      copyDiagnosticsItem.dataset.labelKey = 'copyCallDiagnostics';
+      voiceCalls.menu.append(separator, copyDiagnosticsItem);
+    }
+  }
 
   [
     ['reduceAnnouncements', 'reduce-announcements'],
@@ -274,6 +362,10 @@ function createMenu() {
   const openUnreadItem = createMenuItem('menuitemcheckbox', 'open-chats-at-first-unread');
   openUnreadItem.dataset.labelKey = 'openChatsAtFirstUnread';
   accessibility.menu.appendChild(openUnreadItem);
+
+  const statusReadingItem = createMenuItem('menuitemcheckbox', 'status-reading-cleanup');
+  statusReadingItem.dataset.labelKey = 'statusReadingCleanup';
+  accessibility.menu.appendChild(statusReadingItem);
 
   [
     ['remapVoiceRecording', 'remap-voice-recording'],
@@ -319,7 +411,11 @@ function createMenu() {
     ['lastSeenPrefixText', 'custom-last-seen-prefix', 'last-seen-prefix'],
     ['chatStatusLabelsText', 'custom-chat-status-labels', 'chat-status-labels'],
     ['viewStatusText', 'custom-view-status', 'view-status'],
-    ['participantSeparatorText', 'custom-participant-separator', 'participant-separator']
+    ['participantSeparatorText', 'custom-participant-separator', 'participant-separator'],
+    ['statusPauseLabelsText', 'custom-status-pause-labels', 'status-pause-labels'],
+    ['statusReadMoreLabelsText', 'custom-status-read-more-labels', 'status-read-more-labels'],
+    ['statusMediaFallbackText', 'custom-status-media-fallback', 'status-media-fallback'],
+    ['scrollToBottomText', 'custom-scroll-to-bottom', 'scroll-to-bottom']
   ].forEach(([labelKey, action, customKey]) => {
     const item = createMenuItem('menuitem', action);
     item.dataset.labelKey = labelKey;
@@ -338,8 +434,8 @@ function createMenu() {
     languageMenu.appendChild(item);
   });
 
-  for (const menu of submenuMenus.values()) {
-    document.body.appendChild(menu);
+  for (const [key, menu] of submenuMenus) {
+    submenuItems.get(key)?.after(menu);
     menu.addEventListener('click', handleMenuClick);
   }
 
@@ -439,7 +535,8 @@ function reportCustomDialogSaveError() {
 }
 
 function getMenuItems(menu) {
-  return Array.from(menu.children).filter(item => item.matches(MENU_ITEM_SELECTOR));
+  return Array.from(menu.querySelectorAll(MENU_ITEM_SELECTOR))
+    .filter(item => item.closest('[role="menu"]') === menu);
 }
 
 function focusMenuItem(menu, index) {
@@ -453,6 +550,8 @@ function focusMenuItem(menu, index) {
 
 function updateMenu() {
   const currentLanguage = LANGUAGES.find(item => item.value === getLanguage()) || LANGUAGES[0];
+  const currentAudioProfile = isAudioExperimentEnabled() ? getAudioExperimentProfile() : 'whatsapp';
+  const currentCallAudioProfile = isCallAudioExperimentEnabled() ? getCallAudioExperimentProfile() : 'whatsapp';
   rootMenu.lang = getLanguage();
   rootMenu.dir = 'ltr';
   rootMenu.setAttribute('aria-label', t('settings'));
@@ -462,6 +561,9 @@ function updateMenu() {
     menu.dir = 'ltr';
     if (key === 'language') setMenuItemLabel(item, `${t('language')}: ${currentLanguage.label}`);
     else setMenuItemLabel(item, t(item.dataset.labelKey));
+    for (const group of menu.querySelectorAll('[role="group"]')) {
+      if (group.dataset.labelKey) group.setAttribute('aria-label', t(group.dataset.labelKey));
+    }
   }
 
   const states = {
@@ -471,6 +573,7 @@ function updateMenu() {
     'chat-activity': isChatActivityEnabled(),
     'sender-device-announcements': isSenderDeviceAnnouncementEnabled(),
     'open-chats-at-first-unread': shouldOpenChatsAtFirstUnread(),
+    'status-reading-cleanup': isStatusReadingCleanupEnabled(),
     'remap-voice-recording': isShortcutRemapEnabled('voice-recording'),
     'remap-previous-chat': isShortcutRemapEnabled('previous-chat'),
     'remap-next-chat': isShortcutRemapEnabled('next-chat'),
@@ -492,6 +595,10 @@ function updateMenu() {
       }
       if (item.getAttribute('role') === 'menuitemcheckbox') {
         item.setAttribute('aria-checked', String(states[item.dataset.action]));
+      } else if (item.dataset.audioProfile) {
+        item.setAttribute('aria-checked', String(item.dataset.audioProfile === currentAudioProfile));
+      } else if (item.dataset.callAudioProfile) {
+        item.setAttribute('aria-checked', String(item.dataset.callAudioProfile === currentCallAudioProfile));
       }
     });
   }
@@ -612,6 +719,69 @@ function openUpdatePage() {
   if (!opened) announce(t('updateOpenFailed'));
 }
 
+function copyTextFallback(text, labelKey) {
+  if (!document.body || typeof document.execCommand !== 'function') return false;
+  const previousFocus = document.activeElement;
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.readOnly = true;
+  input.setAttribute('tabindex', '-1');
+  input.setAttribute('aria-label', t(labelKey));
+  input.style.position = 'fixed';
+  input.style.inset = '0 auto auto 0';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  try {
+    input.select();
+    return document.execCommand('copy') === true;
+  } catch {
+    return false;
+  } finally {
+    input.remove();
+    try { previousFocus?.focus?.({ preventScroll: true }); } catch {}
+  }
+}
+
+function writeDiagnosticText(text, labelKey, onResult) {
+  const fallbackFocus = document.activeElement;
+  const fallback = () => document.activeElement === fallbackFocus && copyTextFallback(text, labelKey);
+  try {
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      Promise.resolve(navigator.clipboard.writeText(text)).then(
+        () => onResult(true),
+        () => onResult(fallback())
+      );
+      return;
+    }
+    onResult(copyTextFallback(text, labelKey));
+  } catch {
+    onResult(fallback());
+  }
+}
+
+function copyCallDiagnostics() {
+  if (!getCallAudioExperimentReports().length) {
+    announce(t('callDiagnosticsUnavailable'));
+    return;
+  }
+  const text = getCallAudioExperimentDiagnosticText();
+  writeDiagnosticText(text, 'copyCallDiagnostics', copied => {
+    announce(t(copied ? 'callDiagnosticsCopied' : 'callDiagnosticsCopyFailed'));
+  });
+}
+
+async function copyFocusedVoiceMessageDiagnostics(target) {
+  announce(t('voiceMessageDiagnosticsAnalyzing'));
+  const text = await getFocusedVoiceMessageDiagnosticText(target);
+  if (!text) {
+    announce(t('voiceMessageDiagnosticsUnavailable'));
+    return;
+  }
+  writeDiagnosticText(text, 'copyVoiceMessageDiagnostics', copied => {
+    announce(t(copied ? 'voiceMessageDiagnosticsCopied' : 'voiceMessageDiagnosticsCopyFailed'));
+  });
+}
+
 function restoreCustomDialogFocus() {
   const target = customDialogInvoker;
   customDialogInvoker = null;
@@ -650,6 +820,7 @@ function saveCustomText(event) {
     customDialogInput.focus({ preventScroll: true });
     return;
   }
+  if (STATUS_CUSTOM_KEYS.has(customDialogKey)) refreshStatusAccessibility({ retryControls: true });
   customDialog.close();
   announce(value.trim()
     ? t('customTextSaved', { name })
@@ -668,6 +839,17 @@ function activateItem(item, keepOpen) {
     openUpdatePage();
     return;
   }
+  if (IS_DEBUG_BUILD && action === 'copy-call-diagnostics') {
+    closeSettingsMenu(true);
+    void copyCallDiagnostics();
+    return;
+  }
+  if (IS_DEBUG_BUILD && action === 'copy-voice-message-diagnostics') {
+    const target = invoker;
+    closeSettingsMenu(true);
+    void copyFocusedVoiceMessageDiagnostics(target);
+    return;
+  }
   if (submenuMenus.has(action)) {
     openSubmenu(action);
     return;
@@ -679,6 +861,7 @@ function activateItem(item, keepOpen) {
       resetPassiveAnnouncementContext();
       if (isPrivacyModeEnabled()) refreshPrivacyAttributes();
       else refreshSenderDeviceLabels();
+      refreshStatusAccessibility({ retryControls: true });
     }
   } else if (action === 'privacy') {
     saved = togglePrivacyWithQueueReset(false);
@@ -695,8 +878,15 @@ function activateItem(item, keepOpen) {
       refreshSenderDeviceLabels();
       discardPassiveAnnouncements('pulse');
     }
+  } else if (action.startsWith('audio-profile-')) {
+    saved = selectAudioExperimentProfile(item.dataset.audioProfile);
+  } else if (action.startsWith('call-audio-profile-')) {
+    saved = selectCallAudioExperimentProfile(item.dataset.callAudioProfile);
   } else if (action === 'open-chats-at-first-unread') {
     saved = setOpenChatsAtFirstUnread(!shouldOpenChatsAtFirstUnread());
+  } else if (action === 'status-reading-cleanup') {
+    saved = setStatusReadingCleanup(!isStatusReadingCleanupEnabled());
+    if (saved) refreshStatusAccessibility();
   } else if (action.startsWith('remap-')) {
     const name = action.slice('remap-'.length);
     saved = setShortcutRemap(name, !isShortcutRemapEnabled(name));

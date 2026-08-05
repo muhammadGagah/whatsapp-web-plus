@@ -283,6 +283,18 @@ const bodyPhoneCollisionMessage = {
         return null;
     }
 };
+const numericBodyWithDotTimeMessage = {
+    closest: replyMessage.closest,
+    querySelector(selector) {
+        if (selector === '.copyable-text[data-pre-plain-text]') {
+            return { getAttribute() { return '[19.31, 5/8/2026] Message Author: '; } };
+        }
+        if (selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]') {
+            return { textContent: 'test 10000' };
+        }
+        return null;
+    }
+};
 const mentionBodyMessage = {
     closest: replyMessage.closest,
     querySelector(selector) {
@@ -482,11 +494,11 @@ assert.equal(
 );
 assert.equal(
     clean(
-        'You replied mas masih ready paypal? to quoted message from +62 812-9505-8785 joyo: Terima kasih om 11:26 Read',
+        'You replied mas masih ready paypal? to quoted message from +62 812-9505-8785 contact name: Terima kasih om 11:26 Read',
         'message',
         outgoingReplyMessage
     ),
-    'You replied mas masih ready paypal? to quoted message from Participant joyo: Terima kasih om 11:26 Read'
+    'You replied mas masih ready paypal? to quoted message from Participant contact name: Terima kasih om 11:26 Read'
 );
 assert.equal(
     clean('Maybe Contact F +62 819-9030-1656 Image Image 11:03', 'message', groupMediaMessage),
@@ -505,36 +517,40 @@ assert.equal(
     'Maybe Contact H call Participant tomorrow 23:38'
 );
 assert.equal(
+    clean('Anda test 10000 19.31 Disampaikan', 'message', numericBodyWithDotTimeMessage),
+    'Anda test 10000 19.31 Disampaikan'
+);
+assert.equal(
     clean('Maybe Contact +62 812-3333-4444 Contact I halo 10:00', 'message', mentionBodyMessage),
     'Maybe Contact Contact I halo 10:00'
 );
 assert.equal(
-    clean('+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48', 'message', voiceMessageWithoutPrePlainText),
-    'Participant Ali Amri Voice message Duration: 0:46 19:48'
+    clean('+62 852-1859-6884 Contact Name Voice message Duration: 0:46 19:48', 'message', voiceMessageWithoutPrePlainText),
+    'Participant Contact Name Voice message Duration: 0:46 19:48'
 );
 assert.equal(
-    clean('+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48', 'message', voiceMessageWithMaskedSenderLabel),
-    'Participant Ali Amri Voice message Duration: 0:46 19:48'
+    clean('+62 852-1859-6884 Contact Name Voice message Duration: 0:46 19:48', 'message', voiceMessageWithMaskedSenderLabel),
+    'Participant Contact Name Voice message Duration: 0:46 19:48'
 );
 assert.equal(
-    clean('+62 852-1859-6884 Ali Amri Document Hubungi 0812-9505-8785 19:49', 'message', voiceMessageWithoutPrePlainText),
-    'Participant Ali Amri Document Hubungi Participant 19:49'
+    clean('+62 852-1859-6884 Contact Name Document Hubungi 0812-9505-8785 19:49', 'message', voiceMessageWithoutPrePlainText),
+    'Participant Contact Name Document Hubungi Participant 19:49'
 );
 assert.equal(
     clean('081362579858 hello 19:50', 'message', bodyFirstWithSenderLikeSpan),
     'Participant hello 19:50'
 );
-dynamicVoiceLabel.setAttribute('aria-label', '+62 852-1859-6884 Ali Amri Voice message Duration: 0:46 19:48');
+dynamicVoiceLabel.setAttribute('aria-label', '+62 852-1859-6884 Contact Name Voice message Duration: 0:46 19:48');
 assert.equal(hasPrivacyState(dynamicVoiceLabel, 'aria-label'), true);
 assert.equal(
     dynamicVoiceLabel.getAttribute('aria-label'),
-    'Participant Ali Amri Voice message Duration: 0:46 19:48'
+    'Participant Contact Name Voice message Duration: 0:46 19:48'
 );
 dynamicSenderReady = true;
 dynamicVoiceLabel.setAttribute('aria-label', dynamicVoiceLabel.getAttribute('aria-label'));
 assert.equal(
     dynamicVoiceLabel.getAttribute('aria-label'),
-    'Participant Ali Amri Voice message Duration: 0:46 19:48'
+    'Participant Contact Name Voice message Duration: 0:46 19:48'
 );
 assert.equal(
     clean(

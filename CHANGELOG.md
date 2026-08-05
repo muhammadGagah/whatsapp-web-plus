@@ -1,6 +1,34 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on the merged pull requests; version 2.6.70 reflects the current source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and version 2.6.72 reflects the current source in `src/`.
+
+## 2.6.72 - 2026-08-05
+
+### Added
+
+- Added Clean Status reading with concise localized names for text, image, video, and voice statuses, caption expansion when available, privacy-aware summaries, and manual navigation without automatic advancement.
+- Added selectable Natural, Clear, Clear Plus, and Noise filter profiles for native WhatsApp voice-message recording, plus separate microphone profiles for voice calls.
+- Added custom language strings for Status pause and caption controls, the Status media fallback, and the Scroll to bottom button.
+- Added debug-only voice-message, call-microphone, and Status-transition diagnostics.
+
+### Changed
+
+- Changed `Alt + 2` to activate WhatsApp's native Scroll to bottom button before focusing the final message.
+- Extended `Alt + 0` so it can dismiss the WhatsApp desktop-app promotion and recover focus when no media player is open.
+- Expanded English and Indonesian interface detection, including Indonesian delivery text, message-context instructions, navigation controls, and desktop-app promotion text.
+- Strengthened owned-attribute restoration and cleanup when WhatsApp rerenders or removes elements.
+
+### Fixed
+
+- Fixed Privacy Mode incorrectly masking numeric message content when it appeared immediately before a dot-formatted timestamp.
+- Fixed Clean Status reading not recognizing voice-message statuses and prevented changing playback progress from repeatedly altering their accessible names.
+
+## 2.6.71 - 2026-07-27
+
+### Fixed
+
+- Fixed message-history grids failing when localized call or system rows did not expose an `aria-label`, which could leave the conversation announced as a generic section.
+- Tightened direct Meta AI sender detection so labels inside selectable message content are not mistaken for sender labels.
 
 ## 2.6.70 - 2026-07-26
 

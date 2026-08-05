@@ -30,6 +30,7 @@ let language = LANGUAGES.some(item => item.value === savedLanguage)
   : (typeof navigator !== 'undefined' && navigator.language || '').toLowerCase().startsWith('id') ? 'id' : 'en';
 let reduceAnnouncements = readSetting(STORAGE_KEYS.reduceAnnouncements, 'true') !== 'false';
 let automaticReading = readSetting(STORAGE_KEYS.automaticReading, 'false') === 'true';
+let statusReadingCleanup = readSetting(STORAGE_KEYS.statusReadingCleanup, 'false') === 'true';
 let senderDeviceAnnouncements = readSetting(STORAGE_KEYS.senderDeviceAnnouncements, 'false') === 'true';
 let openChatsAtFirstUnread = readSetting(STORAGE_KEYS.openChatsAtFirstUnread, 'false') === 'true';
 const customTextStorageKeys = Object.freeze({
@@ -57,7 +58,11 @@ const customTextStorageKeys = Object.freeze({
   'last-seen-prefix': STORAGE_KEYS.customLastSeenPrefix,
   'chat-status-labels': STORAGE_KEYS.customChatStatusLabels,
   'view-status': STORAGE_KEYS.customViewStatus,
-  'participant-separator': STORAGE_KEYS.customParticipantSeparator
+  'participant-separator': STORAGE_KEYS.customParticipantSeparator,
+  'status-pause-labels': STORAGE_KEYS.customStatusPauseLabels,
+  'status-read-more-labels': STORAGE_KEYS.customStatusReadMoreLabels,
+  'status-media-fallback': STORAGE_KEYS.customStatusMediaFallback,
+  'scroll-to-bottom': STORAGE_KEYS.customScrollToBottom
 });
 const customText = Object.fromEntries(Object.entries(customTextStorageKeys)
   .map(([key, storageKey]) => [key, readSetting(storageKey, '')]));
@@ -85,7 +90,7 @@ const regexCache = new Map();
 const DELIVERY_STATUS_DEFINITIONS = Object.freeze([
   { key: 'deliveryPending', customKey: 'delivery-pending', rank: 0, values: ['Pending', 'Tertunda'] },
   { key: 'deliverySent', customKey: 'delivery-sent', rank: 1, values: ['Sent', 'Terkirim'] },
-  { key: 'deliveryDelivered', customKey: 'delivery-delivered', rank: 2, values: ['Delivered', 'Tersampaikan'] },
+  { key: 'deliveryDelivered', customKey: 'delivery-delivered', rank: 2, values: ['Delivered', 'Disampaikan', 'Tersampaikan'] },
   { key: 'deliveryRead', customKey: 'delivery-read', rank: 3, values: ['Read', 'Dibaca'] }
 ]);
 
@@ -141,6 +146,15 @@ export function getNavSelector(selectorKey) {
 export function getNavButton(selectorKey) {
   const selector = getNavSelector(selectorKey);
   return selector ? document.querySelector(selector) : null;
+}
+
+export function getScrollToBottomSelector() {
+  const labels = LANGUAGES.map(({ value }) => tForLanguage('scrollToBottomDefault', value));
+  const customLabel = getCustomText('scroll-to-bottom');
+  if (customLabel) labels.unshift(customLabel);
+  return [...new Set(labels)]
+    .map(label => `button[aria-label="${CSS.escape(label)}"]`)
+    .join(', ');
 }
 
 export function getUnreadDividerRegex() {
@@ -219,7 +233,11 @@ export function getDeliveryStatusRegex() {
 }
 
 export function getDesktopPromoRegex() {
-  const parts = ['Download WhatsApp for (?:Windows|Mac|macOS)'];
+  const parts = [
+    'Download WhatsApp for (?:Windows|Mac|macOS)',
+    'Dapatkan WhatsApp untuk Windows',
+    ...LANGUAGES.map(({ value }) => escapeRegExp(tForLanguage('desktopAppPromoDefault', value)))
+  ];
   const customDesktopPromo = getCustomText('desktop-promo');
   if (customDesktopPromo) parts.unshift(escapeRegExp(customDesktopPromo));
   return getCachedRegex('desktop-promo', `^(?:${parts.join('|')})$`, 'i');
@@ -241,7 +259,8 @@ export function getClearAllRegex() {
 
 export function getMessageContextInstructionRegex() {
   const parts = getPatternParts('message-context-instruction', [
-    'For more options,\\s*press left or right arrow key to access context menu'
+    'For more options,\\s*press left or right arrow key to access context menu',
+    'Untuk opsi lainnya,\\s*tekan tombol panah kiri atau kanan untuk mengakses menu konteks'
   ]);
   return getCachedRegex(
     'message-context-instruction',
@@ -392,6 +411,17 @@ export function setAutomaticReading(value) {
   const nextValue = !!value;
   if (!writeSetting(STORAGE_KEYS.automaticReading, String(nextValue))) return false;
   automaticReading = nextValue;
+  return true;
+}
+
+export function isStatusReadingCleanupEnabled() {
+  return statusReadingCleanup;
+}
+
+export function setStatusReadingCleanup(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.statusReadingCleanup, String(nextValue))) return false;
+  statusReadingCleanup = nextValue;
   return true;
 }
 

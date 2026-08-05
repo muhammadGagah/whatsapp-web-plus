@@ -57,6 +57,11 @@ import {
   updateStyleSheets
 } from './appearance.js';
 import { startSettingsMenu } from './settings-menu.js';
+import {
+  releaseStatusAccessibility,
+  scheduleStatusAccessibilitySync,
+  startStatusAutoAdvanceGuard
+} from './status-accessibility.js';
 import { isAutomaticReadingEnabled } from './settings-state.js';
 
 function onDomReady(fn) {
@@ -181,6 +186,9 @@ function createCleanupObserver() {
         });
         mutation.removedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
+          if (node.matches?.(SELECTORS.statusPlayerRoot) || node.querySelector?.(SELECTORS.statusPlayerRoot)) {
+            releaseStatusAccessibility(node);
+          }
           forgetPrivacyState(node);
           recoverFocusAfterRemoval(node, mutation.nextSibling, mutation.previousSibling);
         });
@@ -191,6 +199,7 @@ function createCleanupObserver() {
         scheduleCleanUiSync();
       }
     }
+    scheduleStatusAccessibilitySync();
     pruneDetachedOwnedElements();
     if (pulseRelevant) scheduleChatPulseSync();
   });
@@ -204,7 +213,7 @@ function startCleanupObserver() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'aria-hidden', 'aria-pressed', 'aria-selected', 'data-navbar-item-selected', 'data-pre-plain-text']
+      attributeFilter: ['aria-label', 'aria-labelledby', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'hidden', 'style', 'disabled', 'aria-disabled', 'aria-hidden', 'aria-pressed', 'aria-selected', 'aria-expanded', 'src', 'poster', 'data-testid', 'data-status-id', 'data-media-id', 'data-animate-status-viewer', 'data-navbar-item-selected', 'data-pre-plain-text']
     });
     cleanElementAttributes(document.body);
     const chatList = fixAccessibilityRoles(document.body);
@@ -218,11 +227,16 @@ onDomReady(function() {
   ensureLiveRegion();
   startSettingsMenu();
   startCleanupObserver();
+  startStatusAutoAdvanceGuard();
   updateStyleSheets();
   window.addEventListener('keydown', handleShortcuts, true);
   document.addEventListener('keydown', handleMessageGridKeydown, true);
-  document.addEventListener('focusin', event => rememberFocusedRow(event.target));
+  document.addEventListener('focusin', event => {
+    rememberFocusedRow(event.target);
+    scheduleStatusAccessibilitySync();
+  });
   document.addEventListener('mousedown', event => rememberFocusedRow(event.target));
+  scheduleStatusAccessibilitySync();
 
   if (isChatActivityEnabled()) startStatusTracking();
   if (isAutomaticReadingEnabled()) captureChatPulseBaseline();

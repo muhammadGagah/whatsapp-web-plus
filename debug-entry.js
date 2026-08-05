@@ -1,4 +1,11 @@
 import './src/main.js';
+import { announce } from './src/chat-accessibility.js';
+import { t } from './src/settings-state.js';
+import {
+  isStatusTransitionDiagnosticActive,
+  startStatusTransitionDiagnostic,
+  stopStatusTransitionDiagnostic
+} from './src/status-transition-diagnostics.js';
 
 function announceDebug(message) {
   const liveRegion = document.getElementById('wa-plus-live-region');
@@ -41,32 +48,73 @@ function copyTextFallback(text) {
   }
 }
 
+async function copyText(text, allowFallback = true) {
+  const previousFocus = document.activeElement;
+  try {
+    if (typeof navigator.clipboard?.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  return allowFallback && document.activeElement === previousFocus && copyTextFallback(text);
+}
+
 async function copyDebugHtml() {
   const doctype = document.doctype
     ? new XMLSerializer().serializeToString(document.doctype)
     : '';
   const debugData = `${doctype ? `${doctype}\n` : ''}${document.documentElement.outerHTML}`;
 
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(debugData);
-    } else if (!copyTextFallback(debugData)) {
-      throw new Error('copy failed');
-    }
+  if (await copyText(debugData)) {
     announceDebug('Debug HTML copied. Sensitive chat and contact data included; redact before sharing.');
-  } catch {
-    if (copyTextFallback(debugData)) {
-      announceDebug('Debug HTML copied. Sensitive chat and contact data included; redact before sharing.');
-    } else {
-      announceDebug('Failed to copy debug HTML');
-    }
+  } else {
+    announceDebug('Failed to copy debug HTML');
   }
 }
 
+let statusTransitionCopyPending = false;
+let pendingStatusTransitionReport = '';
+
+async function toggleStatusTransitionDiagnostic() {
+  if (statusTransitionCopyPending) return;
+  if (pendingStatusTransitionReport) {
+    statusTransitionCopyPending = true;
+    const copied = await copyText(pendingStatusTransitionReport, false);
+    statusTransitionCopyPending = false;
+    if (copied) pendingStatusTransitionReport = '';
+    announce(t(copied
+      ? 'statusTransitionDiagnosticCopied'
+      : 'statusTransitionDiagnosticCopyFailed'));
+    return;
+  }
+  if (!isStatusTransitionDiagnosticActive()) {
+    startStatusTransitionDiagnostic();
+    announce(t('statusTransitionDiagnosticStarted'));
+    return;
+  }
+
+  const diagnostic = stopStatusTransitionDiagnostic();
+  pendingStatusTransitionReport = diagnostic;
+  statusTransitionCopyPending = true;
+  const copied = await copyText(diagnostic, false);
+  statusTransitionCopyPending = false;
+  if (copied) pendingStatusTransitionReport = '';
+  announce(t(copied
+    ? 'statusTransitionDiagnosticCopied'
+    : 'statusTransitionDiagnosticCopyFailed'));
+}
+
 window.addEventListener('keydown', event => {
-  if (event.repeat || !event.altKey || !event.shiftKey ||
-      event.ctrlKey || event.metaKey || event.code !== 'Digit0') return;
+  if (event.repeat || event.isComposing || event.defaultPrevented ||
+      event.getModifierState?.('AltGraph') || !event.altKey || !event.shiftKey ||
+      event.ctrlKey || event.metaKey) return;
+  const action = event.code === 'Digit0'
+    ? copyDebugHtml
+    : event.code === 'Digit7'
+      ? toggleStatusTransitionDiagnostic
+      : null;
+  if (!action) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  copyDebugHtml();
-}, false);
+  action();
+}, true);

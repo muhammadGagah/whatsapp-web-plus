@@ -30,6 +30,38 @@ let isCleanUiMode = readSetting(STORAGE_KEYS.cleanUi, 'false') === 'true';
 let isOriginalDarkMode = readSetting(STORAGE_KEYS.originalDark, 'false') === 'true';
 let cleanUiSyncPending = false;
 
+function findDesktopAppPromoCloseButton(promo) {
+  if (!promo?.querySelectorAll) return null;
+  const controls = Array.from(promo.querySelectorAll('svg title'))
+    .filter(title => normalizeText(title.textContent || '') === 'ic-close')
+    .map(title => title.closest?.('button, [role="button"]'))
+    .filter((control, index, items) => control && items.indexOf(control) === index)
+    .filter(control => {
+      const label = control.getAttribute('aria-label') ||
+        control.querySelector?.('[aria-label]')?.getAttribute('aria-label');
+      return normalizeText(label || '') &&
+        !control.disabled &&
+        control.getAttribute('aria-disabled') !== 'true' &&
+        control.isConnected &&
+        !control.hidden &&
+        !control.inert &&
+        control.getAttribute('aria-hidden') !== 'true';
+    });
+  return controls.length === 1 ? controls[0] : null;
+}
+
+function getSidebarDesktopAppPromo() {
+  const candidates = Array.from(document.querySelectorAll?.('[data-testid="wa-square-icon"]') || [])
+    .map(icon => icon.closest?.('[role="button"][tabindex="0"]'))
+    .filter((candidate, index, items) => candidate && items.indexOf(candidate) === index)
+    .filter(candidate => {
+      const hasTitle = Array.from(candidate.querySelectorAll?.('span') || [])
+        .some(span => getDesktopPromoRegex().test(normalizeText(span.textContent || '')));
+      return hasTitle && findDesktopAppPromoCloseButton(candidate);
+    });
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 function toggleStyleSheet(id, cssText, enable) {
   let style = document.getElementById(id);
   if (enable) {
@@ -45,6 +77,9 @@ function toggleStyleSheet(id, cssText, enable) {
 }
 
 export function getDesktopAppPromo() {
+  const sidebarPromo = getSidebarDesktopAppPromo();
+  if (sidebarPromo) return sidebarPromo;
+
   const panel = document.querySelector('section[data-testid="intro-panel"]');
   if (!panel || !panel.children) return null;
   const actionGroup = panel.querySelector(':scope > [data-testid="intro-panel-empty-state-action-tile-group"]');
@@ -71,6 +106,10 @@ export function getDesktopAppPromo() {
     if (hasTitle && hasCopy && isDownloadButton && focusableCount === 1) return candidate;
   }
   return null;
+}
+
+export function getDesktopAppPromoCloseButton(promo = getDesktopAppPromo()) {
+  return findDesktopAppPromoCloseButton(promo);
 }
 
 function getRecentSearchesTargets() {
