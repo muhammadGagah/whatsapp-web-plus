@@ -503,7 +503,7 @@ assert.equal(updateItem.getAttribute('aria-checked'), null);
 assert.equal(updateItem.getAttribute('aria-pressed'), null);
 assert.equal(
     updateItem.children[1].textContent,
-    'Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)'
+    'Open WhatsApp Web Plus update in Tampermonkey'
 );
 const toggleCloseEvent = settingsShortcut();
 keydown(toggleCloseEvent);
@@ -790,7 +790,7 @@ function runUpdatePageChecks() {
     openAndFocusUpdateItem();
     assert.equal(
         updateItem.children[1].textContent,
-        'Buka pembaruan WhatsApp Web Plus di Tampermonkey (terbuka di tab baru)'
+        'Buka pembaruan WhatsApp Web Plus di Tampermonkey'
     );
     keydown(keyboardEvent({ key: 'Home' }));
     assert.equal(document.activeElement.dataset.action, 'language');
@@ -822,7 +822,7 @@ function runUpdatePageChecks() {
     openAndFocusUpdateItem();
     assert.equal(
         updateItem.children[1].textContent,
-        'Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)'
+        'Open WhatsApp Web Plus update in Tampermonkey'
     );
     const blockedTimer = scheduledTimers.length;
     keydown(keyboardEvent({ key: ' ' }));

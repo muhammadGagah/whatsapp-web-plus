@@ -78,7 +78,7 @@ export default {
   chatActivity: 'Monitor aktivitas chat',
   cleanUi: 'Antarmuka ringkas',
   originalDark: 'Mode gelap asli',
-  openUpdate: 'Buka pembaruan WhatsApp Web Plus di Tampermonkey (terbuka di tab baru)',
+  openUpdate: 'Buka pembaruan WhatsApp Web Plus di Tampermonkey',
   updateOpenFailed: 'Tidak dapat membuka halaman pembaruan Tampermonkey',
   chats: 'Chat',
   status: 'Status',

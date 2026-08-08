@@ -170,6 +170,7 @@ function createCleanupObserver() {
             cleanElementAttributes(parent);
           }
           recleanMessageAncestor(parent);
+          maybeCaptureUnreadDivider(parent);
         }
         scheduleCleanUiSync();
         continue;

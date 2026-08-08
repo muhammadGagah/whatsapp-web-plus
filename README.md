@@ -4,7 +4,7 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current version is **2.6.72**. Read the [WhatsApp Web Plus 2.6.72 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.73**. Read the [WhatsApp Web Plus 2.6.73 changes and earlier release history](CHANGELOG.md).
 
 ## What Tampermonkey does
 
@@ -240,7 +240,7 @@ Navigation accessible names must match WhatsApp exactly, including capitalizatio
 
 ## Update WhatsApp Web Plus
 
-WhatsApp Web Plus does not install updates automatically. To update, press `Shift + F8`, choose **Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)**, review the version shown, and confirm it in Tampermonkey.
+WhatsApp Web Plus does not install updates automatically. To update, press `Shift + F8`, choose **Open WhatsApp Web Plus update in Tampermonkey**, review the version shown, and confirm it in Tampermonkey.
 
 ## Open a message context menu with NVDA
 

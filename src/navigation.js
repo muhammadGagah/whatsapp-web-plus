@@ -93,6 +93,7 @@ let lastTypingChatTitle = '';
 let statusInterval = null;
 let lastTPressTime = 0;
 let unreadTarget = null;
+let consumedUnreadChatTitle = '';
 let isStatusTracking = readSetting(STORAGE_KEYS.chatActivity, 'false') === 'true';
 let chatPulseChatTitle = '';
 let chatPulseTailId = '';
@@ -114,8 +115,8 @@ const DELIVERY_STATUS_BY_KEY = Object.freeze({
 
 const SHORTCUT_REMAPS = Object.freeze({
   KeyM: ['voice-recording', 'R', 'KeyR'],
-  ArrowUp: ['previous-chat', '[', 'BracketLeft'],
-  ArrowDown: ['next-chat', ']', 'BracketRight']
+  ArrowUp: ['previous-chat', '{', 'BracketLeft'],
+  ArrowDown: ['next-chat', '}', 'BracketRight']
 });
 
 export function cancelPendingFocusRequests() {
@@ -432,11 +433,12 @@ export function captureNextRowId(dividerEl) {
   const row = getNextMessageRow(dividerEl, messageContainer);
   const message = row && row.querySelector('[data-id]');
   const chatTitle = getCurrentChatTitle();
-  if (!message || !chatTitle) return;
+  if (!message || !chatTitle || chatTitle === consumedUnreadChatTitle) return;
   unreadTarget = {
     chatTitle,
     messageId: message.getAttribute('data-id'),
-    scrollTop: messageContainer.scrollTop
+    scrollTop: messageContainer.scrollTop,
+    dividerEl
   };
 }
 
@@ -447,6 +449,7 @@ export function isShortUnreadText(text) {
 
 export function maybeCaptureUnreadDivider(node) {
   if (!node.closest || !node.closest(SELECTORS.conversationMessages)) return;
+  if (getCurrentChatTitle() === consumedUnreadChatTitle) return;
   const candidates = node.matches && node.matches('div, span') ? [node] : [];
   if (node.querySelectorAll) candidates.push(...node.querySelectorAll('div, span'));
   for (let i = 0; i < candidates.length; i++) {
@@ -461,8 +464,25 @@ export function maybeCaptureUnreadDivider(node) {
 }
 
 export function reconcileUnreadTarget() {
+  const currentChatTitle = getCurrentChatTitle();
+  if (consumedUnreadChatTitle && consumedUnreadChatTitle !== currentChatTitle) {
+    consumedUnreadChatTitle = '';
+  }
   if (!unreadTarget) return;
-  if (unreadTarget.chatTitle !== getCurrentChatTitle()) unreadTarget = null;
+  const dividerRemoved = unreadTarget.dividerEl && (
+    !unreadTarget.dividerEl.isConnected ||
+    !isShortUnreadText(unreadTarget.dividerEl.textContent || '')
+  );
+  if (unreadTarget.chatTitle !== currentChatTitle || dividerRemoved) unreadTarget = null;
+}
+
+function consumeUnreadTarget() {
+  const chatTitle = getCurrentChatTitle();
+  unreadTarget = null;
+  if (chatTitle) consumedUnreadChatTitle = chatTitle;
+  if (!isAutomaticReadingEnabled()) return;
+  discardPassiveAnnouncements('pulse');
+  setChatPulseBaseline(chatTitle, getChatPulseEntries());
 }
 
 export function findMessageById(container, messageId) {
@@ -847,6 +867,8 @@ export function focusLastMessageShortcut() {
 }
 
 export function findUnreadMessageTarget(messageContainer) {
+  reconcileUnreadTarget();
+  if (consumedUnreadChatTitle && consumedUnreadChatTitle === getCurrentChatTitle()) return null;
   if (unreadTarget) {
     if (!unreadTarget.chatTitle || unreadTarget.chatTitle !== getCurrentChatTitle()) {
       unreadTarget = null;
@@ -912,6 +934,7 @@ export function jumpToUnreadShortcut() {
       return;
     }
     target.scrollIntoView({ block: 'center' });
+    consumeUnreadTarget();
   };
 
   tryJump(1);
@@ -1148,7 +1171,10 @@ function scheduleFirstUnreadAfterChatOpen(target) {
       if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
       return;
     }
-    if (focusItem(getBestInnerFocusElement(unread))) unread.scrollIntoView({ block: 'center' });
+    if (focusItem(getBestInnerFocusElement(unread))) {
+      unread.scrollIntoView({ block: 'center' });
+      consumeUnreadTarget();
+    }
   };
   schedule(() => tryFocus(1));
 }

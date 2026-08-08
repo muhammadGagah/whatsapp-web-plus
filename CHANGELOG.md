@@ -1,6 +1,18 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and version 2.6.72 reflects the current source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.73 reflect the corresponding source in `src/`.
+
+## 2.6.73 - 2026-08-08
+
+### Changed
+
+- Shortened the Tampermonkey update command label by removing the unnecessary new-tab note.
+- Added explicit author metadata so Tampermonkey identifies the script author as Muhammad Gagah on installation and update pages.
+
+### Fixed
+
+- Fixed the optional `Alt + Up Arrow` and `Alt + Down Arrow` remaps failing to open the previous or next chat because their synthesized keyboard events used unshifted bracket characters.
+- Fixed stale first-unread targets and automatic reading replaying previously loaded unread messages when a new message arrives in the same open chat. The unread session now resets only after the chat closes or its title changes.
 
 ## 2.6.72 - 2026-08-05
 
