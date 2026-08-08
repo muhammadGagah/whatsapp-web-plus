@@ -78,7 +78,7 @@ export default {
   chatActivity: 'Chat activity monitor',
   cleanUi: 'Clean UI',
   originalDark: 'Original dark mode',
-  openUpdate: 'Open WhatsApp Web Plus update in Tampermonkey (opens in new tab)',
+  openUpdate: 'Open WhatsApp Web Plus update in Tampermonkey',
   updateOpenFailed: 'Could not open the Tampermonkey update page',
   chats: 'Chats',
   status: 'Status',
