@@ -6,8 +6,8 @@ const scriptPath = process.env.WA_PLUS_SCRIPT || 'whatsapp_web_plus.user.js';
 const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
     .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 const source = fs.readFileSync(scriptPath, 'utf8').replace(
-    /\}\)\(\);\s*$/,
-    'globalThis.__privacyTest = { cleanString, cleanElementAttributes, cleanNamedAttribute, prepareNamedAttribute, getPrivacyContext, getDirectMetaAISender, getMessageContextInstructionRegex, setCustomText, setSenderDeviceAnnouncement, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), restorePrivacyAttributes, seedPrivacyState: rememberPrivacyAttribute }; })();'
+    /\}\)\(\);\s*\n\s*\} catch \(error\) \{/,
+    'globalThis.__privacyTest = { cleanString, cleanElementAttributes, cleanNamedAttribute, prepareNamedAttribute, getPrivacyContext, getDirectMetaAISender, getMessageContextInstructionRegex, setCustomText, setSenderDeviceAnnouncement, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), restorePrivacyAttributes, seedPrivacyState: rememberPrivacyAttribute }; })();\n  } catch (error) {'
 );
 class Element {
     constructor() {
@@ -51,6 +51,9 @@ const sandbox = {
         setItem(key, value) { storedSettings.set(key, String(value)); }
     }
 };
+sandbox.window = sandbox;
+sandbox.top = sandbox;
+sandbox.location = { origin: 'https://web.whatsapp.com' };
 vm.runInNewContext(source, sandbox);
 
 const clean = sandbox.__privacyTest.cleanString;
@@ -411,6 +414,113 @@ assert.equal(clean('415-555-2671 online', 'identity'), 'Participant online');
 assert.equal(clean('44 20 7946 0958 online', 'identity'), 'Participant online');
 assert.equal(clean('00 44 20 7946 0958 online', 'identity'), 'Participant online');
 assert.equal(clean('+62 812/3456/7890 online', 'identity'), 'Participant online');
+assert.equal(
+    clean('Kode 0-0-0-1-0-0-3-0-1 diterima', 'message', nonFocusableMessageContent),
+    'Kode 0-0-0-1-0-0-3-0-1 diterima'
+);
+assert.equal(
+    clean('0-8-1-3-6-2-5-7-9-8-5-8 online', 'identity'),
+    'Participant online'
+);
+const numericCodeMessage = new Element();
+const numericCodeBody = 'Kode 0-0-0-1-0-0-3-0-1 diterima';
+const numericCodeLabel = `Message Author ${numericCodeBody} 10:00`;
+numericCodeMessage.matches = selector => selector === '.focusable-list-item';
+numericCodeMessage.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    if (selector === '.focusable-list-item') return numericCodeMessage;
+    return null;
+};
+numericCodeMessage.queryHandler = selector =>
+    selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]'
+        ? { textContent: numericCodeBody }
+        : null;
+assert.equal(
+    prepareNamedAttribute(numericCodeMessage, 'aria-label', numericCodeLabel),
+    numericCodeLabel
+);
+assert.equal(hasPrivacyState(numericCodeMessage, 'aria-label'), false);
+assert.equal(
+    clean('whatsappWebPlusCompanion-2026.08.13-1.nvda-addon', 'identity'),
+    'whatsappWebPlusCompanion-2026.08.13-1.nvda-addon',
+    'a valid dotted release date and revision is not treated as a phone number'
+);
+assert.equal(
+    clean('Release 2026-08-13.1', 'identity'),
+    'Release 2026-08-13.1',
+    'a valid dashed release date and revision is not treated as a phone number'
+);
+assert.equal(clean('Release 2026.08.13.1', 'identity'), 'Release Participant');
+assert.equal(clean('Release 2026-08-13-1', 'identity'), 'Release Participant');
+assert.equal(clean('Call +62 812.3456.7890', 'identity'), 'Call Participant');
+assert.equal(clean('Call 0813-6257-9858', 'identity'), 'Call Participant');
+const documentMessage = new Element();
+const documentThumb = new Element();
+const documentFilename = new Element();
+const documentCaption = new Element();
+const documentWrapper = {
+    getAttribute(name) {
+        return name === 'data-id' ? '3EB08DAA4A1B29DC5D52C2' : null;
+    }
+};
+documentFilename.textContent = 'whatsappWebPlusCompanion-2026.08.13-1.nvda-addon';
+documentCaption.textContent = 'Build notes, contact +62 812-9505-8785';
+documentMessage.matches = selector => selector === '.focusable-list-item';
+documentMessage.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    if (selector === '.focusable-list-item') return documentMessage;
+    if (selector === '[data-testid^="conv-msg-"][data-id]') return documentWrapper;
+    return null;
+};
+documentMessage.queryHandler = selector => {
+    if (selector === '[data-testid="document-thumb"]') return documentThumb;
+    if (selector === '[data-testid="document-thumb"] [dir="auto"]') return documentFilename;
+    if (selector === '[data-testid~="document-caption"]') return documentCaption;
+    return null;
+};
+const documentNativeLabel =
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon. NVDA-ADDON•184 kB 18:56 Delivered';
+const documentPrivacyLabel =
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon ' +
+    'Build notes, contact Participant. NVDA-ADDON•184 kB 18:56 Delivered';
+assert.equal(
+    prepareNamedAttribute(documentMessage, 'aria-label', documentNativeLabel),
+    documentPrivacyLabel,
+    'privacy preserves a versioned filename and masks a real phone number in its caption'
+);
+assert.equal(
+    prepareNamedAttribute(documentMessage, 'aria-label', documentNativeLabel),
+    documentPrivacyLabel,
+    're-cleaning the same document label does not duplicate its caption'
+);
+documentCaption.textContent = '';
+assert.equal(
+    prepareNamedAttribute(documentMessage, 'aria-label', documentNativeLabel),
+    documentNativeLabel,
+    'a captionless document keeps its exact versioned filename'
+);
+documentCaption.textContent = 'Build notes, contact +62 812-9505-8785';
+sandbox.document.documentElement = { lang: 'en' };
+assert.equal(setSenderDeviceAnnouncement(true), true);
+const documentDeviceLabel = `${documentPrivacyLabel}. Sent from WhatsApp Web or Desktop`;
+assert.equal(
+    prepareNamedAttribute(documentMessage, 'aria-label', documentNativeLabel),
+    documentDeviceLabel,
+    'sender device follows the caption, file metadata, time, and delivery status'
+);
+assert.equal(setSenderDeviceAnnouncement(false), true);
+delete sandbox.document.documentElement;
+documentMessage.attributes.set('aria-label', documentDeviceLabel);
+documentCaption.textContent = 'Updated build notes';
+cleanNamedAttribute(documentMessage, 'aria-label');
+assert.equal(
+    documentMessage.getAttribute('aria-label'),
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon ' +
+        'Updated build notes. NVDA-ADDON•184 kB 18:56 Delivered',
+    'a late caption mutation refreshes the applied label without duplicating stale content'
+);
 assert.equal(setCustomText('unknown-contact-prefix', 'Quizás'), true);
 assert.equal(clean('Quizás 081362579858 online', 'identity'), 'Quizás online');
 assert.equal(setCustomText('unknown-contact-prefix', ''), true);

@@ -4,7 +4,15 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current version is **2.6.73**. Read the [WhatsApp Web Plus 2.6.73 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.75**. Read the [WhatsApp Web Plus 2.6.75 changes and earlier release history](CHANGELOG.md).
+
+## NVDA add-on
+
+The companion WhatsApp Desktop loader is developed separately in the
+[WhatsApp Web Plus Companion repository](https://github.com/muhammadGagah/whatsapp-web-plus-companion).
+This repository remains the authoritative source for the userscript and its
+loader sentinel and health contract. The add-on pins an exact generated bundle
+by version and SHA-256 rather than maintaining a second JavaScript source tree.
 
 ## What Tampermonkey does
 

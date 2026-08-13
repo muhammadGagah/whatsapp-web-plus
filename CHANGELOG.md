@@ -1,6 +1,20 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.73 reflect the corresponding source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.75 reflect the corresponding source in `src/`.
+
+## 2.6.75 - 2026-08-13
+
+### Fixed
+
+- Restored message-history grid and gridcell semantics when WhatsApp rows omit `aria-rowindex`, preventing NVDA from announcing each message as a generic section.
+- Included document captions in attachment names and automatic reading, after the exact filename and before message metadata and the optional sender-device suffix.
+- Prevented Privacy Mode from mistaking dated attachment versions such as `2026.08.13-1` for phone numbers in messages and chat-list previews while continuing to mask genuine phone numbers.
+
+## 2.6.74 - 2026-08-11
+
+### Changed
+
+- Simplified the Shift+F8 installer menu label in English and Indonesian by removing the redundant new-browser-tab wording.
 
 ## 2.6.73 - 2026-08-08
 

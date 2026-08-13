@@ -41,6 +41,10 @@ import {
   t
 } from './settings-state.js';
 import {
+  isCompanionRuntime,
+  publishCompanionAnnouncement
+} from './companion-bridge.js';
+import {
   cancelPendingFocusRequests,
   discardPassiveAnnouncements,
   isChatActivityEnabled,
@@ -442,8 +446,6 @@ function createMenu() {
   const alert = document.createElement('div');
   alert.id = 'wa-plus-settings-alert';
   alert.className = 'wa-plus-settings-alert';
-  alert.setAttribute('role', 'alert');
-  alert.setAttribute('aria-atomic', 'true');
 
   customDialog = document.createElement('dialog');
   customDialog.id = 'wa-plus-custom-text-dialog';
@@ -469,8 +471,10 @@ function createMenu() {
   customDialogError = document.createElement('p');
   customDialogError.id = 'wa-plus-custom-text-error';
   customDialogError.className = 'wa-plus-custom-text-error';
-  customDialogError.setAttribute('role', 'alert');
-  customDialogError.setAttribute('aria-atomic', 'true');
+  if (!isCompanionRuntime()) {
+    customDialogError.setAttribute('role', 'alert');
+    customDialogError.setAttribute('aria-atomic', 'true');
+  }
   const actions = document.createElement('div');
   actions.className = 'wa-plus-custom-text-dialog-actions';
   customDialogCancel = document.createElement('button');
@@ -507,6 +511,7 @@ function reportSaveError() {
   alert.dir = 'ltr';
   alertTimer = setTimeout(() => {
     alert.textContent = t('saveError');
+    announce(t('saveError'));
     alertTimer = null;
   }, 0);
 }
@@ -529,14 +534,24 @@ function reportCustomDialogSaveError() {
   customDialogError.lang = getLanguage();
   customDialogError.dir = 'ltr';
   customDialogErrorTimer = setTimeout(() => {
-    customDialogError.textContent = t('saveError');
+    const message = t('saveError');
+    customDialogError.textContent = message;
+    if (isCompanionRuntime()) {
+      publishCompanionAnnouncement({
+        source: 'alert',
+        language: getLanguage(),
+        privacy: isPrivacyModeEnabled(),
+        text: message
+      });
+    }
     customDialogErrorTimer = null;
   }, 0);
 }
 
 function getMenuItems(menu) {
   return Array.from(menu.querySelectorAll(MENU_ITEM_SELECTOR))
-    .filter(item => item.closest('[role="menu"]') === menu);
+    .filter(item => item.closest('[role="menu"]') === menu && !item.hidden &&
+      item.getAttribute('aria-disabled') !== 'true');
 }
 
 function focusMenuItem(menu, index) {
@@ -603,6 +618,7 @@ function updateMenu() {
     });
   }
   setMenuItemLabel(updateItem, t('openUpdate'));
+  updateItem.hidden = isCompanionRuntime();
   getMenuItems(languageMenu).forEach(item => {
     item.lang = item.dataset.language;
     item.dir = 'ltr';

@@ -169,7 +169,7 @@ export function getChatPulseStatus(message) {
 
 function prepareChatPulseSummary(summary, message, messageId) {
   const safeSummary = isPrivacyModeEnabled()
-    ? maskPhoneNumbers(cleanString(summary, 'message', message))
+    ? cleanString(summary, 'message', message)
     : cleanString(summary, false, message);
   return appendSenderDevice(translateDeliveryStatusInText(safeSummary), messageId);
 }
@@ -918,7 +918,7 @@ export function jumpToUnreadShortcut() {
     const messageContainer = main.querySelector(SELECTORS.conversationMessages) || main;
     const target = findUnreadMessageTarget(messageContainer);
     if (!target && unreadTarget && attempt < SHORTCUT_RENDER_RETRIES) {
-      // ponytail: scrollTop is a viewport hint; use a stable WhatsApp message index if one becomes available.
+      // scrollTop is a viewport hint; use a stable WhatsApp message index if one becomes available.
       messageContainer.scrollTop = unreadTarget.scrollTop;
       schedule(() => tryJump(attempt + 1));
       return;
@@ -945,20 +945,37 @@ function getMediaPlayerCloseButton() {
     document.querySelector(SELECTORS.audioPlayerClose);
 }
 
-function activateMediaPlayerClose(closeButton) {
+function activateMediaPlayerClose(closeButton, origin = document.activeElement) {
   if (!closeButton) {
     announce(t('mediaNotOpen'));
     return false;
   }
   closeButton.click();
-  announce(t('mediaClosed'));
+  const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+  const confirmClosed = attempt => {
+    if (closeButton.isConnected && isRenderedElement(closeButton)) {
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => confirmClosed(attempt + 1));
+      else announce(t('mediaClosed'));
+      return;
+    }
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement ||
+      !active.isConnected || !isRenderedElement(active)) {
+      [origin, getNavButton('navChats'), document.querySelector(SELECTORS.chatList)]
+        .filter(candidate => candidate && candidate !== document.body &&
+          candidate !== document.documentElement && candidate.isConnected && isRenderedElement(candidate))
+        .some(focusItem);
+    }
+    announce(t('mediaClosed'));
+  };
+  schedule(() => confirmClosed(1));
   return true;
 }
 
 export function closeMediaPlayerShortcut(origin = document.activeElement) {
   const mediaCloseButton = getMediaPlayerCloseButton();
   if (mediaCloseButton && isRenderedElement(mediaCloseButton)) {
-    return activateMediaPlayerClose(mediaCloseButton);
+    return activateMediaPlayerClose(mediaCloseButton, origin);
   }
 
   const promo = getDesktopAppPromo();
