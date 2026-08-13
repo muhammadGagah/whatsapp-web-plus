@@ -7,6 +7,10 @@ user will hear and where keyboard focus will land.
 
 ## Repository layout
 
+- Companion NVDA add-on source, packaging, plans, and manual gates live in the
+  sibling `../whatsapp-web-plus-companion/` repository. Do not recreate an
+  `nvda-addon/` subtree here. The loader sentinel, health contract, generated
+  userscript, and their JavaScript regression tests remain in this repository.
 - `src/` — the maintained source (ES modules). **Edit here only.**
   - `main.js` — entry point: wires the MutationObserver, shortcuts, and startup.
   - `config.js` — selectors, storage keys, regexes, constants. `SCRIPT_VERSION`

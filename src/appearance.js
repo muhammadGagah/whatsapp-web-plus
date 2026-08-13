@@ -217,8 +217,8 @@ const ORIGINAL_DARK_CSS = `
     --panel-background-deeper: #111b21 !important;
     --compose-input-background: #202c33 !important;
     --compose-input-border: #66767e !important;
-    --conversation-header-border: #222e35 !important;
-    --conversation-panel-border: #222e35 !important;
+    --conversation-header-border: #72838c !important;
+    --conversation-panel-border: #72838c !important;
     --dropdown-background: #222e35 !important;
     --intro-background: #202c33 !important;
     --reactions-panel-background-color: #222e35 !important;

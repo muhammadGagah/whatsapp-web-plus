@@ -94,6 +94,7 @@ export const OWNERS = Object.freeze({
   chatStructure: 'chat-structure',
   messageGrid: 'message-grid',
   messageCell: 'message-cell',
+  temporaryFocus: 'temporary-focus',
   metaAIMessageName: 'meta-ai-message-name',
   cleanUiHidden: 'clean-ui-hidden',
   statusViewer: 'status-viewer'

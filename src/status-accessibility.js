@@ -724,10 +724,7 @@ function commitLabel(viewer, record) {
     record.committedSignature = signature;
   }
   const active = document.activeElement;
-  const focusOutsideViewer = connected(active) && active !== viewer.marker &&
-    !viewer.marker.contains?.(active);
-  const focusIsLost = !connected(active) || active === document.body || active === document.documentElement ||
-    (focusOutsideViewer && !hasProtectedExternalFocus());
+  const focusIsLost = !connected(active) || active === document.body || active === document.documentElement;
   if ((shell && active === shell) || focusIsLost) target.focus({ preventScroll: true });
 }
 

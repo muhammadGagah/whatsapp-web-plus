@@ -42,6 +42,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         setLanguage, setCustomText, getNavSelector, getScrollToBottomSelector,
         setOpenChatsAtFirstUnread, setShortcutRemap,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
+        getCompanionBridge() { return globalThis.__whatsappWebPlusCompanionBridge; },
         getChatPulseEnabled() { return isAutomaticReadingEnabled(); },
         getStatusTracking() { return isStatusTracking; },
         getLastTPressTime() { return lastTPressTime; },
@@ -168,6 +169,7 @@ function cancelTimeout(id) { scheduledTimeouts.delete(id); }
 
 const sandbox = {
     Element, HTMLElement: Element, MutationObserver, document, localStorage, console,
+    __whatsappWebPlusBundleHash: 'a'.repeat(64),
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     navigator: {}, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout,
     KeyboardEvent: class KeyboardEvent {
@@ -225,12 +227,14 @@ messageCell.closestHandler = selector => {
     if (selector === 'div[role="row"]') return messageRow;
     if (selector === '[role="gridcell"]') return messageCell;
     if (selector === '[role="grid"]') return messageViewport;
+    if (selector === runtime.SELECTORS.conversationMessages) return messageContainerForGrid;
     return null;
 };
 secondMessageCell.closestHandler = selector => {
     if (selector === 'div[role="row"]') return secondMessageRow;
     if (selector === '[role="gridcell"]') return secondMessageCell;
     if (selector === '[role="grid"]') return messageViewport;
+    if (selector === runtime.SELECTORS.conversationMessages) return messageContainerForGrid;
     return null;
 };
 selectorResults.set(runtime.SELECTORS.main, messageMain);
@@ -242,6 +246,10 @@ assert.equal(messageCell.getAttribute('role'), 'gridcell');
 assert.equal(secondMessageCell.getAttribute('role'), 'gridcell');
 assert.equal(messageCell.getAttribute('tabindex'), '0');
 assert.equal(secondMessageCell.getAttribute('tabindex'), '-1');
+messageCell.setAttribute('role', 'section');
+runtime.applyMessageGridExperiment();
+assert.equal(messageCell.getAttribute('role'), 'gridcell', 'host section role is repaired');
+assert.equal(messageCell.getAttribute('tabindex'), '0', 'role repair preserves the roving tab stop');
 function gridKey(target, key, overrides = {}) {
     return {
         target, key, defaultPrevented: false, isComposing: false,
@@ -258,8 +266,9 @@ assert.equal(document.activeElement, secondMessageCell);
 assert.equal(messageCell.getAttribute('tabindex'), '-1');
 assert.equal(secondMessageCell.getAttribute('tabindex'), '0');
 messageGridKey = gridKey(secondMessageCell, 'ArrowDown');
-runtime.handleMessageGridKeydown(messageGridKey);
+assert.equal(runtime.handleMessageGridKeydown(messageGridKey), false);
 assert.equal(document.activeElement, secondMessageCell);
+assert.equal(messageGridKey.prevented, false);
 messageGridKey = gridKey(secondMessageCell, 'Home');
 runtime.handleMessageGridKeydown(messageGridKey);
 assert.equal(document.activeElement, messageCell);
@@ -293,7 +302,11 @@ runtime.applyMessageGridExperiment();
 assert.equal(messageViewport.getAttribute('role'), null);
 assert.equal(messageViewport.getAttribute('aria-labelledby'), null);
 assert.equal(messageViewport.getAttribute('aria-rowcount'), null);
-assert.equal(messageCell.getAttribute('role'), null);
+assert.equal(
+    messageCell.getAttribute('role'),
+    'section',
+    'an incomplete grid restores the host role instead of leaking gridcell ownership'
+);
 assert.equal(secondMessageCell.getAttribute('role'), null);
 assert.equal(messageCell.hasAttribute('aria-label'), false);
 assert.equal(
@@ -308,7 +321,7 @@ runtime.applyMessageGridExperiment();
 assert.equal(messageViewport.getAttribute('role'), null);
 assert.equal(messageViewport.getAttribute('aria-labelledby'), null);
 assert.equal(messageViewport.getAttribute('aria-rowcount'), null);
-assert.equal(messageCell.getAttribute('role'), null);
+assert.equal(messageCell.getAttribute('role'), 'section');
 assert.equal(messageCell.hasAttribute('tabindex'), false);
 assert.equal(messageCell.getAttribute('aria-label'), 'Member One Hello 10:00');
 assert.equal(messageCell.getAttribute('aria-labelledby'), null);
@@ -316,16 +329,20 @@ assert.equal(secondMessageCell.getAttribute('role'), null);
 assert.equal(secondMessageCell.hasAttribute('tabindex'), false);
 selectorResults.delete(runtime.SELECTORS.main);
 
+const modalSelectorForRuntime = 'dialog:modal, [role="dialog"][aria-modal="true"], ' +
+    '[role="alertdialog"][aria-modal="true"]';
 const firstDialog = new Element();
 const secondDialog = new Element();
+firstDialog.setAttribute('aria-modal', 'true');
+secondDialog.setAttribute('aria-modal', 'true');
 const firstDialogButton = new Element();
 firstDialog.appendChild(firstDialogButton);
-selectorAllResults.set('dialog[open], [role="dialog"], [role="alertdialog"]', [firstDialog, secondDialog]);
+selectorAllResults.set(modalSelectorForRuntime, [firstDialog, secondDialog]);
 document.activeElement = firstDialogButton;
 assert.equal(runtime.getActiveModal(), firstDialog);
 document.activeElement = document.body;
 assert.equal(runtime.getActiveModal(), secondDialog);
-selectorAllResults.delete('dialog[open], [role="dialog"], [role="alertdialog"]');
+selectorAllResults.delete(modalSelectorForRuntime);
 
 liveRegion.textContent = 'Sensitive existing status';
 runtime.clearStatusRegion();
@@ -335,6 +352,32 @@ assert.ok(scheduledTimeouts.size > 0);
 runtime.clearStatusRegion();
 assert.equal(scheduledTimeouts.size, 0);
 assert.equal(liveRegion.textContent, '');
+
+const companionBridge = runtime.getCompanionBridge();
+assert.equal(companionBridge.contractVersion, 2);
+const bridgeBeforeLongStatus = companionBridge.snapshot();
+runtime.announce(`Long status ${'x'.repeat(2200)}`);
+const [longStatusTimerId, longStatusTimer] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(longStatusTimerId);
+longStatusTimer();
+const longStatusBatch = companionBridge.readSince(
+    bridgeBeforeLongStatus.latestSequence,
+    bridgeBeforeLongStatus.generation
+);
+assert.equal(longStatusBatch.invalidated, false);
+assert.equal(longStatusBatch.entries.length, 1);
+assert.equal(longStatusBatch.entries[0].source, 'status');
+assert.equal(longStatusBatch.entries[0].language, 'en');
+assert.equal(longStatusBatch.entries[0].privacy, true);
+assert.ok(longStatusBatch.entries[0].text.length <= 1800);
+assert.match(longStatusBatch.entries[0].text, /…$/);
+runtime.clearStatusRegion();
+const invalidatedStatusBatch = companionBridge.readSince(
+    longStatusBatch.latestSequence,
+    longStatusBatch.generation
+);
+assert.equal(invalidatedStatusBatch.invalidated, true);
+assert.equal(invalidatedStatusBatch.entries.length, 0);
 
 const reactOwned = new Element();
 runtime.applyOwnedAttribute(reactOwned, 'role', 'grid', runtime.OWNERS.messageGrid);
@@ -391,6 +434,15 @@ const nativeRole = new Element();
 nativeRole.setAttribute('role', 'feed');
 assert.equal(runtime.applyOwnedMessageRole(nativeRole, 'grid', runtime.OWNERS.messageGrid), false);
 assert.equal(nativeRole.getAttribute('role'), 'feed');
+const unrelatedSection = new Element();
+unrelatedSection.setAttribute('data-focusable-list-item', 'true');
+unrelatedSection.setAttribute('role', 'section');
+assert.equal(
+    runtime.applyOwnedMessageRole(unrelatedSection, 'gridcell', runtime.OWNERS.messageCell),
+    false,
+    'section roles outside conversation history remain untouched'
+);
+assert.equal(unrelatedSection.getAttribute('role'), 'section');
 
 const metaAIReply = new Element();
 const metaAISender = new Element();
@@ -543,6 +595,54 @@ privatePulseMessage.queryHandler = selector =>
     selector === '[data-testid="msg-container"] [data-testid="selectable-text"]' ? privatePulseBody : null;
 assert.doesNotMatch(runtime.getChatPulseSummary(privatePulseMessage), /812-3456-7890/);
 
+const attachmentConversation = new Element();
+const attachmentMain = new Element();
+const attachmentMessage = new Element();
+const attachmentThumb = new Element();
+const attachmentFilename = new Element();
+const attachmentCaption = new Element();
+attachmentFilename.textContent = 'whatsappWebPlusCompanion-2026.08.13-1.nvda-addon';
+attachmentCaption.textContent = 'Build notes, contact +62 812-9505-8785';
+attachmentMain.queryHandler = selector =>
+    selector === runtime.SELECTORS.conversationMessages ? attachmentConversation : null;
+attachmentMessage.setAttribute('data-focusable-list-item', 'true');
+attachmentMessage.closestHandler = selector => {
+    if (selector === runtime.SELECTORS.main) return attachmentMain;
+    if (selector === runtime.SELECTORS.conversationMessages) return attachmentConversation;
+    if (selector === '.focusable-list-item') return attachmentMessage;
+    return null;
+};
+attachmentMessage.queryHandler = selector => {
+    if (selector === '[data-testid="document-thumb"]') return attachmentThumb;
+    if (selector === '[data-testid="document-thumb"] [dir="auto"]') return attachmentFilename;
+    if (selector === '[data-testid~="document-caption"]') return attachmentCaption;
+    if (selector.includes('[data-testid*="document"]')) return attachmentThumb;
+    return null;
+};
+const attachmentNativeLabel =
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon. ' +
+    'NVDA-ADDON•184 kB 18:56 Delivered';
+runtime.setPrivacy(false);
+assert.equal(
+    runtime.prepareNamedAttribute(attachmentMessage, 'aria-label', attachmentNativeLabel),
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon ' +
+        'Build notes, contact +62 812-9505-8785. NVDA-ADDON•184 kB 18:56 Delivered',
+    'the complete attachment label is available when privacy is disabled'
+);
+runtime.setPrivacy(true);
+const attachmentLabel = runtime.prepareNamedAttribute(
+    attachmentMessage,
+    'aria-label',
+    attachmentNativeLabel
+);
+attachmentMessage.attributes.set('aria-label', attachmentLabel);
+assert.equal(
+    runtime.getChatPulseSummary(attachmentMessage),
+    'You Document name: whatsappWebPlusCompanion-2026.08.13-1.nvda-addon ' +
+        'Build notes, contact Participant. NVDA-ADDON•184 kB 18:56 Delivered',
+    'automatic reading reuses the complete privacy-safe attachment label'
+);
+
 const metadataOnlyMessage = new Element();
 metadataOnlyMessage.attributes.set('aria-label', '15:54 Sent');
 metadataOnlyMessage.queryHandler = () => null;
@@ -600,6 +700,11 @@ assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'pesan suara');
 document.documentElement.lang = 'fr';
 previewVoiceIcon.setAttribute('aria-label', 'message vocal');
 assert.equal(runtime.getChatPreviewIconLabel(previewVoiceIcon), 'message vocal');
+document.documentElement.lang = 'en';
+const unknownMeaningfulIcon = new Element();
+unknownMeaningfulIcon.setAttribute('data-icon', 'future-media-kind');
+unknownMeaningfulIcon.setAttribute('aria-label', 'animated photo');
+assert.equal(runtime.getChatPreviewIconLabel(unknownMeaningfulIcon), 'animated photo');
 document.documentElement.lang = 'en';
 runtime.setLanguage('en');
 runtime.setChatPulseBaseline('Member One', [pulseEntry('m1', 'You first 15:54 Sent', 'Sent')]);
@@ -732,10 +837,24 @@ assert.equal(scheduledTimeouts.has(pendingUserStatusTimerId), true);
 assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
 pendingUserStatusTimer();
 assert.equal(liveRegion.textContent, 'User status survives passive reset');
+const explicitStatusBeforeReset = companionBridge.readSince(0, companionBridge.snapshot().generation);
+const explicitStatusEntry = explicitStatusBeforeReset.entries.find(
+    entry => entry.text === 'User status survives passive reset'
+);
+assert.ok(explicitStatusEntry);
 const [userStatusCleanupTimerId, userStatusCleanupTimer] =
     Array.from(scheduledTimeouts.entries()).at(-1);
 runtime.resetPassiveAnnouncementContext();
 assert.equal(liveRegion.textContent, 'User status survives passive reset');
+const explicitStatusAfterPassiveReset = companionBridge.readSince(
+    explicitStatusEntry.sequence,
+    explicitStatusEntry.generation
+);
+assert.equal(explicitStatusAfterPassiveReset.invalidated, true);
+assert.equal(explicitStatusAfterPassiveReset.invalidatedSource, 'message-log');
+assert.ok(explicitStatusAfterPassiveReset.entries.some(
+    entry => entry.text === 'User status survives passive reset'
+));
 assert.equal(scheduledTimeouts.has(userStatusCleanupTimerId), true);
 assert.equal(runtime.getUserAnnouncementUntil(), userAnnouncementUntil);
 userStatusCleanupTimer();
@@ -744,6 +863,7 @@ assert.equal(liveRegion.textContent, '');
 runtime.clearStatusRegion();
 scheduledTimeouts.clear();
 messageLog.children = [];
+const passiveBridgeCursor = companionBridge.snapshot();
 runtime.queuePassiveAnnouncements('pulse', ['New message', 'Message status: Read']);
 runtime.queuePassiveAnnouncements('activity', ['Member One is typing']);
 const passiveFlush = Array.from(scheduledTimeouts.values()).at(-1);
@@ -753,6 +873,29 @@ assert.deepEqual(
     ['New message', 'Message status: Read', 'Member One is typing']
 );
 assert.equal(liveRegion.textContent, '');
+const passiveBridgeBatch = companionBridge.readSince(
+    passiveBridgeCursor.latestSequence,
+    passiveBridgeCursor.generation
+);
+assert.deepEqual(
+    Array.from(passiveBridgeBatch.entries, entry => ({ source: entry.source, text: entry.text })),
+    [
+        { source: 'message-log', text: 'New message' },
+        { source: 'message-log', text: 'Message status: Read' },
+        { source: 'message-log', text: 'Member One is typing' }
+    ]
+);
+
+companionBridge.invalidate('test-overflow');
+const overflowCursor = companionBridge.snapshot();
+runtime.appendTestMessages(Array.from({ length: 55 }, (_, index) => `Queued item ${index + 1}`));
+const overflowBatch = companionBridge.readSince(
+    overflowCursor.latestSequence,
+    overflowCursor.generation
+);
+assert.equal(overflowBatch.entries.length, 50);
+assert.equal(overflowBatch.overflowed, true);
+assert.equal(companionBridge.take().length, 50);
 
 runtime.setPrivacy(false);
 runtime.queuePassiveAnnouncements('pulse', ['Queued before privacy']);
@@ -1051,9 +1194,11 @@ runtime.handleShortcuts(event);
 assert.equal(event.prevented, false);
 assert.equal(event.immediateStopped, false);
 
-const modalSelector = 'dialog[open], [role="dialog"], [role="alertdialog"]';
+const modalSelector = 'dialog:modal, [role="dialog"][aria-modal="true"], ' +
+    '[role="alertdialog"][aria-modal="true"]';
 const vendorDialog = new Element();
 vendorDialog.setAttribute('role', 'dialog');
+vendorDialog.setAttribute('aria-modal', 'true');
 selectorAllResults.set(modalSelector, [vendorDialog]);
 const modalBlocked = makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' });
 runtime.handleShortcuts(modalBlocked);
@@ -1164,6 +1309,7 @@ assert.equal(scheduledFrames.length, 1);
 scheduledFrames.pop();
 
 const audioPlayerClose = new Element();
+audioPlayerClose.clickHandler = () => { audioPlayerClose.isConnected = false; };
 const audioPlayerCloseSelector = runtime.SELECTORS.audioPlayerClose;
 selectorResults.set(audioPlayerCloseSelector, audioPlayerClose);
 event = makeEvent({ altKey: true, code: 'Digit0' });
@@ -1171,12 +1317,51 @@ runtime.handleShortcuts(event);
 assert.equal(event.prevented, true);
 assert.equal(event.immediateStopped, true);
 assert.equal(audioPlayerClose.clickCalls, 1);
+scheduledFrames.shift()();
 selectorResults.delete(audioPlayerCloseSelector);
 const closeQueriesBefore = selectorQueries.get(audioPlayerCloseSelector) || 0;
 runtime.closeMediaPlayerShortcut();
 assert.equal(selectorQueries.get(audioPlayerCloseSelector), closeQueriesBefore + 1);
 
+const lingeringMediaClose = new Element();
+selectorResults.set(audioPlayerCloseSelector, lingeringMediaClose);
+runtime.clearStatusRegion();
+scheduledFrames.length = 0;
+runtime.closeMediaPlayerShortcut();
+let mediaCloseChecks = 0;
+while (scheduledFrames.length && mediaCloseChecks < 20) {
+    scheduledFrames.shift()();
+    mediaCloseChecks++;
+}
+assert.equal(mediaCloseChecks, 12);
+const [mediaClosedTimerId, announceMediaClosed] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(mediaClosedTimerId);
+announceMediaClosed();
+assert.equal(liveRegion.textContent, 'Media player closed.');
+
+const hiddenCloseButton = new Element();
+const safeMediaOrigin = new Element();
+hiddenCloseButton.clickHandler = () => { hiddenCloseButton.hidden = true; };
+selectorResults.set(audioPlayerCloseSelector, hiddenCloseButton);
+document.activeElement = hiddenCloseButton;
+runtime.closeMediaPlayerShortcut(safeMediaOrigin);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, safeMediaOrigin);
+
+const bodyOriginCloseButton = new Element();
+const chatsFallbackButton = new Element();
+bodyOriginCloseButton.clickHandler = () => { bodyOriginCloseButton.hidden = true; };
+selectorResults.set(audioPlayerCloseSelector, bodyOriginCloseButton);
+selectorResults.set(runtime.SELECTORS.navChats, chatsFallbackButton);
+document.activeElement = document.body;
+runtime.closeMediaPlayerShortcut(document.body);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, chatsFallbackButton);
+selectorResults.delete(runtime.SELECTORS.navChats);
+selectorResults.delete(audioPlayerCloseSelector);
+
 const modalVideoClose = new Element();
+modalVideoClose.clickHandler = () => { modalVideoClose.isConnected = false; };
 vendorDialog.hidden = false;
 vendorDialog.appendChild(modalVideoClose);
 selectorResults.set(runtime.SELECTORS.videoPlayerClose, modalVideoClose);
@@ -1186,6 +1371,7 @@ runtime.handleShortcuts(event);
 assert.equal(event.prevented, true);
 assert.equal(event.immediateStopped, true);
 assert.equal(modalVideoClose.clickCalls, 1);
+scheduledFrames.shift()();
 
 const unrelatedVideoClose = new Element();
 selectorResults.set(runtime.SELECTORS.videoPlayerClose, unrelatedVideoClose);
@@ -1292,6 +1478,64 @@ assert.deepEqual(
 assert.deepEqual(Array.from(runtime.collectChatBadgeLabels(indonesianBadgeRow).details), []);
 runtime.setCustomText('chat-status-labels', '');
 runtime.setCustomText('view-status', '');
+
+const versionPreviewRow = new Element();
+const versionPreviewOuterCell = new Element();
+const versionPreviewActivator = new Element();
+const versionPreviewCellFrame = new Element();
+const versionPreviewTitleContainer = new Element();
+const versionPreviewTitle = new Element();
+const versionPreviewTime = new Element();
+const versionPreviewSecondary = new Element();
+const versionPreviewTimeText = { nodeType: 3, nodeValue: '18:58' };
+const versionPreviewText = {
+    nodeType: 3,
+    nodeValue: 'whatsappWebPlusCompanion-2026.08.13-1.nvda-addon'
+};
+versionPreviewOuterCell.setAttribute('role', 'gridcell');
+versionPreviewActivator.setAttribute('tabindex', '0');
+versionPreviewActivator.setAttribute('aria-selected', 'false');
+versionPreviewTitle.setAttribute('title', 'Ridha Mutiara Rizky');
+versionPreviewTime.nodeType = 1;
+versionPreviewTime.tagName = 'DIV';
+versionPreviewTime.childNodes = [versionPreviewTimeText];
+versionPreviewSecondary.nodeType = 1;
+versionPreviewSecondary.tagName = 'DIV';
+versionPreviewSecondary.childNodes = [versionPreviewText];
+versionPreviewRow.children = [versionPreviewOuterCell];
+versionPreviewOuterCell.children = [versionPreviewActivator, versionPreviewCellFrame];
+versionPreviewRow.queryHandler = selector => {
+    if (selector === ':scope > [role="gridcell"]') return versionPreviewOuterCell;
+    if (selector === runtime.SELECTORS.cellFrame) return versionPreviewCellFrame;
+    if (selector === '[data-testid="cell-frame-title"]') return versionPreviewTitleContainer;
+    return null;
+};
+versionPreviewRow.queryAllHandler = () => [];
+versionPreviewOuterCell.queryHandler = selector =>
+    selector.startsWith(':scope > [tabindex]') ? versionPreviewActivator : null;
+versionPreviewActivator.queryAllHandler = () => [];
+versionPreviewTitleContainer.queryHandler = selector =>
+    selector === '[title]' ? versionPreviewTitle : null;
+versionPreviewCellFrame.queryHandler = selector => {
+    if (selector === '[data-testid="cell-frame-primary-detail"]') return versionPreviewTime;
+    if (selector === '[data-testid="cell-frame-secondary"]') return versionPreviewSecondary;
+    return null;
+};
+runtime.setPrivacy(true);
+assert.equal(runtime.applyChatRowNativeMask(versionPreviewRow), true);
+assert.equal(
+    versionPreviewActivator.getAttribute('aria-label'),
+    'Ridha Mutiara Rizky 18:58 whatsappWebPlusCompanion-2026.08.13-1.nvda-addon',
+    'chat-list privacy preserves the exact versioned filename from the captured DOM'
+);
+versionPreviewText.nodeValue = 'Call +62 812.3456.7890';
+assert.equal(runtime.applyChatRowNativeMask(versionPreviewRow), true);
+assert.equal(
+    versionPreviewActivator.getAttribute('aria-label'),
+    'Ridha Mutiara Rizky 18:58 Call Participant',
+    'chat-list privacy still masks a genuine dotted phone number in the preview'
+);
+runtime.setPrivacy(false);
 
 const nestedTabStop = new Element();
 nestedTabStop.setAttribute('tabindex', '0');

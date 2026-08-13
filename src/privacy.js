@@ -29,6 +29,7 @@ export const _origSetAttribute = Element.prototype.setAttribute;
 export const _origRemoveAttribute = Element.prototype.removeAttribute;
 export const privacyAttributes = new Map();
 const senderDeviceLabels = new Map();
+const documentCaptionLabels = new Map();
 
 export function hasActiveState(el) {
   const current = el && el.getAttribute('aria-current');
@@ -171,11 +172,56 @@ function isPhoneCandidate(raw, offset, source) {
   if (/[A-Za-z0-9_]/.test(before) || /[A-Za-z0-9_]/.test(after)) return false;
 
   const trimmed = raw.trim();
+  if (!trimmed.startsWith('+') && isDatedVersionCandidate(trimmed)) return false;
   const digits = trimmed.replace(/\D/g, '');
   if (digits.length > 16) return false;
+  if (digits.startsWith('000')) return false;
   if (trimmed.startsWith('+') || digits.startsWith('00')) return digits.length >= 7;
-  // ponytail: Broad masking favors privacy; use libphonenumber if false positives matter.
+  // Broad masking favors privacy; use libphonenumber if false positives matter.
   return digits.length >= 9;
+}
+
+function isDatedVersionCandidate(text) {
+  const match = text.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/) ||
+    text.match(/^(\d{4})-(\d{2})-(\d{2})\.(\d+)$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+function getDocumentAttachmentContent(message) {
+  if (!message?.querySelector) return null;
+  const thumb = message.querySelector('[data-testid="document-thumb"]');
+  const filename = normalizeText(
+    message.querySelector('[data-testid="document-thumb"] [dir="auto"]')?.textContent || ''
+  );
+  if (!thumb || !filename) return null;
+  const caption = normalizeText(
+    message.querySelector('[data-testid~="document-caption"]')?.textContent || ''
+  );
+  return { filename, caption };
+}
+
+function preserveLiteralWhileFiltering(text, literal, filter) {
+  const start = literal ? text.indexOf(literal) : -1;
+  if (start < 0) return filter(text);
+  return filter(text.slice(0, start)) + literal + filter(text.slice(start + literal.length));
+}
+
+function insertDocumentCaption(text, filename, caption) {
+  if (!caption || text.includes(caption)) return { text, inserted: false };
+  const filenameStart = text.indexOf(filename);
+  if (filenameStart < 0) return { text, inserted: false };
+  const filenameEnd = filenameStart + filename.length;
+  return {
+    text: `${text.slice(0, filenameEnd)} ${caption}${text.slice(filenameEnd)}`,
+    inserted: true
+  };
 }
 
 function filterMessageIdentities(text, el) {
@@ -183,6 +229,11 @@ function filterMessageIdentities(text, el) {
   if (!message || !message.querySelector) {
     return el ? maskMessagePhones(text, el) : maskMessagePhoneLinks(text);
   }
+
+  const documentAttachment = getDocumentAttachmentContent(message);
+  const filterPhones = value => documentAttachment
+    ? preserveLiteralWhileFiltering(value, documentAttachment.filename, part => maskMessagePhones(part, el))
+    : maskMessagePhones(value, el);
 
   const copyable = message.querySelector('.copyable-text[data-pre-plain-text]');
   const prePlainText = copyable && copyable.getAttribute('data-pre-plain-text');
@@ -228,9 +279,9 @@ function filterMessageIdentities(text, el) {
     : -1;
   if (directQuotedSenderEnd > directQuotedSenderStart) {
     const directQuotedSender = text.slice(directQuotedSenderStart, directQuotedSenderEnd).trim();
-    return maskMessagePhones(text.slice(0, directQuotedSenderStart) +
+    return filterPhones(text.slice(0, directQuotedSenderStart) +
       applyPrivacyFilter(directQuotedSender, 'identity', el) +
-      text.slice(directQuotedSenderEnd), el);
+      text.slice(directQuotedSenderEnd));
   }
 
   const quotedAuthorEl = message.querySelector('[data-testid="quoted-message"] [data-testid="author"][aria-label]');
@@ -263,13 +314,13 @@ function filterMessageIdentities(text, el) {
   }
 
   const currentBody = bodyCandidates.find(candidate => text.includes(candidate));
-  if (!currentBody) return maskMessagePhones(text, el);
+  if (!currentBody) return filterPhones(text);
 
   const currentBodyStart = text.indexOf(currentBody);
   const currentBodyEnd = currentBodyStart + currentBody.length;
-  return maskMessagePhones(text.slice(0, currentBodyStart), el) +
+  return filterPhones(text.slice(0, currentBodyStart)) +
     maskMessagePhones(currentBody, el) +
-    maskMessagePhones(text.slice(currentBodyEnd), el);
+    filterPhones(text.slice(currentBodyEnd));
 }
 
 function applyPrivacyFilter(text, context, el) {
@@ -385,6 +436,13 @@ export function refreshSenderDeviceLabels() {
 export function prepareNamedAttribute(el, name, value) {
   let raw = String(value);
   const isMessageLabel = isSenderDeviceMessageLabel(el, name);
+  const documentState = name === 'aria-label' && documentCaptionLabels.get(el);
+  if (isMessageLabel && documentState &&
+    (raw === documentState.appliedValue || raw === documentState.rawValue)) {
+    raw = documentState.baseValue;
+  } else if (documentState && (!isMessageLabel || raw !== documentState.baseValue)) {
+    documentCaptionLabels.delete(el);
+  }
   const deviceState = name === 'aria-label' && senderDeviceLabels.get(el);
   if (isMessageLabel && deviceState && raw === deviceState.appliedValue) {
     raw = deviceState.baseValue;
@@ -401,6 +459,20 @@ export function prepareNamedAttribute(el, name, value) {
     el.querySelector?.('[data-testid="icon-down-context"][role="button"][aria-label]')) {
     raw = raw.replace(getMessageContextInstructionRegex(), '').trim();
   }
+  const documentBaseValue = raw;
+  let documentCaptionInserted = false;
+  if (isMessageLabel) {
+    const documentAttachment = getDocumentAttachmentContent(el);
+    if (documentAttachment) {
+      const captionResult = insertDocumentCaption(
+        raw,
+        documentAttachment.filename,
+        documentAttachment.caption
+      );
+      raw = captionResult.text;
+      documentCaptionInserted = captionResult.inserted;
+    }
+  }
   const hostLanguage = isMessageLabel && getHostLanguage(el);
   if (hostLanguage) raw = translateDeliveryStatusInText(raw, hostLanguage);
   const baseValue = raw;
@@ -415,6 +487,15 @@ export function prepareNamedAttribute(el, name, value) {
     : raw;
   if (decorated !== raw) senderDeviceLabels.set(el, { baseValue, appliedValue: decorated });
   else senderDeviceLabels.delete(el);
+  if (documentCaptionInserted) {
+    documentCaptionLabels.set(el, {
+      baseValue: documentBaseValue,
+      rawValue: baseValue,
+      appliedValue: decorated
+    });
+  } else {
+    documentCaptionLabels.delete(el);
+  }
   return decorated;
 }
 
@@ -454,9 +535,12 @@ export function cleanNamedAttribute(el, attrName) {
     !isMessageLabel &&
     !hasPendingMessageInstruction &&
     !isSenderDeviceAnnouncementEnabled()) return;
-  const sourceValue = isPrivacyMode && privacyState && value === privacyState.masked && !deviceState
-    ? privacyState.raw
-    : value;
+  const documentState = attrName === 'aria-label' && documentCaptionLabels.get(el);
+  const sourceValue = documentState && value === documentState.appliedValue
+    ? documentState.baseValue
+    : isPrivacyMode && privacyState && value === privacyState.masked && !deviceState
+      ? privacyState.raw
+      : value;
   const cleaned = prepareNamedAttribute(el, attrName, sourceValue);
   if (value !== cleaned) _origSetAttribute.call(el, attrName, cleaned);
 }
@@ -511,6 +595,11 @@ export function forgetPrivacyState(rootEl) {
   for (const el of [...senderDeviceLabels.keys()]) {
     if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
       senderDeviceLabels.delete(el);
+    }
+  }
+  for (const el of [...documentCaptionLabels.keys()]) {
+    if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
+      documentCaptionLabels.delete(el);
     }
   }
 }

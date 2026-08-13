@@ -273,6 +273,15 @@ assert.match(contentButton.getAttribute('aria-label'), /^Participant\./,
   'focus recovery exposes the clean Status summary instead of Document');
 sandbox.StatusAccessibility.releaseStatusAccessibility();
 
+const ordinaryExternalButton = new Element('BUTTON');
+document.activeElement = ordinaryExternalButton;
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(document.activeElement, ordinaryExternalButton,
+  'a connected control outside the Status viewer keeps user-selected focus');
+sandbox.StatusAccessibility.releaseStatusAccessibility();
+document.activeElement = document.body;
+
 pause.setAttribute('aria-label', 'Pause');
 document.activeElement = pause;
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
@@ -736,6 +745,7 @@ mediaButton._expanded = false;
 mediaPause.setAttribute('aria-label', 'Play');
 readMore.clickCalls = 0;
 readMore.clickHandler = () => {};
+document.activeElement = document.body;
 activeRoot = mediaRoot;
 document.statusRoots = [mediaRoot];
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
@@ -984,6 +994,7 @@ aliasPause.clickCalls = 0;
 aliasPause.setAttribute('aria-label', 'Jeda');
 aliasVideo.currentSrc = 'delayed-caption-status.mp4';
 aliasProgress.setAttribute('aria-label', 'Status 1 of 1');
+document.activeElement = document.body;
 activeRoot = aliasRoot;
 document.statusRoots = [aliasRoot];
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();

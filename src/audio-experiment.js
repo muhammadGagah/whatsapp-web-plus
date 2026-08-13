@@ -229,7 +229,7 @@ function handleVoiceCaptureActivation(event) {
 function installVoiceCaptureArming() {
   const hostWindow = globalThis.window;
   if (armingListenersInstalled || typeof hostWindow?.addEventListener !== 'function') return;
-  // ponytail: mic clicks arm here; Alt+M arms synchronously before its synthetic shortcut is dispatched.
+  // Microphone clicks arm here; Alt+M arms synchronously before its synthetic shortcut is dispatched.
   hostWindow.addEventListener('click', handleVoiceCaptureActivation, true);
   armingListenersInstalled = true;
 }

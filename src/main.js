@@ -62,7 +62,60 @@ import {
   scheduleStatusAccessibilitySync,
   startStatusAutoAdvanceGuard
 } from './status-accessibility.js';
+import { isCompanionRuntime } from './companion-bridge.js';
 import { isAutomaticReadingEnabled } from './settings-state.js';
+
+const loaderState = window.__whatsappWebPlusLoader;
+
+function getRequiredNodeHealth() {
+  const companionRuntime = isCompanionRuntime();
+  const bridgeContractVersion = companionRuntime
+    ? globalThis.__whatsappWebPlusCompanionBridge?.contractVersion || 0
+    : 0;
+  const requiredNodes = Object.freeze({
+    settingsMenu: document.querySelectorAll('#wa-plus-settings-menu[role="menu"]').length === 1,
+    statusRegion: document.querySelectorAll(
+      '#wa-plus-live-region[role="status"][aria-live="polite"][aria-atomic="true"]'
+    ).length === 1,
+    messageLog: document.querySelectorAll(
+      '#wa-plus-message-log[role="log"][aria-live="polite"][aria-relevant="additions"][aria-atomic="false"]'
+    ).length === 1,
+    companionBridge: !companionRuntime || bridgeContractVersion === 2
+  });
+  return { companionRuntime, bridgeContractVersion, requiredNodes };
+}
+
+function publishLoaderHealth(state, errorCode = '') {
+  loaderState.state = state;
+  loaderState.errorCode = errorCode;
+  const { companionRuntime, bridgeContractVersion, requiredNodes } = getRequiredNodeHealth();
+  const health = Object.freeze({
+    contractVersion: loaderState.contractVersion,
+    scriptVersion: loaderState.scriptVersion,
+    bundleIdentifier: loaderState.bundleIdentifier || __BUNDLE_IDENTIFIER__,
+    origin: location.origin,
+    topFrame: window === window.top,
+    state,
+    readyStateAtInstall: loaderState.readyStateAtInstall,
+    companionRuntime,
+    requiredNodes,
+    bridgeContractVersion,
+    errorCode
+  });
+  Object.defineProperty(window, '__whatsappWebPlusLoaderHealth', {
+    value: health,
+    writable: false,
+    configurable: true,
+    enumerable: false
+  });
+  return health;
+}
+
+function getStartupErrorCode(error) {
+  if (error instanceof TypeError) return 'startup.type';
+  if (error instanceof RangeError) return 'startup.range';
+  return 'startup.exception';
+}
 
 function onDomReady(fn) {
   if (document.readyState === 'loading') {
@@ -225,21 +278,32 @@ function startCleanupObserver() {
 }
 
 onDomReady(function() {
-  ensureLiveRegion();
-  startSettingsMenu();
-  startCleanupObserver();
-  startStatusAutoAdvanceGuard();
-  updateStyleSheets();
-  window.addEventListener('keydown', handleShortcuts, true);
-  document.addEventListener('keydown', handleMessageGridKeydown, true);
-  document.addEventListener('focusin', event => {
-    rememberFocusedRow(event.target);
+  try {
+    ensureLiveRegion();
+    startSettingsMenu();
+    startCleanupObserver();
+    startStatusAutoAdvanceGuard();
+    updateStyleSheets();
+    window.addEventListener('keydown', handleShortcuts, true);
+    document.addEventListener('keydown', handleMessageGridKeydown, true);
+    document.addEventListener('focusin', event => {
+      rememberFocusedRow(event.target);
+      scheduleStatusAccessibilitySync();
+    });
+    document.addEventListener('mousedown', event => rememberFocusedRow(event.target));
     scheduleStatusAccessibilitySync();
-  });
-  document.addEventListener('mousedown', event => rememberFocusedRow(event.target));
-  scheduleStatusAccessibilitySync();
 
-  if (isChatActivityEnabled()) startStatusTracking();
-  if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
-  console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
+    if (isChatActivityEnabled()) startStatusTracking();
+    if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
+    const { requiredNodes } = getRequiredNodeHealth();
+    const requiredNodesReady = Object.values(requiredNodes).every(Boolean);
+    if (!requiredNodesReady) {
+      publishLoaderHealth('failed', 'startup.requiredNodes');
+      return;
+    }
+    publishLoaderHealth('ready');
+    console.log(`WhatsApp Web Plus script loaded (v${SCRIPT_VERSION})`);
+  } catch (error) {
+    publishLoaderHealth('failed', getStartupErrorCode(error));
+  }
 });

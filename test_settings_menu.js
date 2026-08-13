@@ -130,6 +130,8 @@ let clipboardText = '';
 let fallbackClipboardText = '';
 let openHandler = () => ({});
 let activeModal = null;
+const modalSelector = 'dialog:modal, [role="dialog"][aria-modal="true"], ' +
+    '[role="alertdialog"][aria-modal="true"]';
 const document = {
     head: new Element('head'),
     body: new Element('body'),
@@ -140,12 +142,12 @@ const document = {
         return all.find(element => element.id === id) || null;
     },
     querySelector(selector) {
-        return selector === 'dialog[open], [role="dialog"], [role="alertdialog"]'
+        return selector === modalSelector
             ? activeModal
             : null;
     },
     querySelectorAll(selector) {
-        if (selector === 'dialog[open], [role="dialog"], [role="alertdialog"]') {
+        if (selector === modalSelector) {
             return activeModal ? [activeModal] : [];
         }
         return this.body.querySelectorAll(selector);
@@ -251,6 +253,7 @@ resize();
 assert.equal(document.activeElement, invoker);
 activeModal = new Element('div');
 activeModal.setAttribute('role', 'dialog');
+activeModal.setAttribute('aria-modal', 'true');
 const modalOpenAttempt = settingsShortcut();
 keydown(modalOpenAttempt);
 assert.equal(modalOpenAttempt.prevented, false);
@@ -503,7 +506,7 @@ assert.equal(updateItem.getAttribute('aria-checked'), null);
 assert.equal(updateItem.getAttribute('aria-pressed'), null);
 assert.equal(
     updateItem.children[1].textContent,
-    'Open WhatsApp Web Plus update in Tampermonkey'
+    'Open the WhatsApp Web Plus installer'
 );
 const toggleCloseEvent = settingsShortcut();
 keydown(toggleCloseEvent);
@@ -532,6 +535,7 @@ const focusIn = windowListeners.get('focusin');
 keydown(settingsShortcut());
 activeModal = new Element('div');
 activeModal.setAttribute('role', 'dialog');
+activeModal.setAttribute('aria-modal', 'true');
 const modalButton = new Element('button');
 activeModal.appendChild(modalButton);
 document.body.appendChild(activeModal);
@@ -546,6 +550,7 @@ document.activeElement = invoker;
 keydown(settingsShortcut());
 activeModal = new Element('div');
 activeModal.setAttribute('role', 'dialog');
+activeModal.setAttribute('aria-modal', 'true');
 const modalShortcutButton = new Element('button');
 activeModal.appendChild(modalShortcutButton);
 document.body.appendChild(activeModal);
@@ -766,10 +771,20 @@ const immediateAlert = scheduledTimers
 assert.ok(immediateAlert);
 immediateAlert.callback();
 const alert = document.getElementById('wa-plus-settings-alert');
-assert.equal(alert.getAttribute('role'), 'alert');
+assert.equal(alert.getAttribute('role'), null);
 assert.equal(alert.lang, 'id');
 assert.equal(alert.dir, 'ltr');
 assert.equal(alert.textContent, 'Pengaturan tidak dapat disimpan.');
+const saveErrorAnnouncement = scheduledTimers
+    .slice(saveErrorTimerStart)
+    .filter(timer => timer.delay === 0 && !timer.canceled)
+    .at(-1);
+assert.ok(saveErrorAnnouncement);
+saveErrorAnnouncement.callback();
+assert.equal(
+    document.getElementById('wa-plus-live-region').textContent,
+    'Pengaturan tidak dapat disimpan.'
+);
 assert.doesNotMatch(output, /\.wa-plus-settings-alert:empty\s*\{[^}]*display:\s*none/);
 assert.match(output, /\.wa-plus-settings-alert:empty\s*\{[^}]*clip:\s*rect\(0,\s*0,\s*0,\s*0\)/);
 assert.equal(scheduledTimers.slice(saveErrorTimerStart).some(timer => timer.delay === 6000), false);
@@ -790,7 +805,7 @@ function runUpdatePageChecks() {
     openAndFocusUpdateItem();
     assert.equal(
         updateItem.children[1].textContent,
-        'Buka pembaruan WhatsApp Web Plus di Tampermonkey'
+        'Buka pemasang WhatsApp Web Plus'
     );
     keydown(keyboardEvent({ key: 'Home' }));
     assert.equal(document.activeElement.dataset.action, 'language');
@@ -822,7 +837,7 @@ function runUpdatePageChecks() {
     openAndFocusUpdateItem();
     assert.equal(
         updateItem.children[1].textContent,
-        'Open WhatsApp Web Plus update in Tampermonkey'
+        'Open the WhatsApp Web Plus installer'
     );
     const blockedTimer = scheduledTimers.length;
     keydown(keyboardEvent({ key: ' ' }));
@@ -832,11 +847,12 @@ function runUpdatePageChecks() {
     assert.equal(timers.length, 1);
     timers[0].callback();
     const liveRegion = document.getElementById('wa-plus-live-region');
-    assert.equal(liveRegion.textContent, 'Could not open the Tampermonkey update page');
+    assert.equal(liveRegion.textContent, 'Could not open the WhatsApp Web Plus installer in a new browser tab');
     assert.equal(document.querySelectorAll('[role="status"]').length, 1);
 }
 
 (async () => {
+if (!rootMenu.hidden) keydown(settingsShortcut());
 runUpdatePageChecks();
 const voiceDiagnosticTimerStart = scheduledTimers.length;
 document.activeElement = invoker;
@@ -992,6 +1008,31 @@ assert.equal(queuedErrorTimer.canceled, true);
 assert.equal(document.activeElement, document.body);
 invoker.isConnected = true;
 assert.doesNotMatch(output, /window\.prompt|promptCustomText/);
+
+rootMenu.remove();
+const companionContext = {
+    ...context,
+    __whatsappWebPlusBundleHash: 'a'.repeat(64)
+};
+vm.runInNewContext(output, companionContext);
+assert.equal(companionContext.__whatsappWebPlusCompanionBridge.contractVersion, 2);
+companionContext.SettingsMenu.startSettingsMenu();
+document.activeElement = invoker;
+const companionKeydown = windowListeners.get('keydown');
+companionKeydown(settingsShortcut());
+const companionMenu = document.getElementById('wa-plus-settings-menu');
+const companionUpdateItem = companionMenu.querySelectorAll('[role="menuitem"]')
+    .find(item => item.dataset.action === 'open-update');
+assert.ok(companionUpdateItem);
+assert.equal(companionUpdateItem.hidden, true);
+companionKeydown(keyboardEvent({ key: 'End' }));
+assert.notEqual(document.activeElement, companionUpdateItem);
+assert.equal(
+    companionMenu.querySelectorAll('[role="menuitem"]')
+        .filter(item => !item.hidden)
+        .includes(companionUpdateItem),
+    false
+);
 console.log('settings menu interaction checks passed');
 })().catch(error => {
     console.error(error);

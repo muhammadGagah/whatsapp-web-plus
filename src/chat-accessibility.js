@@ -14,6 +14,7 @@ import {
   hasActiveState,
   hasDirectMetaAISender,
   isStatusTabActive,
+  isPrivacyModeEnabled,
   privacyAttributes
 } from './privacy.js';
 import {
@@ -35,6 +36,10 @@ import {
   t,
   tForLanguage
 } from './settings-state.js';
+import {
+  invalidateCompanionAnnouncements,
+  publishCompanionAnnouncement
+} from './companion-bridge.js';
 
 let lastFocusedChatRowNode = null;
 let lastFocusedMessageNode = null;
@@ -151,18 +156,16 @@ function getChatPreviewIconLabel(el) {
   if (!identity) return '';
   if (CHAT_LABEL_NOISE_RE.ignoredIconIdentity.test(identity)) return '';
 
+  const nativeLabel = normalizeChatLabelPart(
+    el.getAttribute('aria-label') ||
+    el.getAttribute('title') ||
+    el.querySelector?.('title')?.textContent ||
+    ''
+  );
   const hostLanguage = getSupportedLanguage(document.documentElement?.lang);
-  if (!hostLanguage) {
-    return cleanString(
-      el.getAttribute('aria-label') ||
-      el.getAttribute('title') ||
-      el.querySelector?.('title')?.textContent ||
-      '',
-      false
-    );
-  }
+  if (!hostLanguage) return nativeLabel;
   const match = CHAT_PREVIEW_ICON_LABELS.find(item => item.pattern.test(identity));
-  return match ? tForLanguage(match.labelKey, hostLanguage) : '';
+  return match ? tForLanguage(match.labelKey, hostLanguage) : nativeLabel;
 }
 
 function collectChatTextParts(root, parts) {
@@ -299,9 +302,18 @@ export function applyOwnedMessageRole(el, role, owner) {
     state = null;
   }
   const currentRole = (el.getAttribute('role') || '').trim();
-  if (currentRole && currentRole !== role) return false;
+  if (currentRole && currentRole !== role &&
+    !isReplaceableMessageSection(el, role, currentRole, owner)) return false;
   applyOwnedAttribute(el, 'role', role, owner);
   return true;
+}
+
+function isReplaceableMessageSection(el, requestedRole, currentRole, owner) {
+  return owner === OWNERS.messageCell &&
+    requestedRole === 'gridcell' &&
+    currentRole === 'section' &&
+    el.matches?.('.focusable-list-item') &&
+    !!el.closest?.(SELECTORS.conversationMessages);
 }
 
 function releaseMessageAttributes(owner, keep) {
@@ -319,7 +331,8 @@ function canApplyOwnedMessageRole(el, role, owner) {
   const state = ownedAttributes.get(el)?.get('role');
   const currentRole = (el.getAttribute('role') || '').trim();
   return !currentRole || currentRole === role ||
-    (state?.owner === owner && currentRole === state.appliedValue);
+    (state?.owner === owner && currentRole === state.appliedValue) ||
+    isReplaceableMessageSection(el, role, currentRole, owner);
 }
 
 function ensureMessageGridLabel() {
@@ -369,11 +382,16 @@ export function handleMessageGridKeydown(event) {
   const index = cells.indexOf(cell);
   if (index < 0) return false;
 
+  if ((event.key === 'ArrowUp' && index === 0) ||
+    (event.key === 'ArrowDown' && index === cells.length - 1)) {
+    return false;
+  }
+
   const targetIndex = event.key === 'Home'
     ? 0
     : event.key === 'End'
       ? cells.length - 1
-      : Math.max(0, Math.min(cells.length - 1, index + (event.key === 'ArrowUp' ? -1 : 1)));
+      : index + (event.key === 'ArrowUp' ? -1 : 1);
   const target = cells[targetIndex];
   setMessageGridTabStop(cells, target);
   target.focus({ preventScroll: true });
@@ -751,6 +769,12 @@ function appendMessages(messages, generation) {
     const entry = document.createElement('div');
     entry.textContent = text;
     messageLog.appendChild(entry);
+    publishCompanionAnnouncement({
+      source: 'message-log',
+      language: getLanguage(),
+      privacy: isPrivacyModeEnabled(),
+      text
+    });
   });
   while (messageLog.childElementCount > MESSAGE_LOG_LIMIT) {
     messageLog.removeChild(messageLog.firstElementChild);
@@ -760,6 +784,7 @@ function appendMessages(messages, generation) {
 export function clearMessageLog() {
   const messageLog = document.getElementById('wa-plus-message-log');
   if (messageLog) messageLog.textContent = '';
+  invalidateCompanionAnnouncements('message-log-cleared', 'message-log');
 }
 
 export function clearStatusRegion() {
@@ -768,6 +793,7 @@ export function clearStatusRegion() {
   userAnnouncementUntil = 0;
   const liveRegion = document.getElementById('wa-plus-live-region');
   if (liveRegion) liveRegion.textContent = '';
+  invalidateCompanionAnnouncements('status-cleared', 'status');
 }
 
 export function invalidatePassiveAnnouncements() {
@@ -783,6 +809,12 @@ export function announce(text) {
   liveRegion.textContent = '';
   announcementTimer = setTimeout(() => {
     liveRegion.textContent = text;
+    publishCompanionAnnouncement({
+      source: 'status',
+      language: getLanguage(),
+      privacy: isPrivacyModeEnabled(),
+      text
+    });
     announcementTimer = setTimeout(() => {
       liveRegion.textContent = '';
     }, 3000);
@@ -871,7 +903,7 @@ export function getMessageRows() {
 export function focusItem(el) {
   if (!el || !el.isConnected) return false;
   if (!el.hasAttribute('tabindex') && el.tabIndex < 0) {
-    _origSetAttribute.call(el, 'tabindex', '-1');
+    applyOwnedAttribute(el, 'tabindex', '-1', OWNERS.temporaryFocus);
   }
   el.focus({ preventScroll: true });
   return document.activeElement === el;
@@ -1048,7 +1080,8 @@ export function isRenderedElement(el) {
 }
 
 export function getActiveModal(preferredTarget = document.activeElement) {
-  const selector = 'dialog[open], [role="dialog"], [role="alertdialog"]';
+  const selector = 'dialog:modal, [role="dialog"][aria-modal="true"], ' +
+    '[role="alertdialog"][aria-modal="true"]';
   const dialogs = Array.from(document.querySelectorAll?.(selector) || []).filter(isRenderedElement);
   if (preferredTarget) {
     const containing = [...dialogs].reverse().find(dialog => dialog.contains?.(preferredTarget));
