@@ -27,7 +27,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         applyChatRowDescendantMasks, collectChatBadgeLabels,
         getChatPreviewIconLabel,
         applyChatRowNativeMask, applyMessageGridExperiment, handleMessageGridKeydown,
-        focusChatRow, getPreferredChatRow,
+        focusChatRow, getPreferredChatRow, getChatListRows,
         getActiveModal,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
         getRoleFixRoot, scheduleRoleFix,
@@ -40,6 +40,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         setUnreadTarget(value) { unreadTarget = value; },
         setStatusTracking(value) { isStatusTracking = value; },
         setLanguage, setCustomText, getNavSelector, getScrollToBottomSelector,
+        setAnnouncementReduction,
         setOpenChatsAtFirstUnread, setShortcutRemap,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
         getCompanionBridge() { return globalThis.__whatsappWebPlusCompanionBridge; },
@@ -1308,6 +1309,58 @@ assert.equal(event.immediateStopped, true);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.pop();
 
+const nonChatAltOneTabs = [
+    [runtime.SELECTORS.navStatus, 'Status'],
+    [runtime.SELECTORS.navCommunities, 'Communities'],
+    [runtime.SELECTORS.navChannels, 'Channels'],
+    [runtime.SELECTORS.navMetaAI, 'Meta AI']
+];
+for (const [selector, tabName] of nonChatAltOneTabs) {
+    const activeTab = new Element();
+    activeTab.setAttribute('aria-pressed', 'true');
+    activeTab.setAttribute('data-navbar-item-selected', 'true');
+    selectorResults.set(selector, activeTab);
+    runtime.clearStatusRegion();
+    scheduledTimeouts.clear();
+    scheduledFrames.length = 0;
+    const focusBeforeAltOne = document.activeElement;
+    event = makeEvent({ altKey: true, code: 'Digit1', target: activeTab });
+    runtime.handleShortcuts(event);
+    assert.equal(event.prevented, true);
+    assert.equal(event.immediateStopped, true);
+    assert.equal(scheduledFrames.length, 0);
+    assert.equal(scheduledTimeouts.size, 1);
+    assert.equal(document.activeElement, focusBeforeAltOne);
+    const [timerId, announceUnavailable] = Array.from(scheduledTimeouts.entries()).at(-1);
+    scheduledTimeouts.delete(timerId);
+    announceUnavailable();
+    assert.equal(
+        liveRegion.textContent,
+        `Alt 1 unavailable in ${tabName}. Return to Chats with Alt Shift 1.`
+    );
+    runtime.clearStatusRegion();
+    selectorResults.delete(selector);
+}
+
+runtime.setLanguage('id');
+const activeStatusTab = new Element();
+activeStatusTab.setAttribute('aria-pressed', 'true');
+selectorResults.set(runtime.SELECTORS.navStatus, activeStatusTab);
+scheduledTimeouts.clear();
+event = makeEvent({ altKey: true, code: 'Digit1', target: activeStatusTab });
+runtime.handleShortcuts(event);
+assert.equal(scheduledTimeouts.size, 1);
+const [localizedTimerId, announceLocalizedUnavailable] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(localizedTimerId);
+announceLocalizedUnavailable();
+assert.equal(
+    liveRegion.textContent,
+    'Alt 1 tidak tersedia di Status. Kembali ke Chat dengan Alt Shift 1.'
+);
+runtime.clearStatusRegion();
+selectorResults.delete(runtime.SELECTORS.navStatus);
+runtime.setLanguage('en');
+
 const audioPlayerClose = new Element();
 audioPlayerClose.clickHandler = () => { audioPlayerClose.isConnected = false; };
 const audioPlayerCloseSelector = runtime.SELECTORS.audioPlayerClose;
@@ -1594,6 +1647,64 @@ assert.equal(outerGridcell.getAttribute('aria-label'), 'Focused chat');
 document.activeElement = null;
 assert.equal(runtime.focusChatRow(focusRow), true);
 assert.equal(document.activeElement, null);
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, activator);
+
+runtime.setAnnouncementReduction(false);
+const nativeShortcutSide = new Element();
+const nativeShortcutList = new Element();
+const nativeShortcutRow = new Element();
+const nativeShortcutGridcell = new Element();
+const nativeShortcutActivator = new Element();
+const nativeShortcutCellFrame = new Element();
+nativeShortcutList.rect = { top: 0, bottom: 400, left: 0, right: 400, width: 400, height: 400 };
+nativeShortcutRow.rect = { top: 0, bottom: 76, left: 0, right: 400, width: 400, height: 76 };
+nativeShortcutRow.setAttribute('role', 'row');
+nativeShortcutRow.setAttribute('aria-selected', 'true');
+nativeShortcutGridcell.setAttribute('role', 'gridcell');
+nativeShortcutActivator.setAttribute('tabindex', '0');
+nativeShortcutActivator.setAttribute('aria-selected', 'true');
+nativeShortcutSide.queryHandler = selector => selector === runtime.SELECTORS.chatList
+    ? nativeShortcutList
+    : null;
+nativeShortcutList.queryAllHandler = () => [nativeShortcutRow];
+nativeShortcutList.closestHandler = selector => selector === runtime.SELECTORS.chatListScroller
+    ? nativeShortcutList
+    : null;
+nativeShortcutRow.closestHandler = selector => selector === runtime.SELECTORS.chatListInSide
+    ? nativeShortcutList
+    : null;
+nativeShortcutRow.queryAllHandler = () => [];
+nativeShortcutRow.queryHandler = selector => {
+    if (selector === ':scope > [role="gridcell"]') return nativeShortcutGridcell;
+    if (selector === runtime.SELECTORS.cellFrame) return nativeShortcutCellFrame;
+    return null;
+};
+nativeShortcutGridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]')
+    ? nativeShortcutActivator
+    : null;
+nativeShortcutActivator.queryAllHandler = () => [];
+selectorResults.set(runtime.SELECTORS.side, nativeShortcutSide);
+const nativeShortcutRows = runtime.getChatListRows();
+assert.equal(nativeShortcutRows.length, 1);
+assert.equal(nativeShortcutRows[0], nativeShortcutRow);
+scheduledFrames.length = 0;
+document.activeElement = new Element();
+event = makeEvent({ altKey: true, code: 'Digit1', target: document.activeElement });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, nativeShortcutActivator);
+assert.equal(nativeShortcutActivator.getAttribute('aria-label'), null);
+selectorResults.delete(runtime.SELECTORS.side);
+runtime.setAnnouncementReduction(true);
+assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
+document.activeElement = null;
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(focusRow), true);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, activator);

@@ -312,6 +312,7 @@
     couldNotFocus: "{name} could not be focused",
     chatListEmpty: "Chat list empty",
     chatNotReady: "Chat is not ready",
+    alt1UnavailableInTab: "Alt 1 unavailable in {tab}. Return to Chats with Alt Shift 1.",
     noMessages: "No messages",
     messageNotReady: "Message is not ready",
     unreadHistoryOnly: "Alt 3 only works in the message history",
@@ -481,6 +482,7 @@
     couldNotFocus: "{name} tidak dapat difokuskan",
     chatListEmpty: "Daftar chat kosong",
     chatNotReady: "Chat belum siap",
+    alt1UnavailableInTab: "Alt 1 tidak tersedia di {tab}. Kembali ke Chat dengan Alt Shift 1.",
     noMessages: "Tidak ada pesan",
     messageNotReady: "Pesan belum siap",
     unreadHistoryOnly: "Alt 3 hanya berfungsi di riwayat pesan",
@@ -2077,7 +2079,7 @@
     const focusTarget = (retried = false) => {
       if (!shouldContinue() || getActiveModal()) return false;
       const currentRow = row.isConnected ? row : findChatRowByTitle(getChatListRows(), rowTitle);
-      if (!currentRow || !applyChatRowNativeMask(currentRow)) {
+      if (!currentRow) {
         if (!retried) {
           schedule(() => focusTarget(true));
         } else if (onFailure) {
@@ -2085,6 +2087,7 @@
         }
         return !retried;
       }
+      applyChatRowNativeMask(currentRow);
       const currentTarget = getChatRowActivator(currentRow);
       if (!currentTarget) {
         if (onFailure) onFailure();
@@ -5170,10 +5173,28 @@
           announce(t(rows.length === 0 ? "chatListEmpty" : "chatNotReady"));
         }
       };
-      if (target && applyChatRowNativeMask(target) && focusChatRow(target, retryOrAnnounce, () => isFocusRequestCurrent(request))) return;
+      if (target && focusChatRow(target, retryOrAnnounce, () => isFocusRequestCurrent(request))) return;
       retryOrAnnounce();
     };
     tryFocus(1);
+  }
+  function getActiveNonChatTabLabelKey() {
+    const tabs = [
+      ["navStatus", "status"],
+      ["navCommunities", "communities"],
+      ["navChannels", "channels"],
+      ["navMetaAI", "metaAi"]
+    ];
+    const activeTab = tabs.find(([selectorKey]) => hasActiveState(getNavButton(selectorKey)));
+    return activeTab ? activeTab[1] : "";
+  }
+  function handleFocusChatListShortcut(origin) {
+    const activeTabLabelKey = getActiveNonChatTabLabelKey();
+    if (activeTabLabelKey) {
+      announce(t("alt1UnavailableInTab", { tab: t(activeTabLabelKey) }));
+      return;
+    }
+    focusChatListShortcut(origin);
   }
   function focusLastMessageShortcut() {
     const request = beginFocusRequest();
@@ -5448,7 +5469,7 @@
     if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return false;
     if (remapWhatsAppShortcut(e)) return true;
     const shortcuts = {
-      Digit1: focusChatListShortcut,
+      Digit1: handleFocusChatListShortcut,
       Digit2: focusLastMessageShortcut,
       Digit3: jumpToUnreadShortcut,
       Digit0: closeMediaPlayerShortcut,

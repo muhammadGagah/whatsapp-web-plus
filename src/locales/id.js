@@ -136,6 +136,7 @@ export default {
   couldNotFocus: '{name} tidak dapat difokuskan',
   chatListEmpty: 'Daftar chat kosong',
   chatNotReady: 'Chat belum siap',
+  alt1UnavailableInTab: 'Alt 1 tidak tersedia di {tab}. Kembali ke Chat dengan Alt Shift 1.',
   noMessages: 'Tidak ada pesan',
   messageNotReady: 'Pesan belum siap',
   unreadHistoryOnly: 'Alt 3 hanya berfungsi di riwayat pesan',

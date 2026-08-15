@@ -493,7 +493,7 @@ export function focusChatRow(row, onFailure, shouldContinue = () => true) {
     const currentRow = row.isConnected
       ? row
       : findChatRowByTitle(getChatListRows(), rowTitle);
-    if (!currentRow || !applyChatRowNativeMask(currentRow)) {
+    if (!currentRow) {
       if (!retried) {
         schedule(() => focusTarget(true));
       } else if (onFailure) {
@@ -501,6 +501,9 @@ export function focusChatRow(row, onFailure, shouldContinue = () => true) {
       }
       return !retried;
     }
+    // Accessible-name cleanup is optional. Keep the native row focusable when
+    // announcement reduction is disabled or WhatsApp's structure cannot be masked.
+    applyChatRowNativeMask(currentRow);
     const currentTarget = getChatRowActivator(currentRow);
     if (!currentTarget) {
       if (onFailure) onFailure();

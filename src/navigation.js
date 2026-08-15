@@ -21,7 +21,6 @@ import {
 import {
   announce,
   announcePassiveMessages,
-  applyChatRowNativeMask,
   clearRememberedChatRow,
   clearRememberedMessageRow,
   clearMessageLog,
@@ -812,12 +811,32 @@ export function focusChatListShortcut(origin = document.activeElement) {
       }
     };
 
-    if (target && applyChatRowNativeMask(target) &&
+    if (target &&
       focusChatRow(target, retryOrAnnounce, () => isFocusRequestCurrent(request))) return;
     retryOrAnnounce();
   };
 
   tryFocus(1);
+}
+
+function getActiveNonChatTabLabelKey() {
+  const tabs = [
+    ['navStatus', 'status'],
+    ['navCommunities', 'communities'],
+    ['navChannels', 'channels'],
+    ['navMetaAI', 'metaAi']
+  ];
+  const activeTab = tabs.find(([selectorKey]) => hasActiveState(getNavButton(selectorKey)));
+  return activeTab ? activeTab[1] : '';
+}
+
+function handleFocusChatListShortcut(origin) {
+  const activeTabLabelKey = getActiveNonChatTabLabelKey();
+  if (activeTabLabelKey) {
+    announce(t('alt1UnavailableInTab', { tab: t(activeTabLabelKey) }));
+    return;
+  }
+  focusChatListShortcut(origin);
 }
 
 export function focusLastMessageShortcut() {
@@ -1142,7 +1161,7 @@ function handleAltShortcut(e) {
   if (remapWhatsAppShortcut(e)) return true;
 
   const shortcuts = {
-    Digit1: focusChatListShortcut,
+    Digit1: handleFocusChatListShortcut,
     Digit2: focusLastMessageShortcut,
     Digit3: jumpToUnreadShortcut,
     Digit0: closeMediaPlayerShortcut,

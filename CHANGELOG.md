@@ -2,6 +2,12 @@
 
 This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.75 reflect the corresponding source in `src/`.
 
+## Unreleased
+
+### Fixed
+
+- Kept `Alt + 1` able to focus the native chat list when announcement reduction is disabled, and added localized guidance when the shortcut is used from Status, Communities, Channels, or Meta AI.
+
 ## 2.6.75 - 2026-08-13
 
 ### Fixed
