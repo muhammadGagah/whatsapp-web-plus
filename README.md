@@ -4,7 +4,7 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current version is **2.6.75**. Read the [WhatsApp Web Plus 2.6.75 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.76**. Read the [WhatsApp Web Plus 2.6.76 changes and earlier release history](CHANGELOG.md).
 
 ## NVDA add-on
 

@@ -136,6 +136,7 @@ export default {
   couldNotFocus: '{name} could not be focused',
   chatListEmpty: 'Chat list empty',
   chatNotReady: 'Chat is not ready',
+  alt1UnavailableInTab: 'Alt 1 unavailable in {tab}. Return to Chats with Alt Shift 1.',
   noMessages: 'No messages',
   messageNotReady: 'Message is not ready',
   unreadHistoryOnly: 'Alt 3 only works in the message history',

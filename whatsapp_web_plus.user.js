@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.75
+// @version      2.6.76
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.75",
+    scriptVersion: "2.6.76",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.75";
+  var SCRIPT_VERSION = "2.6.76";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -120,7 +120,7 @@
     chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"], #side [aria-label="Daftar chat"][role="grid"]',
     chatSearch: '#side input[role="textbox"][type="text"], #side [data-testid="chat-list-search-container"] input',
     conversationMessages: '[data-testid="conversation-panel-messages"]',
-    cellFrame: '[data-testid="cell-frame-container"]'
+    cellFrame: '[data-testid="cell-frame-container"], [data-testid="message-yourself-row"]'
   });
   var OWNERS = Object.freeze({
     chatLabel: "chat-label",
@@ -312,6 +312,7 @@
     couldNotFocus: "{name} could not be focused",
     chatListEmpty: "Chat list empty",
     chatNotReady: "Chat is not ready",
+    alt1UnavailableInTab: "Alt 1 unavailable in {tab}. Return to Chats with Alt Shift 1.",
     noMessages: "No messages",
     messageNotReady: "Message is not ready",
     unreadHistoryOnly: "Alt 3 only works in the message history",
@@ -481,6 +482,7 @@
     couldNotFocus: "{name} tidak dapat difokuskan",
     chatListEmpty: "Daftar chat kosong",
     chatNotReady: "Chat belum siap",
+    alt1UnavailableInTab: "Alt 1 tidak tersedia di {tab}. Kembali ke Chat dengan Alt Shift 1.",
     noMessages: "Tidak ada pesan",
     messageNotReady: "Pesan belum siap",
     unreadHistoryOnly: "Alt 3 hanya berfungsi di riwayat pesan",
@@ -1602,9 +1604,62 @@
   var BRIDGE_QUEUE_LIMIT = 50;
   var BRIDGE_TEXT_LIMIT = 1800;
   var VALID_SOURCE = /* @__PURE__ */ new Set(["status", "message-log", "alert"]);
+  var RANDOM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  var CHAT_TITLE_SELECTOR = [
+    'header [data-testid="conversation-info-header-chat-title"]',
+    'header [data-testid="chat-title"]',
+    "header [title]"
+  ].join(", ");
   var COMPANION_RUNTIME = /^[0-9a-f]{64}$/i.test(
     String(globalThis.__whatsappWebPlusBundleHash || "")
   );
+  function createRandomToken() {
+    const cryptoApi = globalThis.crypto;
+    if (typeof cryptoApi?.randomUUID === "function") {
+      try {
+        const token = String(cryptoApi.randomUUID());
+        if (RANDOM_TOKEN_PATTERN.test(token)) return token;
+      } catch {
+      }
+    }
+    if (typeof cryptoApi?.getRandomValues !== "function") return "";
+    try {
+      const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+      bytes[6] = bytes[6] & 15 | 64;
+      bytes[8] = bytes[8] & 63 | 128;
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      return [
+        hex.slice(0, 8),
+        hex.slice(8, 12),
+        hex.slice(12, 16),
+        hex.slice(16, 20),
+        hex.slice(20)
+      ].join("-");
+    } catch {
+      return "";
+    }
+  }
+  function readContextState() {
+    const documentRef = globalThis.document;
+    const main = documentRef?.querySelector?.("#main") || null;
+    const titleElement = main?.querySelector?.(CHAT_TITLE_SELECTOR) || null;
+    const title = String(
+      titleElement?.getAttribute?.("title") || titleElement?.textContent || ""
+    ).trim();
+    let language2 = "";
+    let privacy = false;
+    try {
+      language2 = String(globalThis.localStorage?.getItem?.("wa-plus-language") || "").trim();
+      privacy = globalThis.localStorage?.getItem?.("wa-plus-privacy") === "true";
+    } catch {
+    }
+    if (!language2) {
+      language2 = String(
+        documentRef?.documentElement?.getAttribute?.("lang") || documentRef?.documentElement?.lang || globalThis.navigator?.language || ""
+      ).trim();
+    }
+    return { main, title, language: language2, privacy };
+  }
   function normalizeText2(text) {
     const value = String(text || "").trim();
     if (value.length <= BRIDGE_TEXT_LIMIT) return value;
@@ -1620,18 +1675,24 @@
   }
   function createBridge() {
     const queue = [];
-    const sessionToken = String(globalThis.__whatsappWebPlusLoader?.initializedAt ?? 0);
+    const sessionToken = createRandomToken();
+    let contextToken = createRandomToken();
+    if (!sessionToken || !contextToken) return null;
     let sequence = 0;
     let generation2 = 1;
     let dropped = 0;
     let lastInvalidation = "startup";
     let invalidatedSource = "";
+    let previousContext = null;
     const publish = ({ text, source, language: language2, privacy = false } = {}) => {
+      syncContext();
       const value = normalizeText2(text);
       if (!value || !VALID_SOURCE.has(source)) return null;
       const entry = Object.freeze({
         sequence: ++sequence,
         generation: generation2,
+        sessionToken,
+        context: contextToken,
         source,
         language: normalizeLanguage(language2),
         privacy: Boolean(privacy),
@@ -1659,7 +1720,26 @@
       invalidatedSource = scopedSource;
       return generation2;
     };
+    const syncContext = () => {
+      const current2 = readContextState();
+      if (!previousContext) {
+        previousContext = current2;
+        return false;
+      }
+      let reason = "";
+      if (current2.privacy !== previousContext.privacy) reason = "privacy-changed";
+      else if (current2.language !== previousContext.language) reason = "language-changed";
+      else if (current2.main !== previousContext.main || current2.title !== previousContext.title) {
+        reason = "chat-context-changed";
+      }
+      previousContext = current2;
+      if (!reason) return false;
+      contextToken = createRandomToken() || `${sessionToken}:${generation2 + 1}`;
+      invalidate(reason);
+      return true;
+    };
     const readSince = (lastSequence = 0, expectedGeneration = generation2) => {
+      syncContext();
       const cursor = Number.isSafeInteger(lastSequence) && lastSequence >= 0 ? lastSequence : 0;
       const requestedGeneration = Number.isSafeInteger(expectedGeneration) && expectedGeneration > 0 ? expectedGeneration : generation2;
       const invalidated = requestedGeneration !== generation2;
@@ -1670,6 +1750,7 @@
         contractVersion: BRIDGE_CONTRACT_VERSION,
         sessionToken,
         generation: generation2,
+        context: contextToken,
         invalidated,
         lastInvalidation,
         invalidatedSource,
@@ -1679,6 +1760,7 @@
         entries: Object.freeze(entries)
       });
     };
+    syncContext();
     return Object.freeze({
       contractVersion: BRIDGE_CONTRACT_VERSION,
       publish,
@@ -1689,6 +1771,7 @@
       },
       // Compatibility for Companion 0.1.0. Newer add-ons should use readSince().
       take() {
+        syncContext();
         const entries = queue.slice();
         queue.length = 0;
         return entries;
@@ -1700,6 +1783,7 @@
     let bridge = globalThis[BRIDGE_PROPERTY];
     if (!bridge) {
       bridge = createBridge();
+      if (!bridge) return null;
       Object.defineProperty(globalThis, BRIDGE_PROPERTY, {
         value: bridge,
         writable: false,
@@ -1886,6 +1970,7 @@
     const badges = collectChatBadgeLabels(row);
     badges.unread.forEach((label) => addChatLabelPart(parts, label));
     addChatLabelPart(parts, getChatRowTitle(row));
+    collectChatTextParts(cellFrame.querySelector('[data-testid="you-label"]'), parts);
     collectChatTextParts(cellFrame.querySelector('[data-testid="cell-frame-primary-detail"]'), parts);
     collectChatTextParts(cellFrame.querySelector('[data-testid="cell-frame-secondary"]'), parts);
     badges.status.forEach((label) => addChatLabelPart(parts, label));
@@ -2077,7 +2162,7 @@
     const focusTarget = (retried = false) => {
       if (!shouldContinue() || getActiveModal()) return false;
       const currentRow = row.isConnected ? row : findChatRowByTitle(getChatListRows(), rowTitle);
-      if (!currentRow || !applyChatRowNativeMask(currentRow)) {
+      if (!currentRow) {
         if (!retried) {
           schedule(() => focusTarget(true));
         } else if (onFailure) {
@@ -2085,6 +2170,7 @@
         }
         return !retried;
       }
+      applyChatRowNativeMask(currentRow);
       const currentTarget = getChatRowActivator(currentRow);
       if (!currentTarget) {
         if (onFailure) onFailure();
@@ -5170,10 +5256,28 @@
           announce(t(rows.length === 0 ? "chatListEmpty" : "chatNotReady"));
         }
       };
-      if (target && applyChatRowNativeMask(target) && focusChatRow(target, retryOrAnnounce, () => isFocusRequestCurrent(request))) return;
+      if (target && focusChatRow(target, retryOrAnnounce, () => isFocusRequestCurrent(request))) return;
       retryOrAnnounce();
     };
     tryFocus(1);
+  }
+  function getActiveNonChatTabLabelKey() {
+    const tabs = [
+      ["navStatus", "status"],
+      ["navCommunities", "communities"],
+      ["navChannels", "channels"],
+      ["navMetaAI", "metaAi"]
+    ];
+    const activeTab = tabs.find(([selectorKey]) => hasActiveState(getNavButton(selectorKey)));
+    return activeTab ? activeTab[1] : "";
+  }
+  function handleFocusChatListShortcut(origin) {
+    const activeTabLabelKey = getActiveNonChatTabLabelKey();
+    if (activeTabLabelKey) {
+      announce(t("alt1UnavailableInTab", { tab: t(activeTabLabelKey) }));
+      return;
+    }
+    focusChatListShortcut(origin);
   }
   function focusLastMessageShortcut() {
     const request = beginFocusRequest();
@@ -5448,7 +5552,7 @@
     if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return false;
     if (remapWhatsAppShortcut(e)) return true;
     const shortcuts = {
-      Digit1: focusChatListShortcut,
+      Digit1: handleFocusChatListShortcut,
       Digit2: focusLastMessageShortcut,
       Digit3: jumpToUnreadShortcut,
       Digit0: closeMediaPlayerShortcut,
@@ -6509,6 +6613,179 @@
     window.addEventListener("resize", () => closeSettingsMenu(!getActiveModal()));
   }
 
+  // src/semantic-health.js
+  var PASS = "pass";
+  var FAIL = "fail";
+  var NOT_APPLICABLE = "notApplicable";
+  var CHECK_ERROR_CODES = Object.freeze({
+    settingsMenu: "semantic.settingsMenu",
+    statusRegion: "semantic.statusRegion",
+    messageLog: "semantic.messageLog",
+    messageGrid: "semantic.messageGrid",
+    messageGridName: "semantic.messageGridName",
+    messageGridTabStop: "semantic.messageGridTabStop",
+    messageGridFocusTarget: "semantic.messageGridFocusTarget",
+    messageInput: "semantic.messageInput",
+    messageInputName: "semantic.messageInputName",
+    messageInputFocusTarget: "semantic.messageInputFocusTarget"
+  });
+  function getAttribute(element, name) {
+    return element?.getAttribute?.(name) ?? null;
+  }
+  function hasNonEmptyAttribute(element, name) {
+    const value = getAttribute(element, name);
+    return typeof value === "string" && value.trim().length > 0;
+  }
+  function isConnected(element) {
+    return !!element && element.isConnected !== false;
+  }
+  function isExcludedFromAccessibilityTree(element) {
+    if (!isConnected(element)) return true;
+    if (element.hidden || getAttribute(element, "aria-hidden") === "true") return true;
+    if (element.inert || element.closest?.('[hidden], [inert], [aria-hidden="true"]')) return true;
+    if (typeof getComputedStyle !== "function") return false;
+    const style = getComputedStyle(element);
+    return style.display === "none" || style.visibility === "hidden";
+  }
+  function isExplicitlyFocusable(element) {
+    if (!element) return false;
+    const tabIndex = getAttribute(element, "tabindex");
+    if (tabIndex !== null && Number(tabIndex) >= 0) return true;
+    if (getAttribute(element, "contenteditable") === "true") return true;
+    return ["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA"].includes(element.tagName) && !element.disabled;
+  }
+  function hasLabelledByName(element) {
+    const labelledBy = getAttribute(element, "aria-labelledby");
+    if (typeof labelledBy !== "string" || !labelledBy.trim()) return false;
+    return labelledBy.trim().split(/\s+/).some((id) => {
+      const label = document.getElementById(id);
+      return isConnected(label) && typeof label.textContent === "string" && !!label.textContent.trim();
+    });
+  }
+  function hasAccessibleNameSource(element) {
+    return hasNonEmptyAttribute(element, "aria-label") || hasLabelledByName(element) || hasNonEmptyAttribute(element, "title");
+  }
+  function hasCanonicalGridName(element) {
+    return getAttribute(element, "aria-labelledby") === "wa-plus-message-grid-label" && hasLabelledByName(element);
+  }
+  function hasFocusMethod(element) {
+    return !isExcludedFromAccessibilityTree(element) && typeof element.focus === "function" && getAttribute(element, "aria-disabled") !== "true" && !element.disabled;
+  }
+  function getSingletonState(id, predicate) {
+    const nodes = document.querySelectorAll(`[id="${id}"]`);
+    return nodes.length === 1 && predicate(nodes[0]) ? PASS : FAIL;
+  }
+  function getOwnedNodeChecks() {
+    return {
+      settingsMenu: getSingletonState(
+        "wa-plus-settings-menu",
+        (menu) => isConnected(menu) && getAttribute(menu, "role") === "menu" && !["status", "log", "alert"].includes(getAttribute(menu, "role")) && !hasNonEmptyAttribute(menu, "aria-live")
+      ),
+      statusRegion: getSingletonState(
+        "wa-plus-live-region",
+        (region) => !isExcludedFromAccessibilityTree(region) && getAttribute(region, "role") === "status" && getAttribute(region, "aria-live") === "polite" && getAttribute(region, "aria-atomic") === "true" && getAttribute(region, "aria-busy") !== "true" && !isExplicitlyFocusable(region)
+      ),
+      messageLog: getSingletonState(
+        "wa-plus-message-log",
+        (log) => !isExcludedFromAccessibilityTree(log) && getAttribute(log, "role") === "log" && getAttribute(log, "aria-live") === "polite" && getAttribute(log, "aria-relevant") === "additions" && getAttribute(log, "aria-atomic") === "false" && getAttribute(log, "aria-busy") !== "true" && !isExplicitlyFocusable(log)
+      )
+    };
+  }
+  function getMessageGridChecks(main) {
+    const notApplicable = {
+      messageGrid: NOT_APPLICABLE,
+      messageGridName: NOT_APPLICABLE,
+      messageGridTabStop: NOT_APPLICABLE,
+      messageGridFocusTarget: NOT_APPLICABLE
+    };
+    if (!isAnnouncementReductionEnabled() || !isChatMainActive(main)) return notApplicable;
+    const container = main?.querySelector?.(SELECTORS.conversationMessages);
+    const conversationRows = Array.from(
+      container?.querySelectorAll?.('div[role="row"]') || []
+    );
+    if (conversationRows.length === 0) return notApplicable;
+    const viewports = container?.children ? Array.from(container.children).filter(
+      (child) => child.matches?.("[data-tab]") && child.querySelector?.('div[role="row"]')
+    ) : [];
+    if (viewports.length === 0) {
+      return {
+        messageGrid: FAIL,
+        messageGridName: FAIL,
+        messageGridTabStop: FAIL,
+        messageGridFocusTarget: FAIL
+      };
+    }
+    const viewport = viewports[0];
+    const rows = Array.from(viewport.querySelectorAll?.('div[role="row"]') || []);
+    const cells = rows.map((row) => row.querySelector?.(".focusable-list-item")).filter(Boolean);
+    const gridValid = viewports.length === 1 && rows.length > 0 && cells.length === rows.length && getAttribute(viewport, "role") === "grid" && getAttribute(viewport, "aria-rowcount") === "-1" && cells.every((cell) => getAttribute(cell, "role") === "gridcell");
+    const tabStops = cells.filter((cell) => getAttribute(cell, "tabindex") === "0");
+    const tabStopValid = gridValid && tabStops.length === 1 && cells.every((cell) => ["0", "-1"].includes(getAttribute(cell, "tabindex")));
+    return {
+      messageGrid: gridValid ? PASS : FAIL,
+      messageGridName: gridValid && hasCanonicalGridName(viewport) ? PASS : FAIL,
+      messageGridTabStop: tabStopValid ? PASS : FAIL,
+      messageGridFocusTarget: tabStopValid && hasFocusMethod(tabStops[0]) ? PASS : FAIL
+    };
+  }
+  function getMessageInputChecks(main) {
+    const notApplicable = {
+      messageInput: NOT_APPLICABLE,
+      messageInputName: NOT_APPLICABLE,
+      messageInputFocusTarget: NOT_APPLICABLE
+    };
+    if (!isChatMainActive(main)) return notApplicable;
+    const inputs = document.querySelectorAll(SELECTORS.messageInput);
+    if (inputs.length !== 1) {
+      return {
+        messageInput: FAIL,
+        messageInputName: FAIL,
+        messageInputFocusTarget: FAIL
+      };
+    }
+    const input = inputs[0];
+    const inputValid = !isExcludedFromAccessibilityTree(input) && getAttribute(input, "contenteditable") === "true";
+    return {
+      messageInput: inputValid ? PASS : FAIL,
+      messageInputName: inputValid && hasAccessibleNameSource(input) ? PASS : FAIL,
+      messageInputFocusTarget: inputValid && hasFocusMethod(input) ? PASS : FAIL
+    };
+  }
+  function makeSemanticHealth(checks, fallbackErrorCode = "") {
+    const failedCheck = Object.keys(CHECK_ERROR_CODES).find((key) => checks[key] === FAIL);
+    const values = Object.values(checks);
+    const overall = failedCheck ? FAIL : values.every((value) => value === NOT_APPLICABLE) ? NOT_APPLICABLE : PASS;
+    return Object.freeze({
+      contractVersion: 1,
+      overall,
+      checks: Object.freeze(checks),
+      errorCode: failedCheck ? fallbackErrorCode || CHECK_ERROR_CODES[failedCheck] : ""
+    });
+  }
+  function getSemanticHealth() {
+    try {
+      const main = document.querySelector(SELECTORS.main);
+      return makeSemanticHealth({
+        ...getOwnedNodeChecks(),
+        ...getMessageGridChecks(main),
+        ...getMessageInputChecks(main)
+      });
+    } catch {
+      return makeSemanticHealth({
+        settingsMenu: FAIL,
+        statusRegion: FAIL,
+        messageLog: FAIL,
+        messageGrid: NOT_APPLICABLE,
+        messageGridName: NOT_APPLICABLE,
+        messageGridTabStop: NOT_APPLICABLE,
+        messageGridFocusTarget: NOT_APPLICABLE,
+        messageInput: NOT_APPLICABLE,
+        messageInputName: NOT_APPLICABLE,
+        messageInputFocusTarget: NOT_APPLICABLE
+      }, "semantic.probe");
+    }
+  }
+
   // src/main.js
   var loaderState = window.__whatsappWebPlusLoader;
   function getRequiredNodeHealth() {
@@ -6530,7 +6807,7 @@
     loaderState.state = state;
     loaderState.errorCode = errorCode;
     const { companionRuntime, bridgeContractVersion, requiredNodes } = getRequiredNodeHealth();
-    const health = Object.freeze({
+    const health = {
       contractVersion: loaderState.contractVersion,
       scriptVersion: loaderState.scriptVersion,
       bundleIdentifier: loaderState.bundleIdentifier || "embedded",
@@ -6542,7 +6819,13 @@
       requiredNodes,
       bridgeContractVersion,
       errorCode
+    };
+    Object.defineProperty(health, "semanticHealth", {
+      get: getSemanticHealth,
+      enumerable: true,
+      configurable: false
     });
+    Object.freeze(health);
     Object.defineProperty(window, "__whatsappWebPlusLoaderHealth", {
       value: health,
       writable: false,

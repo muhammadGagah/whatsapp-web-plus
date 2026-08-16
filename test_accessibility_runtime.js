@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { webcrypto } = require('node:crypto');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
@@ -27,7 +28,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         applyChatRowDescendantMasks, collectChatBadgeLabels,
         getChatPreviewIconLabel,
         applyChatRowNativeMask, applyMessageGridExperiment, handleMessageGridKeydown,
-        focusChatRow, getPreferredChatRow,
+        focusChatRow, getPreferredChatRow, getChatListRows,
         getActiveModal,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
         getRoleFixRoot, scheduleRoleFix,
@@ -40,6 +41,7 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         setUnreadTarget(value) { unreadTarget = value; },
         setStatusTracking(value) { isStatusTracking = value; },
         setLanguage, setCustomText, getNavSelector, getScrollToBottomSelector,
+        setAnnouncementReduction,
         setOpenChatsAtFirstUnread, setShortcutRemap,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
         getCompanionBridge() { return globalThis.__whatsappWebPlusCompanionBridge; },
@@ -168,7 +170,7 @@ function scheduleTimeout(callback) {
 function cancelTimeout(id) { scheduledTimeouts.delete(id); }
 
 const sandbox = {
-    Element, HTMLElement: Element, MutationObserver, document, localStorage, console,
+    Element, HTMLElement: Element, MutationObserver, document, localStorage, console, crypto: webcrypto,
     __whatsappWebPlusBundleHash: 'a'.repeat(64),
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     navigator: {}, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout,
@@ -1308,6 +1310,58 @@ assert.equal(event.immediateStopped, true);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.pop();
 
+const nonChatAltOneTabs = [
+    [runtime.SELECTORS.navStatus, 'Status'],
+    [runtime.SELECTORS.navCommunities, 'Communities'],
+    [runtime.SELECTORS.navChannels, 'Channels'],
+    [runtime.SELECTORS.navMetaAI, 'Meta AI']
+];
+for (const [selector, tabName] of nonChatAltOneTabs) {
+    const activeTab = new Element();
+    activeTab.setAttribute('aria-pressed', 'true');
+    activeTab.setAttribute('data-navbar-item-selected', 'true');
+    selectorResults.set(selector, activeTab);
+    runtime.clearStatusRegion();
+    scheduledTimeouts.clear();
+    scheduledFrames.length = 0;
+    const focusBeforeAltOne = document.activeElement;
+    event = makeEvent({ altKey: true, code: 'Digit1', target: activeTab });
+    runtime.handleShortcuts(event);
+    assert.equal(event.prevented, true);
+    assert.equal(event.immediateStopped, true);
+    assert.equal(scheduledFrames.length, 0);
+    assert.equal(scheduledTimeouts.size, 1);
+    assert.equal(document.activeElement, focusBeforeAltOne);
+    const [timerId, announceUnavailable] = Array.from(scheduledTimeouts.entries()).at(-1);
+    scheduledTimeouts.delete(timerId);
+    announceUnavailable();
+    assert.equal(
+        liveRegion.textContent,
+        `Alt 1 unavailable in ${tabName}. Return to Chats with Alt Shift 1.`
+    );
+    runtime.clearStatusRegion();
+    selectorResults.delete(selector);
+}
+
+runtime.setLanguage('id');
+const activeStatusTab = new Element();
+activeStatusTab.setAttribute('aria-pressed', 'true');
+selectorResults.set(runtime.SELECTORS.navStatus, activeStatusTab);
+scheduledTimeouts.clear();
+event = makeEvent({ altKey: true, code: 'Digit1', target: activeStatusTab });
+runtime.handleShortcuts(event);
+assert.equal(scheduledTimeouts.size, 1);
+const [localizedTimerId, announceLocalizedUnavailable] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(localizedTimerId);
+announceLocalizedUnavailable();
+assert.equal(
+    liveRegion.textContent,
+    'Alt 1 tidak tersedia di Status. Kembali ke Chat dengan Alt Shift 1.'
+);
+runtime.clearStatusRegion();
+selectorResults.delete(runtime.SELECTORS.navStatus);
+runtime.setLanguage('en');
+
 const audioPlayerClose = new Element();
 audioPlayerClose.clickHandler = () => { audioPlayerClose.isConnected = false; };
 const audioPlayerCloseSelector = runtime.SELECTORS.audioPlayerClose;
@@ -1437,7 +1491,7 @@ externalControl.setAttribute('tabindex', '0');
 nativeChatText.textContent = 'Chat name and preview';
 cellFrame.children.push(nativeChatText);
 chatRow.children.push(cellFrame, disappearingHint);
-chatRow.queryHandler = selector => selector === '[data-testid="cell-frame-container"]' ? cellFrame : null;
+chatRow.queryHandler = selector => selector === runtime.SELECTORS.cellFrame ? cellFrame : null;
 chatRow.queryAllHandler = selector => selector === '[aria-label]' ? [aggregateLabel, disappearingHint, externalControl] : [];
 const chatMaskRoot = new Element();
 chatMaskRoot.queryAllHandler = selector => selector.includes('[aria-label]') ? [nativeChatText, disappearingHint] : [];
@@ -1537,6 +1591,105 @@ assert.equal(
 );
 runtime.setPrivacy(false);
 
+const selfChatRow = new Element();
+const selfChatOuterCell = new Element();
+const selfChatActivator = new Element();
+const selfChatCellFrame = new Element();
+const selfChatTitleContainer = new Element();
+const selfChatTitle = new Element();
+const selfChatYouLabel = new Element();
+const selfChatPrimaryDetail = new Element();
+const selfChatSecondary = new Element();
+selfChatOuterCell.setAttribute('role', 'gridcell');
+selfChatOuterCell.setAttribute('tabindex', '0');
+selfChatActivator.setAttribute('tabindex', '0');
+selfChatActivator.setAttribute('aria-selected', 'true');
+selfChatTitle.setAttribute('title', 'Muhammad Gagah');
+selfChatTitleContainer.textContent = 'Muhammad Gagah (You)';
+selfChatYouLabel.nodeType = 1;
+selfChatYouLabel.tagName = 'SPAN';
+selfChatYouLabel.textContent = '(You)';
+selfChatYouLabel.childNodes = [{ nodeType: 3, nodeValue: '(You)' }];
+selfChatPrimaryDetail.nodeType = 1;
+selfChatPrimaryDetail.tagName = 'DIV';
+selfChatPrimaryDetail.textContent = 'Yesterday';
+selfChatPrimaryDetail.childNodes = [{ nodeType: 3, nodeValue: 'Yesterday' }];
+selfChatSecondary.nodeType = 1;
+selfChatSecondary.tagName = 'DIV';
+selfChatSecondary.textContent = '0:07';
+selfChatSecondary.childNodes = [{ nodeType: 3, nodeValue: '0:07' }];
+selfChatRow.children = [selfChatOuterCell];
+selfChatOuterCell.children = [selfChatActivator];
+selfChatActivator.children = [selfChatCellFrame];
+selfChatCellFrame.children = [selfChatTitleContainer, selfChatPrimaryDetail, selfChatSecondary];
+selfChatTitleContainer.children = [selfChatTitle, selfChatYouLabel];
+selfChatRow.queryHandler = selector => {
+    if (selector === ':scope > [role="gridcell"]') {
+        return selfChatOuterCell.getAttribute('role') === 'gridcell' ? selfChatOuterCell : null;
+    }
+    if (selector === runtime.SELECTORS.cellFrame && selector.includes('[data-testid="message-yourself-row"]')) {
+        return selfChatCellFrame;
+    }
+    if (selector === '[data-testid="cell-frame-title"]') return selfChatTitleContainer;
+    return null;
+};
+selfChatRow.queryAllHandler = () => [];
+selfChatOuterCell.queryHandler = selector => selector.startsWith(':scope > [tabindex]')
+    ? selfChatActivator
+    : null;
+selfChatActivator.queryAllHandler = () => [
+    selfChatTitleContainer,
+    selfChatPrimaryDetail,
+    selfChatSecondary
+];
+selfChatTitleContainer.queryHandler = selector => selector === '[title]' ? selfChatTitle : null;
+selfChatCellFrame.queryHandler = selector => {
+    if (selector === '[data-testid="you-label"]') return selfChatYouLabel;
+    if (selector === '[data-testid="cell-frame-primary-detail"]') return selfChatPrimaryDetail;
+    if (selector === '[data-testid="cell-frame-secondary"]') return selfChatSecondary;
+    return null;
+};
+document.activeElement = selfChatOuterCell;
+assert.equal(runtime.applyChatRowNativeMask(selfChatRow), true);
+assert.equal(document.activeElement, selfChatActivator);
+assert.equal(selfChatOuterCell.getAttribute('role'), 'presentation');
+assert.equal(selfChatOuterCell.getAttribute('tabindex'), null);
+assert.equal(selfChatActivator.getAttribute('role'), 'gridcell');
+assert.equal(selfChatActivator.getAttribute('tabindex'), '0');
+assert.equal(selfChatActivator.getAttribute('aria-selected'), 'true');
+assert.equal(
+    selfChatActivator.getAttribute('aria-label'),
+    'Muhammad Gagah (You) Yesterday 0:07',
+    'self-chat uses one aggregate gridcell label while preserving the You suffix'
+);
+assert.equal(selfChatTitleContainer.getAttribute('aria-hidden'), 'true');
+assert.equal(selfChatPrimaryDetail.getAttribute('aria-hidden'), 'true');
+assert.equal(selfChatSecondary.getAttribute('aria-hidden'), 'true');
+runtime.setAnnouncementReduction(false);
+assert.equal(runtime.applyChatRowNativeMask(selfChatRow), false);
+assert.equal(selfChatOuterCell.getAttribute('role'), 'gridcell');
+assert.equal(selfChatOuterCell.getAttribute('tabindex'), '0');
+assert.equal(selfChatActivator.getAttribute('role'), null);
+assert.equal(selfChatActivator.getAttribute('aria-label'), null);
+assert.equal(selfChatTitleContainer.getAttribute('aria-hidden'), null);
+assert.equal(selfChatPrimaryDetail.getAttribute('aria-hidden'), null);
+assert.equal(selfChatSecondary.getAttribute('aria-hidden'), null);
+runtime.setAnnouncementReduction(true);
+const selfChatSide = new Element();
+const selfChatList = new Element();
+selfChatList.rect = { top: 0, bottom: 400, left: 0, right: 400, width: 400, height: 400 };
+selfChatRow.rect = { top: 0, bottom: 76, left: 0, right: 400, width: 400, height: 76 };
+selfChatSide.queryHandler = selector => selector === runtime.SELECTORS.chatList ? selfChatList : null;
+selfChatList.queryAllHandler = () => [selfChatRow];
+selfChatList.closestHandler = selector => selector === runtime.SELECTORS.chatListScroller
+    ? selfChatList
+    : null;
+selectorResults.set(runtime.SELECTORS.side, selfChatSide);
+const discoveredSelfChatRows = runtime.getChatListRows();
+assert.equal(discoveredSelfChatRows.length, 1);
+assert.equal(discoveredSelfChatRows[0], selfChatRow);
+selectorResults.delete(runtime.SELECTORS.side);
+
 const nestedTabStop = new Element();
 nestedTabStop.setAttribute('tabindex', '0');
 runtime.applyOwnedAttribute(nestedTabStop, 'tabindex', null, runtime.OWNERS.chatStructure);
@@ -1562,7 +1715,7 @@ focusRow.queryHandler = selector => {
     if (selector === ':scope > [role="gridcell"]') {
         return outerGridcell.getAttribute('role') === 'gridcell' ? outerGridcell : null;
     }
-    if (selector === '[data-testid="cell-frame-container"]') return focusCellFrame;
+    if (selector === runtime.SELECTORS.cellFrame) return focusCellFrame;
     if (selector === '[data-testid="cell-frame-title"]') return titleContainer;
     return null;
 };
@@ -1594,6 +1747,64 @@ assert.equal(outerGridcell.getAttribute('aria-label'), 'Focused chat');
 document.activeElement = null;
 assert.equal(runtime.focusChatRow(focusRow), true);
 assert.equal(document.activeElement, null);
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, activator);
+
+runtime.setAnnouncementReduction(false);
+const nativeShortcutSide = new Element();
+const nativeShortcutList = new Element();
+const nativeShortcutRow = new Element();
+const nativeShortcutGridcell = new Element();
+const nativeShortcutActivator = new Element();
+const nativeShortcutCellFrame = new Element();
+nativeShortcutList.rect = { top: 0, bottom: 400, left: 0, right: 400, width: 400, height: 400 };
+nativeShortcutRow.rect = { top: 0, bottom: 76, left: 0, right: 400, width: 400, height: 76 };
+nativeShortcutRow.setAttribute('role', 'row');
+nativeShortcutRow.setAttribute('aria-selected', 'true');
+nativeShortcutGridcell.setAttribute('role', 'gridcell');
+nativeShortcutActivator.setAttribute('tabindex', '0');
+nativeShortcutActivator.setAttribute('aria-selected', 'true');
+nativeShortcutSide.queryHandler = selector => selector === runtime.SELECTORS.chatList
+    ? nativeShortcutList
+    : null;
+nativeShortcutList.queryAllHandler = () => [nativeShortcutRow];
+nativeShortcutList.closestHandler = selector => selector === runtime.SELECTORS.chatListScroller
+    ? nativeShortcutList
+    : null;
+nativeShortcutRow.closestHandler = selector => selector === runtime.SELECTORS.chatListInSide
+    ? nativeShortcutList
+    : null;
+nativeShortcutRow.queryAllHandler = () => [];
+nativeShortcutRow.queryHandler = selector => {
+    if (selector === ':scope > [role="gridcell"]') return nativeShortcutGridcell;
+    if (selector === runtime.SELECTORS.cellFrame) return nativeShortcutCellFrame;
+    return null;
+};
+nativeShortcutGridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]')
+    ? nativeShortcutActivator
+    : null;
+nativeShortcutActivator.queryAllHandler = () => [];
+selectorResults.set(runtime.SELECTORS.side, nativeShortcutSide);
+const nativeShortcutRows = runtime.getChatListRows();
+assert.equal(nativeShortcutRows.length, 1);
+assert.equal(nativeShortcutRows[0], nativeShortcutRow);
+scheduledFrames.length = 0;
+document.activeElement = new Element();
+event = makeEvent({ altKey: true, code: 'Digit1', target: document.activeElement });
+runtime.handleShortcuts(event);
+assert.equal(event.prevented, true);
+assert.equal(event.immediateStopped, true);
+assert.equal(scheduledFrames.length, 1);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, nativeShortcutActivator);
+assert.equal(nativeShortcutActivator.getAttribute('aria-label'), null);
+selectorResults.delete(runtime.SELECTORS.side);
+runtime.setAnnouncementReduction(true);
+assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
+document.activeElement = null;
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(focusRow), true);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, activator);

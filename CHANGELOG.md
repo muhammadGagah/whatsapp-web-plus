@@ -1,6 +1,24 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.75 reflect the corresponding source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.76 reflect the corresponding source in `src/`.
+
+## Unreleased
+
+## 2.6.76 - 2026-08-16
+
+### Added
+
+- Added a read-only semantic health contract so WhatsApp Companion can verify the settings menu, announcement regions, message grid, and message input without exposing their accessible text.
+
+### Changed
+
+- Scoped Companion queue entries and snapshots to cryptographically random session and context tokens, with automatic invalidation when the active chat, language, or Privacy Mode changes.
+
+### Fixed
+
+- Kept `Alt + 1` able to focus the native chat list when announcement reduction is disabled, and added localized guidance when the shortcut is used from Status, Communities, Channels, or Meta AI.
+- Prevented the chat-to-yourself row from being announced twice by NVDA while announcement reduction is enabled, while preserving its `(You)` label and keyboard focus behavior.
+- Prevented stale Companion announcements from surviving a renderer session or changed chat context.
 
 ## 2.6.75 - 2026-08-13
 
