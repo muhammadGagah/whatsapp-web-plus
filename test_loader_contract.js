@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { webcrypto } = require('node:crypto');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
@@ -53,6 +54,7 @@ function makeContext() {
     globalThis: null,
     location: { origin: 'https://web.whatsapp.com' },
     performance: { now: () => 12.5 },
+    crypto: webcrypto,
     localStorage: {
       getItem(key) { return storage.get(key) ?? null; },
       setItem(key, value) { storage.set(key, String(value)); }
@@ -90,6 +92,7 @@ globalThis.__bridgeTestApi = {
 };`;
 assert.ok(source.indexOf("if (window[loaderProperty]) return") < source.indexOf('// src/privacy.js'));
 assert.match(source, /function publishLoaderHealth/);
+assert.match(source, /semanticHealth/);
 assert.match(source, /Object\.values\(requiredNodes\)\.every\(Boolean\)/);
 
 const standaloneBridgeContext = vm.createContext({});
@@ -111,18 +114,132 @@ assert.equal(standaloneBridgeContext.__bridgeTestApi.publishCompanionAnnouncemen
 assert.equal('__whatsappWebPlusCompanionBridge' in standaloneBridgeContext, false);
 
 const companionBridgeContext = vm.createContext({
-  __whatsappWebPlusBundleHash: 'a'.repeat(64)
+  __whatsappWebPlusBundleHash: 'a'.repeat(64),
+  crypto: {
+    randomUUID: (() => {
+      const tokens = [
+        '11111111-1111-4111-8111-111111111111',
+        '22222222-2222-4222-8222-222222222222'
+      ];
+      return () => tokens.shift();
+    })()
+  }
 });
 vm.runInContext(bridgeTestSource, companionBridgeContext);
 assert.equal(companionBridgeContext.__bridgeTestApi.isCompanionRuntime(), true);
 assert.equal(companionBridgeContext.__whatsappWebPlusCompanionBridge.contractVersion, 2);
+const initialBridgeSnapshot = companionBridgeContext.__whatsappWebPlusCompanionBridge.readSince(0, 0);
+assert.equal(initialBridgeSnapshot.sessionToken, '11111111-1111-4111-8111-111111111111');
+assert.equal(initialBridgeSnapshot.context, '22222222-2222-4222-8222-222222222222');
 delete companionBridgeContext.__whatsappWebPlusBundleHash;
 assert.equal(companionBridgeContext.__bridgeTestApi.isCompanionRuntime(), true);
-assert.equal(companionBridgeContext.__bridgeTestApi.publishCompanionAnnouncement({
+const directAnnouncement = companionBridgeContext.__bridgeTestApi.publishCompanionAnnouncement({
   source: 'status',
   language: 'en',
   text: 'Companion status'
-}).text, 'Companion status');
+});
+assert.equal(directAnnouncement.text, 'Companion status');
+assert.equal(directAnnouncement.sessionToken, initialBridgeSnapshot.sessionToken);
+assert.equal(directAnnouncement.context, initialBridgeSnapshot.context);
+
+const unavailableCryptoContext = vm.createContext({
+  __whatsappWebPlusBundleHash: 'c'.repeat(64)
+});
+vm.runInContext(bridgeTestSource, unavailableCryptoContext);
+assert.equal(unavailableCryptoContext.__bridgeTestApi.isCompanionRuntime(), true);
+assert.equal(unavailableCryptoContext.__bridgeTestApi.ensureCompanionBridge(), null);
+assert.equal('__whatsappWebPlusCompanionBridge' in unavailableCryptoContext, false);
+
+let activeMain = null;
+let activeTitle = 'Chat A';
+const titleElement = {
+  getAttribute(name) { return name === 'title' ? activeTitle : null; },
+  get textContent() { return activeTitle; }
+};
+const firstMain = { querySelector() { return titleElement; } };
+activeMain = firstMain;
+const bridgeStorage = new Map([
+  ['wa-plus-language', 'en'],
+  ['wa-plus-privacy', 'false']
+]);
+let randomSeed = 0;
+const fallbackBridgeContext = vm.createContext({
+  __whatsappWebPlusBundleHash: 'b'.repeat(64),
+  crypto: {
+    getRandomValues(bytes) {
+      bytes.fill(++randomSeed);
+      return bytes;
+    }
+  },
+  document: {
+    querySelector(selector) { return selector === '#main' ? activeMain : null; },
+    documentElement: { lang: 'en', getAttribute() { return this.lang; } }
+  },
+  localStorage: {
+    getItem(key) { return bridgeStorage.get(key) ?? null; }
+  },
+  navigator: { language: 'en' }
+});
+vm.runInContext(bridgeTestSource, fallbackBridgeContext);
+const fallbackBridge = fallbackBridgeContext.__whatsappWebPlusCompanionBridge;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const fallbackInitial = fallbackBridge.readSince(0, 0);
+assert.match(fallbackInitial.sessionToken, uuidPattern);
+assert.match(fallbackInitial.context, uuidPattern);
+assert.notEqual(fallbackInitial.sessionToken, fallbackInitial.context);
+fallbackBridge.publish({ source: 'status', language: 'en', text: 'Chat A status' });
+activeTitle = 'Chat B';
+const chatChanged = fallbackBridge.readSince(fallbackInitial.latestSequence, fallbackInitial.generation);
+assert.equal(chatChanged.invalidated, true);
+assert.equal(chatChanged.lastInvalidation, 'chat-context-changed');
+assert.equal(chatChanged.entries.length, 0);
+assert.notEqual(chatChanged.context, fallbackInitial.context);
+bridgeStorage.set('wa-plus-language', 'id');
+const languageChanged = fallbackBridge.readSince(chatChanged.latestSequence, chatChanged.generation);
+assert.equal(languageChanged.invalidated, true);
+assert.equal(languageChanged.lastInvalidation, 'language-changed');
+assert.notEqual(languageChanged.context, chatChanged.context);
+bridgeStorage.set('wa-plus-privacy', 'true');
+const privacyChanged = fallbackBridge.readSince(languageChanged.latestSequence, languageChanged.generation);
+assert.equal(privacyChanged.invalidated, true);
+assert.equal(privacyChanged.lastInvalidation, 'privacy-changed');
+assert.notEqual(privacyChanged.context, languageChanged.context);
+const finalEntry = fallbackBridge.publish({
+  source: 'alert',
+  language: 'id',
+  privacy: true,
+  text: 'Konteks baru'
+});
+assert.equal(finalEntry.sessionToken, privacyChanged.sessionToken);
+assert.equal(finalEntry.context, privacyChanged.context);
+assert.equal(finalEntry.context.includes('Chat'), false);
+fallbackBridge.publish({ source: 'status', language: 'id', privacy: true, text: 'Status tetap' });
+fallbackBridge.publish({ source: 'message-log', language: 'id', privacy: true, text: 'Log lama' });
+const beforeScopedInvalidation = fallbackBridge.readSince(
+  privacyChanged.latestSequence,
+  privacyChanged.generation
+);
+fallbackBridge.invalidate('message-log-cleared', 'message-log');
+const scopedInvalidation = fallbackBridge.readSince(
+  privacyChanged.latestSequence,
+  beforeScopedInvalidation.generation
+);
+assert.equal(scopedInvalidation.invalidated, true);
+assert.equal(scopedInvalidation.invalidatedSource, 'message-log');
+assert.equal(scopedInvalidation.context, beforeScopedInvalidation.context);
+assert.deepEqual(
+  Array.from(scopedInvalidation.entries, entry => entry.source),
+  ['alert', 'status']
+);
+fallbackBridge.invalidate('renderer-reset');
+const fullInvalidation = fallbackBridge.readSince(
+  privacyChanged.latestSequence,
+  scopedInvalidation.generation
+);
+assert.equal(fullInvalidation.invalidated, true);
+assert.equal(fullInvalidation.invalidatedSource, '');
+assert.equal(fullInvalidation.entries.length, 0);
+assert.equal(fullInvalidation.context, scopedInvalidation.context);
 
 const context = makeContext();
 vm.runInContext(source, context);
@@ -149,6 +266,27 @@ assert.equal(context.__whatsappWebPlusLoaderHealth.companionRuntime, false);
 assert.equal(context.__whatsappWebPlusLoaderHealth.bridgeContractVersion, 0);
 assert.equal(context.__whatsappWebPlusLoaderHealth.requiredNodes.companionBridge, true);
 assert.equal('__whatsappWebPlusCompanionBridge' in context, false);
+assert.equal(context.__whatsappWebPlusLoaderHealth.semanticHealth.contractVersion, 1);
+assert.equal(context.__whatsappWebPlusLoaderHealth.semanticHealth.overall, 'fail');
+assert.deepEqual(
+  Object.keys(context.__whatsappWebPlusLoaderHealth.semanticHealth.checks).sort(),
+  [
+    'messageGrid',
+    'messageGridFocusTarget',
+    'messageGridName',
+    'messageGridTabStop',
+    'messageInput',
+    'messageInputFocusTarget',
+    'messageInputName',
+    'messageLog',
+    'settingsMenu',
+    'statusRegion'
+  ]
+);
+assert.equal(
+  JSON.stringify(context.__whatsappWebPlusLoaderHealth.semanticHealth).includes('localStorage'),
+  false
+);
 
 const companionContext = makeContext();
 companionContext.__whatsappWebPlusBundleHash = 'a'.repeat(64);

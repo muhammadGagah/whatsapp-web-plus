@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { webcrypto } = require('node:crypto');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const { buildSync } = require('esbuild');
@@ -1012,6 +1013,7 @@ assert.doesNotMatch(output, /window\.prompt|promptCustomText/);
 rootMenu.remove();
 const companionContext = {
     ...context,
+    crypto: webcrypto,
     __whatsappWebPlusBundleHash: 'a'.repeat(64)
 };
 vm.runInNewContext(output, companionContext);

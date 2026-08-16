@@ -64,6 +64,7 @@ import {
 } from './status-accessibility.js';
 import { isCompanionRuntime } from './companion-bridge.js';
 import { isAutomaticReadingEnabled } from './settings-state.js';
+import { getSemanticHealth } from './semantic-health.js';
 
 const loaderState = window.__whatsappWebPlusLoader;
 
@@ -89,7 +90,7 @@ function publishLoaderHealth(state, errorCode = '') {
   loaderState.state = state;
   loaderState.errorCode = errorCode;
   const { companionRuntime, bridgeContractVersion, requiredNodes } = getRequiredNodeHealth();
-  const health = Object.freeze({
+  const health = {
     contractVersion: loaderState.contractVersion,
     scriptVersion: loaderState.scriptVersion,
     bundleIdentifier: loaderState.bundleIdentifier || __BUNDLE_IDENTIFIER__,
@@ -101,7 +102,13 @@ function publishLoaderHealth(state, errorCode = '') {
     requiredNodes,
     bridgeContractVersion,
     errorCode
+  };
+  Object.defineProperty(health, 'semanticHealth', {
+    get: getSemanticHealth,
+    enumerable: true,
+    configurable: false
   });
+  Object.freeze(health);
   Object.defineProperty(window, '__whatsappWebPlusLoaderHealth', {
     value: health,
     writable: false,

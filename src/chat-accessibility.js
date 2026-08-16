@@ -252,6 +252,7 @@ function buildChatRowNativeLabel(row) {
 
   badges.unread.forEach(label => addChatLabelPart(parts, label));
   addChatLabelPart(parts, getChatRowTitle(row));
+  collectChatTextParts(cellFrame.querySelector('[data-testid="you-label"]'), parts);
   collectChatTextParts(cellFrame.querySelector('[data-testid="cell-frame-primary-detail"]'), parts);
   collectChatTextParts(cellFrame.querySelector('[data-testid="cell-frame-secondary"]'), parts);
   badges.status.forEach(label => addChatLabelPart(parts, label));

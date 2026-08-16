@@ -85,7 +85,7 @@ export const SELECTORS = Object.freeze({
   chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"], #side [aria-label="Daftar chat"][role="grid"]',
   chatSearch: '#side input[role="textbox"][type="text"], #side [data-testid="chat-list-search-container"] input',
   conversationMessages: '[data-testid="conversation-panel-messages"]',
-  cellFrame: '[data-testid="cell-frame-container"]'
+  cellFrame: '[data-testid="cell-frame-container"], [data-testid="message-yourself-row"]'
 });
 
 export const OWNERS = Object.freeze({
