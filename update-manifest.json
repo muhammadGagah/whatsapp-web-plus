@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "keyId": "wwp-userscript-ed25519-2026-01",
+  "releaseSequence": 2026082501,
+  "version": "2.6.80",
+  "downloadUrl": "https://update.greasyfork.org/scripts/587557/WhatsApp%20Web%20Plus.user.js",
+  "sha256": "15ef149f38b843cd55397221a378ea0ca191ef3653f0ba88ed5fd1caea34e9b3",
+  "bytes": 389921
+}
