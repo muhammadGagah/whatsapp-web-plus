@@ -30,6 +30,7 @@ export const _origRemoveAttribute = Element.prototype.removeAttribute;
 export const privacyAttributes = new Map();
 const senderDeviceLabels = new Map();
 const documentCaptionLabels = new Map();
+const messageMentionLabels = new Map();
 
 export function hasActiveState(el) {
   const current = el && el.getAttribute('aria-current');
@@ -101,7 +102,15 @@ function removePhonesOutsideWebUrls(text) {
 }
 
 function replacePhonesOutsideWebUrls(text, el = null) {
-  return replaceOutsideWebUrls(text, PHONE_RE, replacePhoneCandidateWith(tForHost('participant', el)));
+  return replaceOutsideWebUrls(
+    text,
+    PHONE_RE,
+    replacePhoneCandidateWith(tForHost('participant', el))
+  );
+}
+
+function isIPv4LikeCandidate(text) {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(text);
 }
 
 function replacePhoneUrlWith(replacement) {
@@ -112,31 +121,83 @@ function replacePhoneUrlWith(replacement) {
   };
 }
 
-function maskMessagePhoneLinks(text, el = null) {
-  return text.replace(PHONE_URL_RE, replacePhoneUrlWith(tForHost('phoneLink', el)));
-}
+const MESSAGE_PHONE_REFERENCE_RE = /(?:https?:\/\/|www\.)[^\s<>"']+|\btel:(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d|\bwa\.me\/(?:\+)?\d[\d()./‐‑‒–—―-]{5,}\d/gi;
 
-function maskPhoneBearingWebUrls(text, el = null) {
-  WEB_URL_RE.lastIndex = 0;
-  return text.replace(WEB_URL_RE, url => {
-    PHONE_RE.lastIndex = 0;
-    let match;
-    while ((match = PHONE_RE.exec(url)) !== null) {
-      if (isPhoneCandidate(match[0], match.index, url)) return tForHost('phoneLink', el);
-    }
-    return url;
+function maskMessagePhoneLinks(text, el = null) {
+  const label = tForHost('phoneLink', el);
+  return text.replace(MESSAGE_PHONE_REFERENCE_RE, (match, offset, source) => {
+    const trailingHour = match.match(/\s+\d{1,2}$/);
+    const hasTrailingTime = trailingHour && /^:\d{2}\b/.test(source.slice(offset + match.length));
+    let reference = hasTrailingTime ? match.slice(0, -trailingHour[0].length) : match;
+    const terminalSuffix = reference.match(/[.,!?;:)\]}\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/iu)?.[0] || '';
+    if (terminalSuffix) reference = reference.slice(0, -terminalSuffix.length);
+    if (!isExplicitPhoneDestinationHref(reference)) return match;
+    return label + terminalSuffix + (hasTrailingTime ? trailingHour[0] : '');
   });
 }
 
 function maskMessagePhones(text, el = null) {
   return maskMessagePhoneLinks(
-    replacePhonesOutsideWebUrls(maskPhoneBearingWebUrls(text, el), el),
+    replaceOutsideWebUrls(
+      text,
+      PHONE_RE,
+      replacePhoneCandidateWith(tForHost('participant', el), 'message')
+    ),
     el
   );
 }
 
+export function maskMessagePhoneContent(text, el = null) {
+  return maskMessagePhones(text, el);
+}
+
+function hasExplicitPhoneValue(value) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value || '');
+  } catch {
+    return false;
+  }
+  const candidate = decoded.replace(/^\/+|\/+$/g, '')
+    .split(/[;?&#]/, 1)[0].trim();
+  if (!candidate || isIPv4LikeCandidate(candidate)) return false;
+  PHONE_RE.lastIndex = 0;
+  const match = PHONE_RE.exec(candidate);
+  if (!match || match.index !== 0 || match[0] !== candidate) return false;
+  const digitCount = candidate.replace(/\D/g, '').length;
+  return digitCount >= 7 && digitCount <= 16;
+}
+
+function isExplicitPhoneDestinationHref(href) {
+  if (!href) return false;
+
+  let url;
+  try {
+    const base = location.href || `${location.origin}/`;
+    const normalizedHref = /^(?:wa\.me\/|www\.)/i.test(href) ? `https://${href}` : href;
+    url = new URL(normalizedHref, base);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol === 'tel:') return hasExplicitPhoneValue(url.pathname);
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === 'wa.me' || hostname === 'www.wa.me') {
+    return hasExplicitPhoneValue(url.pathname);
+  }
+  return url.searchParams.has('phone') && hasExplicitPhoneValue(url.searchParams.get('phone'));
+}
+
+function hasExplicitPhoneDestination(el) {
+  const link = el?.matches?.('a[href], [role="link"]')
+    ? el
+    : el?.closest?.('a[href], [role="link"]');
+  return isExplicitPhoneDestinationHref(link?.getAttribute?.('href') || '');
+}
+
 function maskPhoneLinkName(text, el) {
   const label = tForHost('phoneLink', el);
+  if (!hasExplicitPhoneDestination(el)) return maskMessagePhoneLinks(text, el);
   return text
     .replace(PHONE_URL_RE, replacePhoneUrlWith(label))
     .replace(PHONE_RE, replacePhoneCandidateWith(label));
@@ -149,7 +210,7 @@ export function maskPhoneNumbers(text, el = null) {
     .replace(PHONE_RE, replacePhoneCandidateWith(participant));
 }
 
-function replacePhoneCandidateWith(replacement) {
+function replacePhoneCandidateWith(replacement, context = 'identity') {
   return (match, offset, source) => {
     const trailingHour = match.match(/\s+\d{1,2}$/);
     const hasTrailingTime = trailingHour && /^:\d{2}\b/.test(source.slice(offset + match.length));
@@ -160,24 +221,26 @@ function replacePhoneCandidateWith(replacement) {
       ? replacement(phone, offset, candidateSource)
       : replacement;
 
-    return isPhoneCandidate(phone, offset, candidateSource)
+    return isPhoneCandidate(phone, offset, candidateSource, context)
       ? masked + (hasTrailingTime ? trailingHour[0] : '')
       : match;
   };
 }
 
-function isPhoneCandidate(raw, offset, source) {
+function isPhoneCandidate(raw, offset, source, context = 'identity') {
   const before = source[offset - 1] || '';
   const after = source[offset + raw.length] || '';
   if (/[A-Za-z0-9_]/.test(before) || /[A-Za-z0-9_]/.test(after)) return false;
 
   const trimmed = raw.trim();
+  if (isIPv4LikeCandidate(trimmed)) return false;
   if (!trimmed.startsWith('+') && isDatedVersionCandidate(trimmed)) return false;
   const digits = trimmed.replace(/\D/g, '');
   if (digits.length > 16) return false;
   if (digits.startsWith('000')) return false;
   if (trimmed.startsWith('+') || digits.startsWith('00')) return digits.length >= 7;
-  // Broad masking favors privacy; use libphonenumber if false positives matter.
+  // Bare message digits may be account numbers or codes, not phone numbers.
+  if (context === 'message') return false;
   return digits.length >= 9;
 }
 
@@ -224,6 +287,143 @@ function insertDocumentCaption(text, filename, caption) {
   };
 }
 
+function getAccessibleMentionText(mention, el) {
+  const renderedText = normalizeText(mention?.textContent || '');
+  const storedText = normalizeText(mention?.getAttribute?.('data-plain-text') || '');
+  const plainText = renderedText.startsWith('@')
+    ? renderedText
+    : storedText.startsWith('@') ? storedText : '';
+  if (!plainText.startsWith('@')) return '';
+  let identity = plainText.slice(1).replace(/^\s*~\s*/, '').trim();
+  if (!identity) return '';
+  if (isPrivacyMode) identity = maskPhoneNumbers(identity, el);
+  return `@${identity}`;
+}
+
+function getPrimaryMessageBody(message, requireMentions = false) {
+  const selector = '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]';
+  const candidates = Array.from(message?.querySelectorAll?.(selector) || [])
+    .filter(candidate => !candidate.closest?.('[data-testid="quoted-message"]'));
+  const matching = requireMentions
+    ? candidates.find(candidate => candidate.querySelectorAll?.(SELECTORS.messageMention)?.length)
+    : candidates[0];
+  if (matching) return matching;
+
+  const fallback = message?.querySelector?.(selector);
+  if (!fallback || fallback.closest?.('[data-testid="quoted-message"]')) return null;
+  if (requireMentions && !fallback.querySelectorAll?.(SELECTORS.messageMention)?.length) return null;
+  return fallback;
+}
+
+function restoreMessageMentionNames(text, message) {
+  const bodyEl = getPrimaryMessageBody(message, true);
+  if (!bodyEl?.querySelectorAll) return text;
+
+  const mentions = Array.from(bodyEl.querySelectorAll(SELECTORS.messageMention) || [])
+    .filter(mention => !mention.closest?.('[data-testid="quoted-message"]'));
+  if (!mentions.length) return text;
+
+  const bodyText = normalizeText(bodyEl.textContent || '');
+  const mentionParts = [];
+  let bodyCursor = 0;
+  for (const mention of mentions) {
+    const nativeText = normalizeText(
+      mention.textContent || mention.getAttribute?.('data-plain-text') || ''
+    );
+    const accessibleText = getAccessibleMentionText(mention, message);
+    const mentionStart = nativeText && bodyText.indexOf(nativeText, bodyCursor);
+    if (!nativeText || !accessibleText || mentionStart < bodyCursor) return text;
+    mentionParts.push({
+      before: bodyText.slice(bodyCursor, mentionStart),
+      accessibleText
+    });
+    bodyCursor = mentionStart + nativeText.length;
+  }
+  const tail = bodyText.slice(bodyCursor);
+  const replacements = [];
+  const phonePattern = new RegExp(PHONE_RE.source, 'g');
+  const ignorableBoundary = /^[\s\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/u;
+  const getIdentityRange = match => {
+    const trailingHour = match[0].match(/\s+\d{1,2}$/);
+    const hasTrailingTime = trailingHour &&
+      /^:\d{2}\b/.test(text.slice(match.index + match[0].length));
+    const raw = hasTrailingTime
+      ? match[0].slice(0, -trailingHour[0].length)
+      : match[0];
+    return isPhoneCandidate(raw, match.index, text, 'identity')
+      ? { start: match.index, end: match.index + raw.length }
+      : null;
+  };
+
+  if (mentionParts[0].before.trim()) {
+    let sourceCursor = text.indexOf(mentionParts[0].before);
+    if (sourceCursor < 0) return text;
+    sourceCursor += mentionParts[0].before.length;
+
+    for (let index = 0; index < mentionParts.length; index++) {
+      if (index > 0) {
+        const before = mentionParts[index].before;
+        if (!text.startsWith(before, sourceCursor)) return text;
+        sourceCursor += before.length;
+      }
+
+      phonePattern.lastIndex = sourceCursor;
+      const match = phonePattern.exec(text);
+      const identityRange = match && getIdentityRange(match);
+      if (!identityRange ||
+        !ignorableBoundary.test(text.slice(sourceCursor, match.index))) return text;
+      replacements.push({ start: identityRange.start, end: identityRange.end,
+        value: mentionParts[index].accessibleText });
+      sourceCursor = identityRange.end;
+    }
+    if (tail && !text.startsWith(tail, sourceCursor)) return text;
+  } else {
+    let trailingAnchor = tail;
+    if (!trailingAnchor.trim()) {
+      if (message.querySelector?.('[data-testid="quoted-message"]')) return text;
+      trailingAnchor = normalizeText(
+        message.querySelector?.('[data-testid="msg-meta"]')?.textContent || ''
+      );
+    }
+    if (!trailingAnchor.trim()) return text;
+    let sourceCursor = text.lastIndexOf(trailingAnchor);
+    if (sourceCursor < 0) return text;
+
+    for (let index = mentionParts.length - 1; index >= 0; index--) {
+      phonePattern.lastIndex = 0;
+      let previousMatch = null;
+      let match;
+      while ((match = phonePattern.exec(text))) {
+        const identityRange = getIdentityRange(match);
+        if (identityRange?.end <= sourceCursor &&
+          ignorableBoundary.test(text.slice(identityRange.end, sourceCursor))) {
+          previousMatch = { match, identityRange };
+        }
+        if (match.index >= sourceCursor) break;
+      }
+      if (!previousMatch) return text;
+      replacements.push({
+        start: previousMatch.identityRange.start,
+        end: previousMatch.identityRange.end,
+        value: mentionParts[index].accessibleText
+      });
+      sourceCursor = previousMatch.identityRange.start;
+      if (index > 0) {
+        const before = mentionParts[index].before;
+        const beforeStart = sourceCursor - before.length;
+        if (beforeStart < 0 || text.slice(beforeStart, sourceCursor) !== before) return text;
+        sourceCursor = beforeStart;
+      }
+    }
+  }
+
+  replacements.sort((a, b) => b.start - a.start);
+  for (const replacement of replacements) {
+    text = text.slice(0, replacement.start) + replacement.value + text.slice(replacement.end);
+  }
+  return text;
+}
+
 function filterMessageIdentities(text, el) {
   const message = el && el.closest && el.closest('.focusable-list-item');
   if (!message || !message.querySelector) {
@@ -248,7 +448,7 @@ function filterMessageIdentities(text, el) {
   const senderLabel = senderLabelEl && (senderLabelState?.raw || senderLabelEl.getAttribute('aria-label') || '')
     .replace(/:\s*$/, '').trim();
   const metadataSender = (senderMatch && senderMatch[1]) || authorPhone;
-  const bodyEl = message.querySelector('.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]');
+  const bodyEl = getPrimaryMessageBody(message);
   const body = bodyEl && normalizeText(bodyEl.textContent || '');
   const bodyCandidates = body ? [...new Set([body, body.replace(/^@\s*/, '')].filter(Boolean))] : [];
   const bodyStart = bodyCandidates.reduce((found, candidate) => {
@@ -436,6 +636,12 @@ export function refreshSenderDeviceLabels() {
 export function prepareNamedAttribute(el, name, value) {
   let raw = String(value);
   const isMessageLabel = isSenderDeviceMessageLabel(el, name);
+  const mentionState = name === 'aria-label' && messageMentionLabels.get(el);
+  if (isMessageLabel && mentionState && raw === mentionState.appliedValue) {
+    raw = mentionState.baseValue;
+  } else if (mentionState && (!isMessageLabel || raw !== mentionState.baseValue)) {
+    messageMentionLabels.delete(el);
+  }
   const documentState = name === 'aria-label' && documentCaptionLabels.get(el);
   if (isMessageLabel && documentState &&
     (raw === documentState.appliedValue || raw === documentState.rawValue)) {
@@ -456,9 +662,12 @@ export function prepareNamedAttribute(el, name, value) {
     el.matches?.('.focusable-list-item') &&
     el.closest?.(SELECTORS.conversationMessages) &&
     !hasDirectMetaAISender(el) &&
-    el.querySelector?.('[data-testid="icon-down-context"][role="button"][aria-label]')) {
+    el.querySelector?.(SELECTORS.messageContextMenuIndicator)) {
     raw = raw.replace(getMessageContextInstructionRegex(), '').trim();
   }
+  const mentionBaseValue = raw;
+  if (isMessageLabel) raw = restoreMessageMentionNames(raw, el);
+  const mentionsRestored = raw !== mentionBaseValue;
   const documentBaseValue = raw;
   let documentCaptionInserted = false;
   if (isMessageLabel) {
@@ -478,7 +687,9 @@ export function prepareNamedAttribute(el, name, value) {
   const baseValue = raw;
   if (isPrivacyMode && context) {
     const masked = applyPrivacyFilter(raw, context, el);
-    if (masked !== raw) rememberPrivacyAttribute(el, name, raw, masked);
+    if (masked !== raw) {
+      rememberPrivacyAttribute(el, name, mentionsRestored ? mentionBaseValue : raw, masked);
+    }
     raw = masked;
   }
 
@@ -496,7 +707,30 @@ export function prepareNamedAttribute(el, name, value) {
   } else {
     documentCaptionLabels.delete(el);
   }
+  if (mentionsRestored) {
+    messageMentionLabels.set(el, { baseValue: mentionBaseValue, appliedValue: decorated });
+  } else {
+    messageMentionLabels.delete(el);
+  }
   return decorated;
+}
+
+// Return the undecorated source without storing sender-device text as private raw data.
+export function getNamedAttributeSource(el, name) {
+  const current = el?.getAttribute?.(name) || '';
+  if (!current) return current;
+
+  const deviceState = name === 'aria-label' && senderDeviceLabels.get(el);
+  if (deviceState && current === deviceState.appliedValue) return deviceState.baseValue;
+
+  const privacyState = privacyAttributes.get(el)?.get(name);
+  if (privacyState && current === privacyState.masked) return privacyState.raw;
+
+  const documentState = name === 'aria-label' && documentCaptionLabels.get(el);
+  if (documentState && current === documentState.appliedValue) return documentState.rawValue;
+
+  // Preserve presented mention names instead of WhatsApp's private identity tokens.
+  return current;
 }
 
 Element.prototype.setAttribute = function(name, value) {
@@ -600,6 +834,11 @@ export function forgetPrivacyState(rootEl) {
   for (const el of [...documentCaptionLabels.keys()]) {
     if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
       documentCaptionLabels.delete(el);
+    }
+  }
+  for (const el of [...messageMentionLabels.keys()]) {
+    if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
+      messageMentionLabels.delete(el);
     }
   }
 }

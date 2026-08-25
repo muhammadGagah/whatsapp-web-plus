@@ -8,6 +8,7 @@ import {
 } from './config.js';
 import { armNextVoiceMessageCapture } from './audio-experiment.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
+import { handleMessageReaderShortcut } from './message-reader.js';
 import {
   appendSenderDevice,
   cleanString,
@@ -21,7 +22,6 @@ import {
 import {
   announce,
   announcePassiveMessages,
-  clearRememberedChatRow,
   clearRememberedMessageRow,
   clearMessageLog,
   clearStatusRegion,
@@ -44,11 +44,12 @@ import {
   getUserAnnouncementUntil,
   invalidatePassiveAnnouncements,
   isChatMainActive,
-  isNearChatListTop,
   isRenderedElement,
+  refreshMessageMentionNames,
   scheduleRoleFix
 } from './chat-accessibility.js';
 import {
+  getCommunityEmptyStateTargets,
   getDesktopAppPromo,
   getDesktopAppPromoCloseButton,
   toggleCleanUiMode,
@@ -104,6 +105,9 @@ let passiveAnnouncementTimer = null;
 let passiveAnnouncements = [];
 let passiveAnnouncementGeneration = 0;
 let pendingFocusRequest = 0;
+let pendingCommunityClose = null;
+let pendingCommunitySectionClose = null;
+const COMMUNITY_FOCUS_COMMIT_RETRIES = 3;
 
 const DELIVERY_STATUS_BY_KEY = Object.freeze({
   deliveryPending: 'Pending',
@@ -120,6 +124,8 @@ const SHORTCUT_REMAPS = Object.freeze({
 
 export function cancelPendingFocusRequests() {
   pendingFocusRequest++;
+  pendingCommunityClose = null;
+  pendingCommunitySectionClose = null;
 }
 
 function beginFocusRequest() {
@@ -413,6 +419,8 @@ export function togglePrivacyWithQueueReset(announceChange = true) {
     return false;
   }
   const enabled = isPrivacyModeEnabled();
+  const messageContainer = document.querySelector(SELECTORS.conversationMessages);
+  if (messageContainer) refreshMessageMentionNames(messageContainer);
   refreshStatusAccessibility();
   resetPassiveAnnouncementContext();
   clearMessageLog();
@@ -497,19 +505,318 @@ function getAdjacentMessageRow(node, preferLast = false) {
   return preferLast ? rows.at(-1) || null : rows[0] || null;
 }
 
+function getCommunityDrawer(node) {
+  if (!node || node.nodeType !== 1) return null;
+  if (node.getAttribute?.('data-testid') === 'community-tab-drawer') return node;
+  return node.closest?.(SELECTORS.communityDrawer) || null;
+}
+
+function armCommunityCloseRecovery(event) {
+  if ((event.key !== 'Escape' && event.code !== 'Escape') ||
+    event.altKey || event.ctrlKey || event.shiftKey || event.metaKey ||
+    event.repeat || event.isComposing || event.defaultPrevented) return;
+  const drawer = getCommunityDrawer(event.target) ||
+    getCommunityDrawer(document.activeElement) ||
+    document.querySelector(SELECTORS.communityDrawer);
+  if (!drawer || !hasActiveState(getNavButton('navCommunities'))) return;
+  pendingCommunityClose = {
+    drawer,
+    origin: document.activeElement,
+    allowCommunityFocusShell: true,
+    request: beginFocusRequest()
+  };
+}
+
+function getCommunityEmptyState() {
+  return getCommunityEmptyStateTargets()[0] || null;
+}
+
+function getCommunityEmptyStateFocusShell(panel) {
+  const drawerMiddle = panel?.closest?.(SELECTORS.drawerMiddle);
+  let ancestor = panel?.parentElement || null;
+  while (ancestor && ancestor !== drawerMiddle) {
+    if (ancestor.getAttribute?.('tabindex') === '-1') return ancestor;
+    ancestor = ancestor.parentElement;
+  }
+  return null;
+}
+
+function armCommunitySectionCloseRecovery(event) {
+  if ((event.key !== 'Escape' && event.code !== 'Escape') ||
+    event.altKey || event.ctrlKey || event.shiftKey || event.metaKey ||
+    event.repeat || event.isComposing || event.defaultPrevented ||
+    !hasActiveState(getNavButton('navChats')) ||
+    getActiveNonChatTabLabelKey() ||
+    document.querySelector(SELECTORS.communityDrawer)) return;
+
+  const panel = getCommunityEmptyState();
+  if (!panel || !panel.closest?.(SELECTORS.drawerMiddle)) return;
+  const origin = document.activeElement;
+  const focusShell = getCommunityEmptyStateFocusShell(panel);
+  const originCanBeStranded = !origin || origin === document.body ||
+    origin === document.documentElement || origin.isConnected === false ||
+    panel.contains?.(origin) || focusShell?.contains?.(origin);
+  if (!originCanBeStranded) return;
+  pendingCommunitySectionClose = {
+    panel,
+    focusShell,
+    origin,
+    allowCommunityFocusShell: true,
+    request: beginFocusRequest()
+  };
+}
+
+function getCommunityRecoveryFocusTargets(recovery) {
+  if (!recovery?.allowCommunityFocusShell) return { panel: null, focusShell: null };
+
+  const currentPanel = getCommunityEmptyState();
+  const panel = currentPanel?.closest?.(SELECTORS.drawerMiddle) ? currentPanel : recovery.panel;
+  const currentFocusShell = panel ? getCommunityEmptyStateFocusShell(panel) : null;
+  const focusShell = currentFocusShell || recovery.focusShell || null;
+  if (currentPanel?.closest?.(SELECTORS.drawerMiddle)) recovery.panel = currentPanel;
+  if (currentFocusShell) recovery.focusShell = currentFocusShell;
+  return { panel, focusShell };
+}
+
+function isKnownTransientCommunityFocus(active, recovery) {
+  const { panel, focusShell } = getCommunityRecoveryFocusTargets(recovery);
+  return !!active && (
+    active === panel || panel?.contains?.(active) ||
+    active === focusShell || focusShell?.contains?.(active)
+  );
+}
+
+function armCommunityChatCloseRecovery(event) {
+  if ((event.key !== 'Escape' && event.code !== 'Escape') ||
+    event.altKey || event.ctrlKey || event.shiftKey || event.metaKey ||
+    event.repeat || event.isComposing || event.defaultPrevented ||
+    !hasActiveState(getNavButton('navChats')) || getActiveNonChatTabLabelKey()) return;
+
+  const main = document.querySelector(SELECTORS.main);
+  const conversation = main?.querySelector?.(SELECTORS.conversationMessages);
+  if (!conversation || !isChatMainActive(main)) return;
+
+  const recovery = {
+    origin: document.activeElement,
+    originRoot: main,
+    allowCommunityFocusShell: true,
+    request: beginFocusRequest()
+  };
+  const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+
+  const tryRecover = attempt => {
+    if (!isFocusRequestCurrent(recovery.request) || getActiveModal() ||
+      !hasActiveState(getNavButton('navChats')) || getActiveNonChatTabLabelKey()) return;
+
+    const chatClosed = !isChatMainActive();
+    const communityPanel = getCommunityEmptyState();
+    if (chatClosed && communityPanel?.closest?.(SELECTORS.drawerMiddle)) {
+      recovery.panel = communityPanel;
+      recovery.focusShell = getCommunityEmptyStateFocusShell(communityPanel);
+      recoverChatListFocusAfterCommunityClose(
+        recovery,
+        () => !isChatMainActive() && !!getCommunityEmptyState()
+      );
+      return;
+    }
+
+    if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+  };
+
+  schedule(() => tryRecover(1));
+}
+
+function isCommunityChatFocusRecoveryReady(request, isClosed) {
+  return isFocusRequestCurrent(request) && !getActiveModal() && isClosed() &&
+    hasActiveState(getNavButton('navChats')) && !getActiveNonChatTabLabelKey();
+}
+
+function isCommunityRecoveryFocusCandidate(active, recovery, chatList) {
+  return !active || active === document.body || active === document.documentElement ||
+    active.isConnected === false || active === recovery.origin || chatList?.contains?.(active) ||
+    isKnownTransientCommunityFocus(active, recovery);
+}
+
+function recoverChatListFocusAfterCommunityClose(recovery, isClosed) {
+  const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+  let lastStableRow = null;
+  let lastStableTarget = null;
+  let lastStableChatList = null;
+  let stableFrames = 0;
+  let attempt = 0;
+
+  const shouldContinue = () =>
+    isCommunityChatFocusRecoveryReady(recovery.request, isClosed);
+
+  const verifyFinalFocus = (row, target, chatList, retry = 0, stableFrames = 0) => {
+    schedule(() => {
+      if (!shouldContinue()) return;
+      if (target.isConnected && document.activeElement === target) {
+        if (stableFrames >= 1) return;
+        verifyFinalFocus(row, target, chatList, retry, stableFrames + 1);
+        return;
+      }
+
+      const active = document.activeElement;
+      if (retry >= COMMUNITY_FOCUS_COMMIT_RETRIES ||
+        !isCommunityRecoveryFocusCandidate(active, recovery, chatList)) return;
+
+      // Re-resolve recycled rows and abandon retries after unrelated focus moves.
+      const canRetry = () => shouldContinue() && isCommunityRecoveryFocusCandidate(
+        document.activeElement,
+        recovery,
+        chatList
+      );
+      focusChatRow(
+        row,
+        null,
+        canRetry,
+        (focusedRow, focusedTarget) => verifyFinalFocus(
+          focusedRow,
+          focusedTarget,
+          focusedRow?.closest?.(SELECTORS.chatListInSide) || chatList,
+          retry + 1,
+          0
+        )
+      );
+    });
+  };
+
+  const focusStableRow = (row, target, chatList) => {
+    if (!shouldContinue() || !isCommunityRecoveryFocusCandidate(
+      document.activeElement,
+      recovery,
+      chatList
+    )) return;
+
+    // A brief grid focus forces a fresh platform focus event after Communities closes.
+    if (!focusItem(chatList)) return;
+    const shouldFinalizeRowFocus = () => {
+      if (!shouldContinue()) return false;
+      return isCommunityRecoveryFocusCandidate(
+        document.activeElement,
+        recovery,
+        chatList
+      );
+    };
+    focusChatRow(
+      row,
+      null,
+      shouldFinalizeRowFocus,
+      (focusedRow, focusedTarget) => verifyFinalFocus(
+        focusedRow,
+        focusedTarget,
+        chatList
+      )
+    );
+  };
+
+  const waitForStableRow = () => {
+    if (!shouldContinue()) return;
+    attempt++;
+
+    const rows = getChatListRows();
+    const row = getPreferredChatRow(
+      rows,
+      document.body,
+      attempt >= SHORTCUT_RENDER_RETRIES
+    );
+    const target = getChatRowActivator(row);
+    const chatList = row?.closest?.(SELECTORS.chatListInSide);
+    const validTarget = row?.isConnected && target?.isConnected && chatList?.isConnected &&
+      isRenderedElement(chatList) && isRenderedElement(row) && isRenderedElement(target);
+
+    if (!validTarget) {
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(waitForStableRow);
+      return;
+    }
+
+    if (row === lastStableRow && target === lastStableTarget && chatList === lastStableChatList) {
+      stableFrames++;
+    } else {
+      lastStableRow = row;
+      lastStableTarget = target;
+      lastStableChatList = chatList;
+      stableFrames = 1;
+    }
+
+    if (stableFrames < 2) {
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(waitForStableRow);
+      return;
+    }
+    focusStableRow(row, target, chatList);
+  };
+
+  waitForStableRow();
+}
+
 export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSibling = null) {
   const remembered = getRememberedFocus();
+  const communityClose = pendingCommunityClose && (
+    rootEl === pendingCommunityClose.drawer || rootEl.contains?.(pendingCommunityClose.drawer)
+  ) ? pendingCommunityClose : null;
+  if (communityClose) pendingCommunityClose = null;
+  const communitySectionClose = pendingCommunitySectionClose && (
+    rootEl === pendingCommunitySectionClose.panel ||
+    rootEl.contains?.(pendingCommunitySectionClose.panel)
+  ) ? pendingCommunitySectionClose : null;
+  if (communitySectionClose) pendingCommunitySectionClose = null;
   const lostChat = remembered.lastFocusedChatRowNode &&
     (rootEl === remembered.lastFocusedChatRowNode || rootEl.contains?.(remembered.lastFocusedChatRowNode));
   const lostMessage = remembered.lastFocusedMessageNode &&
     (rootEl === remembered.lastFocusedMessageNode || rootEl.contains?.(remembered.lastFocusedMessageNode));
-  if (!lostChat && !lostMessage) return;
+  if (!communityClose && !communitySectionClose && !lostChat && !lostMessage) return;
 
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   schedule(() => {
-    if (getActiveModal() || document.activeElement !== document.body) return;
+    if (communityClose) {
+      // Recover NVDA from the removed Communities subtree after the route settles.
+      const tryRecover = attempt => {
+        const active = document.activeElement;
+        const focusIsStranded = isCommunityRecoveryFocusCandidate(
+          active,
+          communityClose,
+          null
+        ) || getChatListRows().some(row => row.contains?.(active));
+        if (!isFocusRequestCurrent(communityClose.request) || getActiveModal() ||
+          document.querySelector(SELECTORS.communityDrawer) || !focusIsStranded) return;
+        const switchedElsewhere = ['navStatus', 'navChannels', 'navMetaAI']
+          .some(selectorKey => hasActiveState(getNavButton(selectorKey)));
+        if (switchedElsewhere) return;
+        if (hasActiveState(getNavButton('navChats')) &&
+          !hasActiveState(getNavButton('navCommunities'))) {
+          recoverChatListFocusAfterCommunityClose(
+            communityClose,
+            () => !document.querySelector(SELECTORS.communityDrawer) &&
+              !hasActiveState(getNavButton('navCommunities'))
+          );
+          return;
+        }
+        if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+      };
+      tryRecover(1);
+      return;
+    }
+    if (communitySectionClose) {
+      const active = document.activeElement;
+      const focusIsStranded = isCommunityRecoveryFocusCandidate(
+        active,
+        communitySectionClose,
+        null
+      ) || getChatListRows().some(row => row.contains?.(active));
+      if (!isFocusRequestCurrent(communitySectionClose.request) || getActiveModal() ||
+        getCommunityEmptyState() ||
+        !hasActiveState(getNavButton('navChats')) ||
+        getActiveNonChatTabLabelKey() || !focusIsStranded) return;
+      recoverChatListFocusAfterCommunityClose(
+        communitySectionClose,
+        () => !getCommunityEmptyState()
+      );
+      return;
+    }
+    if (getActiveModal()) return;
+    if (document.activeElement !== document.body) return;
     if (lostChat) {
-      clearRememberedChatRow();
       focusChatListShortcut(document.body);
     } else {
       clearRememberedMessageRow();
@@ -782,25 +1089,7 @@ export function focusChatListShortcut(origin = document.activeElement) {
   const tryFocus = attempt => {
     if (!isFocusRequestCurrent(request) || getActiveModal()) return;
     const rows = getChatListRows();
-    const mainActive = isChatMainActive();
-    const fromChatSearch = !!(origin && origin.closest && origin.closest(SELECTORS.chatSearch));
-    let target = fromChatSearch ? null : getPreferredChatRow(rows, origin);
-    if (!target && (!mainActive || fromChatSearch)) {
-      const scroller = document.querySelector(SELECTORS.chatListScroller);
-      if (scroller && scroller.scrollTop > 0) {
-        scroller.scrollTop = 0;
-        if (attempt < SHORTCUT_RENDER_RETRIES) {
-          schedule(() => tryFocus(attempt + 1));
-          return;
-        }
-      }
-      const firstRow = rows[0] || null;
-      if (firstRow && !isNearChatListTop(firstRow) && attempt < SHORTCUT_RENDER_RETRIES) {
-        schedule(() => tryFocus(attempt + 1));
-        return;
-      }
-      target = firstRow && isNearChatListTop(firstRow) ? firstRow : null;
-    }
+    const target = getPreferredChatRow(rows, origin, attempt >= SHORTCUT_RENDER_RETRIES);
     const retryOrAnnounce = () => {
       if (attempt < SHORTCUT_RENDER_RETRIES) {
         schedule(() => tryFocus(attempt + 1));
@@ -937,7 +1226,6 @@ export function jumpToUnreadShortcut() {
     const messageContainer = main.querySelector(SELECTORS.conversationMessages) || main;
     const target = findUnreadMessageTarget(messageContainer);
     if (!target && unreadTarget && attempt < SHORTCUT_RENDER_RETRIES) {
-      // scrollTop is a viewport hint; use a stable WhatsApp message index if one becomes available.
       messageContainer.scrollTop = unreadTarget.scrollTop;
       schedule(() => tryJump(attempt + 1));
       return;
@@ -1107,6 +1395,8 @@ function remapWhatsAppShortcut(e) {
 
 function handleNavShortcut(e) {
   if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return false;
+
+  if (handleMessageReaderShortcut(e)) return true;
 
   const navTargets = {
     Digit1: ['navChats', t('chats')],
@@ -1311,6 +1601,11 @@ export function handleShortcuts(e) {
   }
   if (handleIncomingCallShortcut(e)) return;
   const activeModal = getActiveModal();
+  if (!activeModal) {
+    armCommunityCloseRecovery(e);
+    armCommunitySectionCloseRecovery(e);
+    armCommunityChatCloseRecovery(e);
+  }
   if (handleModalMediaShortcut(e, activeModal)) return;
   if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || activeModal) return;
   if (handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();

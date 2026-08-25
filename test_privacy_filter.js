@@ -7,7 +7,7 @@ const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
     .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
 const source = fs.readFileSync(scriptPath, 'utf8').replace(
     /\}\)\(\);\s*\n\s*\} catch \(error\) \{/,
-    'globalThis.__privacyTest = { cleanString, cleanElementAttributes, cleanNamedAttribute, prepareNamedAttribute, getPrivacyContext, getDirectMetaAISender, getMessageContextInstructionRegex, setCustomText, setSenderDeviceAnnouncement, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), restorePrivacyAttributes, seedPrivacyState: rememberPrivacyAttribute }; })();\n  } catch (error) {'
+    'globalThis.__privacyTest = { cleanString, cleanElementAttributes, cleanNamedAttribute, prepareNamedAttribute, getPrivacyContext, getDirectMetaAISender, getMessageContextInstructionRegex, setCustomText, setSenderDeviceAnnouncement, setPrivacy(value) { isPrivacyMode = value; }, hasPrivacyState: (el, name) => !!privacyAttributes.get(el)?.has(name), restorePrivacyAttributes, seedPrivacyState: rememberPrivacyAttribute }; })();\n  } catch (error) {'
 );
 class Element {
     constructor() {
@@ -15,6 +15,7 @@ class Element {
         this.messageContext = false;
         this.closestHandler = null;
         this.queryHandler = null;
+        this.queryAllHandler = null;
         this.classList = {
             contains: token => (this.getAttribute('class') || '').split(/\s+/).includes(token)
         };
@@ -30,16 +31,23 @@ class Element {
     }
     matches() { return false; }
     querySelector(selector) { return this.queryHandler ? this.queryHandler(selector) : null; }
-    querySelectorAll() { return []; }
+    querySelectorAll(selector) { return this.queryAllHandler ? this.queryAllHandler(selector) : []; }
 }
 Element.prototype.setAttribute = function (name, value) { this.attributes.set(name, String(value)); };
 Element.prototype.removeAttribute = function (name) { this.attributes.delete(name); };
+Object.defineProperty(Element.prototype, 'ariaLabel', {
+    get() { return this.getAttribute('aria-label') || ''; },
+    set(value) { this.attributes.set('aria-label', String(value)); },
+    configurable: true,
+    enumerable: true
+});
 Element.prototype.focus = function () { this.focusCalled = true; };
 
 const storedSettings = new Map();
 const sandbox = {
     Element,
     HTMLElement: Element,
+    URL,
     console,
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     document: { readyState: 'loading', addEventListener() {}, querySelector() { return null; } },
@@ -65,6 +73,7 @@ const getDirectMetaAISender = sandbox.__privacyTest.getDirectMetaAISender;
 const getMessageContextInstructionRegex = sandbox.__privacyTest.getMessageContextInstructionRegex;
 const setCustomText = sandbox.__privacyTest.setCustomText;
 const setSenderDeviceAnnouncement = sandbox.__privacyTest.setSenderDeviceAnnouncement;
+const setPrivacy = sandbox.__privacyTest.setPrivacy;
 const hasPrivacyState = sandbox.__privacyTest.hasPrivacyState;
 const restorePrivacyAttributes = sandbox.__privacyTest.restorePrivacyAttributes;
 const seedPrivacyState = sandbox.__privacyTest.seedPrivacyState;
@@ -144,6 +153,174 @@ const nonFocusableMessageContent = {
         return null;
     }
 };
+function createMessageElement(bodyText) {
+    const el = new Element();
+    el.nodeType = 1;
+    el.isConnected = true;
+    el.matches = selector => selector === '.focusable-list-item';
+    el.closestHandler = selector => {
+        if (selector === 'div#main') return main;
+        if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+        if (selector === '.focusable-list-item') return el;
+        return null;
+    };
+    el.queryHandler = selector =>
+        selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]'
+            ? { textContent: bodyText }
+            : null;
+    return el;
+}
+
+function createMention(name) {
+    const mention = new Element();
+    mention.textContent = `@~${name}`;
+    mention.setAttribute('data-testid', 'select-all selectable-text');
+    mention.setAttribute('data-plain-text', `@~${name}`);
+    mention.setAttribute('data-app-text-template', 'opaque@lid');
+    mention.closestHandler = () => null;
+    return mention;
+}
+const firstNamedMention = createMention('Member One');
+const secondNamedMention = createMention('Member Two');
+secondNamedMention.setAttribute('data-plain-text', '@~Stale Member');
+const namedMentionBodyText =
+    'Congratulations, @~Member One , @~Member Two';
+const quotedSelectableText = new Element();
+quotedSelectableText.textContent = 'Massage';
+quotedSelectableText.closestHandler = selector =>
+    selector === '[data-testid="quoted-message"]' ? quotedSelectableText : null;
+quotedSelectableText.queryAllHandler = () => [];
+const namedMentionBody = new Element();
+namedMentionBody.textContent = namedMentionBodyText;
+namedMentionBody.closestHandler = () => null;
+namedMentionBody.queryAllHandler = selector =>
+    selector.includes('[data-plain-text^="@"]')
+        ? [firstNamedMention, secondNamedMention]
+        : [];
+const namedMentionMessage = createMessageElement(namedMentionBodyText);
+namedMentionMessage.queryAllHandler = selector => {
+    if (selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]') {
+        return [quotedSelectableText, namedMentionBody];
+    }
+    return [];
+};
+const nativeNamedMentionLabel =
+    'Maybe +62 811-1111-1111 replied Congratulations, +62 812-2222-2222 , ' +
+    '+62 813-3333-3333 to quoted message from Member Three: Massage 07:13';
+const privateNamedMentionLabel = prepareNamedAttribute(
+    namedMentionMessage,
+    'aria-label',
+    nativeNamedMentionLabel
+);
+assert.equal(
+    privateNamedMentionLabel,
+    'Maybe Participant replied Congratulations, @Member One , @Member Two ' +
+        'to quoted message from Member Three: Massage 07:13',
+    'privacy uses primary-body mention names even when quoted selectable text appears first'
+);
+assert.doesNotMatch(privateNamedMentionLabel, /\+62|Participant\s*,\s*Participant/);
+namedMentionMessage.attributes.set('aria-label', privateNamedMentionLabel);
+firstNamedMention.textContent = '@~Member Updated';
+firstNamedMention.setAttribute('data-plain-text', '@~Member Updated');
+namedMentionBody.textContent = 'Congratulations, @~Member Updated , @~Member Two';
+cleanNamedAttribute(namedMentionMessage, 'aria-label');
+assert.equal(
+    namedMentionMessage.getAttribute('aria-label'),
+    'Maybe Participant replied Congratulations, @Member Updated , @Member Two ' +
+        'to quoted message from Member Three: Massage 07:13',
+    'a rendered mention mutation is recomputed from the retained native label in privacy mode'
+);
+setPrivacy(false);
+cleanNamedAttribute(namedMentionMessage, 'aria-label');
+assert.equal(
+    namedMentionMessage.getAttribute('aria-label'),
+    'Maybe +62 811-1111-1111 replied Congratulations, @Member Updated , @Member Two ' +
+        'to quoted message from Member Three: Massage 07:13',
+    'the retained native label also refreshes mention names when privacy is turned off'
+);
+assert.equal(
+    prepareNamedAttribute(namedMentionMessage, 'aria-label', nativeNamedMentionLabel),
+    'Maybe +62 811-1111-1111 replied Congratulations, @Member Updated , @Member Two ' +
+        'to quoted message from Member Three: Massage 07:13',
+    'privacy off still replaces opaque mention identities with @Name while retaining sender identity'
+);
+setPrivacy(true);
+
+const leadingNamedMention = createMention('Member Four');
+const leadingMentionBody = new Element();
+leadingMentionBody.textContent = '@~Member Four please review';
+leadingMentionBody.closestHandler = () => null;
+leadingMentionBody.queryAllHandler = selector =>
+    selector.includes('[data-plain-text^="@"]') ? [leadingNamedMention] : [];
+const leadingMentionMessage = createMessageElement(leadingMentionBody.textContent);
+leadingMentionMessage.queryAllHandler = selector =>
+    selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]'
+        ? [leadingMentionBody]
+        : [];
+assert.equal(
+    prepareNamedAttribute(
+        leadingMentionMessage,
+        'aria-label',
+        'Member Five +62 814-4444-5555 please review 08:00'
+    ),
+    'Member Five @Member Four please review 08:00',
+    'a message body that starts with a mention uses its trailing body text as a safe anchor'
+);
+
+const mentionOnlyFirst = createMention('Member Eight');
+const mentionOnlySecond = createMention('Member Nine');
+const mentionOnlyBody = new Element();
+mentionOnlyBody.textContent = '@~Member Eight , @~Member Nine';
+mentionOnlyBody.closestHandler = () => null;
+mentionOnlyBody.queryAllHandler = selector =>
+    selector.includes('[data-plain-text^="@"]') ? [mentionOnlyFirst, mentionOnlySecond] : [];
+const mentionOnlyMeta = new Element();
+mentionOnlyMeta.textContent = '08:02';
+const mentionOnlyMessage = createMessageElement(mentionOnlyBody.textContent);
+mentionOnlyMessage.queryAllHandler = selector =>
+    selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]'
+        ? [mentionOnlyBody]
+        : [];
+const mentionOnlyFallbackQuery = mentionOnlyMessage.queryHandler;
+mentionOnlyMessage.queryHandler = selector => {
+    if (selector === '[data-testid="msg-meta"]') return mentionOnlyMeta;
+    if (selector === '[data-testid="quoted-message"]') return null;
+    return mentionOnlyFallbackQuery(selector);
+};
+assert.equal(
+    prepareNamedAttribute(
+        mentionOnlyMessage,
+        'aria-label',
+        'Member Ten +62 816-6666-7777 , +62 817-7777-8888 08:02'
+    ),
+    'Member Ten @Member Eight , @Member Nine 08:02',
+    'a mention-only body is bounded from the native message metadata without consuming its time'
+);
+
+const phoneMention = createMention('+62 815-5555-6666');
+const phoneMentionBody = new Element();
+phoneMentionBody.textContent = 'Hello @~+62 815-5555-6666';
+phoneMentionBody.closestHandler = () => null;
+phoneMentionBody.queryAllHandler = selector =>
+    selector.includes('[data-plain-text^="@"]') ? [phoneMention] : [];
+const phoneMentionMessage = createMessageElement(phoneMentionBody.textContent);
+phoneMentionMessage.queryAllHandler = selector =>
+    selector === '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]'
+        ? [phoneMentionBody]
+        : [];
+const nativePhoneMentionLabel = 'Member Six Hello +62 815-5555-6666 08:01';
+assert.equal(
+    prepareNamedAttribute(phoneMentionMessage, 'aria-label', nativePhoneMentionLabel),
+    'Member Six Hello @Participant 08:01',
+    'privacy masks an unnamed phone mention as @Participant'
+);
+setPrivacy(false);
+assert.equal(
+    prepareNamedAttribute(phoneMentionMessage, 'aria-label', nativePhoneMentionLabel),
+    'Member Six Hello @+62 815-5555-6666 08:01',
+    'privacy off retains an unnamed phone mention while preserving the @ marker'
+);
+setPrivacy(true);
 const profileControl = {
     closest(selector) {
         if (selector === 'div#main') return main;
@@ -394,6 +571,77 @@ assert.equal(
     'Open Phone number link'
 );
 assert.equal(phoneLink.getAttribute('href'), 'https://wa.me/6281234567890');
+const telLink = new Element();
+telLink.setAttribute('href', 'tel:+6281234567890');
+telLink.matches = selector => selector === 'a[href], [role="link"]';
+telLink.closestHandler = phoneLink.closestHandler;
+assert.equal(
+    prepareNamedAttribute(telLink, 'aria-label', 'Call +62 812-3456-7890'),
+    'Call Phone number link',
+    'an explicit tel destination masks its phone-number label'
+);
+const phoneQueryLink = new Element();
+phoneQueryLink.setAttribute('href', 'https://example.com/start?phone=6281234567890');
+phoneQueryLink.matches = telLink.matches;
+phoneQueryLink.closestHandler = phoneLink.closestHandler;
+assert.equal(
+    prepareNamedAttribute(phoneQueryLink, 'aria-label', 'Open phone=6281234567890'),
+    'Open Phone number link',
+    'an explicit phone query parameter masks its phone-number label'
+);
+const numericWebLink = new Element();
+numericWebLink.setAttribute('href', 'https://example.com/order/123456789012');
+numericWebLink.matches = telLink.matches;
+numericWebLink.closestHandler = phoneLink.closestHandler;
+assert.equal(
+    prepareNamedAttribute(numericWebLink, 'aria-label', 'Order 123456789012'),
+    'Order 123456789012',
+    'a numeric label on a normal web link is not treated as a phone link'
+);
+assert.equal(hasPrivacyState(numericWebLink, 'aria-label'), false);
+const ipWebLink = new Element();
+ipWebLink.setAttribute('href', 'http://43.160.237.245/status');
+ipWebLink.matches = telLink.matches;
+ipWebLink.closestHandler = phoneLink.closestHandler;
+assert.equal(
+    prepareNamedAttribute(ipWebLink, 'aria-label', 'Server 43.160.237.245'),
+    'Server 43.160.237.245',
+    'an IPv4 web destination keeps its accessible name'
+);
+assert.equal(hasPrivacyState(ipWebLink, 'aria-label'), false);
+for (const deceptiveHref of [
+    'https://example.com/path/wa.me/6281234567890',
+    'https://evil-wa.me/6281234567890',
+    'https://example.com/path/phone=6281234567890'
+]) {
+    const deceptiveLink = new Element();
+    deceptiveLink.setAttribute('href', deceptiveHref);
+    deceptiveLink.matches = telLink.matches;
+    deceptiveLink.closestHandler = phoneLink.closestHandler;
+    const deceptiveLabel = `Open ${deceptiveHref}`;
+    assert.equal(
+        prepareNamedAttribute(deceptiveLink, 'aria-label', deceptiveLabel),
+        deceptiveLabel,
+        `a visible phone-like URL substring is not sufficient evidence: ${deceptiveHref}`
+    );
+    assert.equal(hasPrivacyState(deceptiveLink, 'aria-label'), false);
+    assert.equal(
+        clean(`Message ${deceptiveHref}`, 'message', nonFocusableMessageContent),
+        `Message ${deceptiveHref}`,
+        `message text preserves a deceptive phone-like URL: ${deceptiveHref}`
+    );
+}
+const malformedPhoneLink = new Element();
+malformedPhoneLink.setAttribute('href', 'tel:%');
+malformedPhoneLink.matches = telLink.matches;
+malformedPhoneLink.closestHandler = phoneLink.closestHandler;
+assert.doesNotThrow(() => {
+    assert.equal(
+        prepareNamedAttribute(malformedPhoneLink, 'aria-label', 'Account 123456789012'),
+        'Account 123456789012'
+    );
+});
+assert.equal(hasPrivacyState(malformedPhoneLink, 'aria-label'), false);
 const unrelatedLabel = new Element();
 const unrelatedBidiText = 'Outside  label \u2067\u05D0\u05D1\u05D2\u2069';
 unrelatedLabel.setAttribute('aria-label', unrelatedBidiText);
@@ -406,8 +654,95 @@ assert.equal(
 assert.equal(clean('contact-preview 081362579858 20:47', 'message'), 'contact-preview 081362579858 20:47');
 assert.equal(clean('081362579858 hello 20:47', 'message'), '081362579858 hello 20:47');
 assert.equal(
+    clean('Server 43.160.237.245 is unavailable', 'message', nonFocusableMessageContent),
+    'Server 43.160.237.245 is unavailable',
+    'privacy preserves IPv4 addresses in message content'
+);
+assert.equal(
+    clean('Nomor rekening 1234567890', 'message', nonFocusableMessageContent),
+    'Nomor rekening 1234567890',
+    'privacy preserves an unformatted bank account number in message content'
+);
+assert.equal(
+    clean('Bank account 1234 5678 9012', 'message', nonFocusableMessageContent),
+    'Bank account 1234 5678 9012',
+    'privacy preserves a grouped bank account number in message content'
+);
+assert.equal(
+    clean('Reference 202608210001', 'message', nonFocusableMessageContent),
+    'Reference 202608210001',
+    'privacy preserves an ambiguous numeric reference in message content'
+);
+for (const ambiguousNumber of [
+    '12345678901234',
+    '1234567890123456',
+    '1234 5678 9012 3456'
+]) {
+    assert.equal(
+        clean(`Account ${ambiguousNumber}`, 'message', nonFocusableMessageContent),
+        `Account ${ambiguousNumber}`,
+        `privacy preserves ambiguous message digits: ${ambiguousNumber}`
+    );
+}
+const preservedNumericBody = 'Server 43.160.237.245 account 1234567890123456';
+const preservedNumericLabel = `Message Author ${preservedNumericBody} 10:00`;
+const preservedNumericMessage = createMessageElement(preservedNumericBody);
+preservedNumericMessage.setAttribute('aria-label', preservedNumericLabel);
+preservedNumericMessage.setAttribute('title', preservedNumericLabel);
+assert.equal(preservedNumericMessage.getAttribute('aria-label'), preservedNumericLabel);
+assert.equal(preservedNumericMessage.getAttribute('title'), preservedNumericLabel);
+assert.equal(hasPrivacyState(preservedNumericMessage, 'aria-label'), false);
+assert.equal(hasPrivacyState(preservedNumericMessage, 'title'), false);
+assert.equal(
+    clean('Call 0813-6257-9858 tomorrow', 'message', nonFocusableMessageContent),
+    'Call 0813-6257-9858 tomorrow',
+    'an ambiguous national number remains message content even near a phone cue'
+);
+assert.equal(
     clean('System notice: +62 812-3333-4444 joined via invite link', 'message', nonFocusableMessageContent),
     'System notice: Participant joined via invite link'
+);
+assert.equal(
+    clean(
+        'Open https://example.com/start?phone=6281234567890',
+        'message',
+        nonFocusableMessageContent
+    ),
+    'Open Phone number link',
+    'an actual phone query parameter is masked in visible message text'
+);
+assert.equal(
+    clean('See https://wa.me/6281234567890.', 'message', nonFocusableMessageContent),
+    'See Phone number link.',
+    'sentence punctuation is preserved after masking a wa.me reference'
+);
+assert.equal(
+    clean(
+        'Use https://example.com/start?phone=6281234567890, then continue',
+        'message',
+        nonFocusableMessageContent
+    ),
+    'Use Phone number link, then continue',
+    'comma punctuation is preserved after masking a phone query reference'
+);
+assert.equal(
+    clean('(https://wa.me/6281234567890)', 'message', nonFocusableMessageContent),
+    '(Phone number link)',
+    'a closing parenthesis is preserved outside a masked wa.me reference'
+);
+assert.equal(
+    clean('[https://example.com/start?phone=6281234567890]', 'message', nonFocusableMessageContent),
+    '[Phone number link]',
+    'a closing bracket is preserved outside a masked phone query reference'
+);
+assert.equal(
+    clean(
+        '\u2067https://wa.me/6281234567890\u2069.',
+        'message',
+        nonFocusableMessageContent
+    ),
+    '\u2067Phone number link\u2069.',
+    'bidi isolation and sentence punctuation are preserved around a masked phone reference'
 );
 assert.equal(clean('081362579858 online', 'identity'), 'Participant online');
 assert.equal(clean('415-555-2671 online', 'identity'), 'Participant online');
@@ -550,7 +885,8 @@ assert.equal(
 );
 assert.equal(
     clean('Open https://example.com/contact/081362579858', 'message', nonFocusableMessageContent),
-    'Open Phone number link'
+    'Open https://example.com/contact/081362579858',
+    'privacy preserves numeric paths on non-phone web URLs'
 );
 assert.equal(
     clean(
@@ -558,7 +894,7 @@ assert.equal(
         'message',
         replyMessage
     ),
-    'Maybe Contact A replied Hubungi Participant to quoted message from Maybe Contact B: Info WhatsApp Participant 10:45'
+    'Maybe Contact A replied Hubungi 0813-6257-9858 to quoted message from Maybe Contact B: Info WhatsApp 0812-9505-8785 10:45'
 );
 assert.equal(setCustomText('quote-prefix', 'mensaje citado de'), true);
 assert.equal(
@@ -567,7 +903,7 @@ assert.equal(
         'message',
         replyMessage
     ),
-    'Maybe Contact A respondió Oke a mensaje citado de Maybe Contact B: Info WhatsApp Participant 10:45'
+    'Maybe Contact A respondió Oke a mensaje citado de Maybe Contact B: Info WhatsApp 0812-9505-8785 10:45'
 );
 assert.equal(setCustomText('quote-prefix', ''), true);
 assert.equal(
@@ -584,7 +920,7 @@ assert.equal(
         'message',
         replyMessage
     ),
-    'Maybe Contact A membalas Isi Participant ke pesan yang dikutip dari Maybe Contact B: Info WhatsApp Participant 10:45'
+    'Maybe Contact A membalas Isi 0813-6257-9858 ke pesan yang dikutip dari Maybe Contact B: Info WhatsApp 0812-9505-8785 10:45'
 );
 assert.equal(
     clean(
@@ -600,7 +936,7 @@ assert.equal(
         'message',
         statusQuoteMessage
     ),
-    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Info WhatsApp Participant 10:45'
+    'Maybe Contact A replied Oke to quoted message from Maybe Contact B: Info WhatsApp 0812-9505-8785 10:45'
 );
 assert.equal(
     clean(
@@ -616,7 +952,7 @@ assert.equal(
 );
 assert.equal(
     clean('Maybe Contact G +62 899-0002-593 Hubungi 0812-9505-8785 11:18', 'message', groupTextMessage),
-    'Maybe Contact G Hubungi Participant 11:18'
+    'Maybe Contact G Hubungi 0812-9505-8785 11:18'
 );
 assert.equal(
     clean('Maybe Contact H +1 (249) 878-8863 just got the delay vst. gonna test it soon 23:37', 'message', consecutiveUnknownMessage),
@@ -644,11 +980,12 @@ assert.equal(
 );
 assert.equal(
     clean('+62 852-1859-6884 Contact Name Document Hubungi 0812-9505-8785 19:49', 'message', voiceMessageWithoutPrePlainText),
-    'Participant Contact Name Document Hubungi Participant 19:49'
+    'Participant Contact Name Document Hubungi 0812-9505-8785 19:49'
 );
 assert.equal(
     clean('081362579858 hello 19:50', 'message', bodyFirstWithSenderLikeSpan),
-    'Participant hello 19:50'
+    '081362579858 hello 19:50',
+    'a sender-like span does not override body-first message evidence'
 );
 dynamicVoiceLabel.setAttribute('aria-label', '+62 852-1859-6884 Contact Name Voice message Duration: 0:46 19:48');
 assert.equal(hasPrivacyState(dynamicVoiceLabel, 'aria-label'), true);
@@ -695,7 +1032,24 @@ assert.equal(
 cleanElementAttributes(viewOncePhoneAuthor);
 assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), 'true');
 assert.equal(hasPrivacyState(viewOncePhoneAuthor, 'aria-hidden'), true);
+const restorableBody = 'Call +62 812-3456-7890';
+const restorableLabel = `Message Author ${restorableBody} 10:01`;
+const restorableAriaMessage = createMessageElement(restorableBody);
+restorableAriaMessage.setAttribute('aria-label', restorableLabel);
+assert.equal(restorableAriaMessage.getAttribute('aria-label'), 'Message Author Call Participant 10:01');
+assert.equal(hasPrivacyState(restorableAriaMessage, 'aria-label'), true);
+const restorableTitleMessage = createMessageElement(restorableBody);
+restorableTitleMessage.setAttribute('title', restorableLabel);
+assert.equal(restorableTitleMessage.getAttribute('title'), 'Message Author Call Participant 10:01');
+assert.equal(hasPrivacyState(restorableTitleMessage, 'title'), true);
+const restorablePropertyMessage = createMessageElement(restorableBody);
+restorablePropertyMessage.ariaLabel = restorableLabel;
+assert.equal(restorablePropertyMessage.ariaLabel, 'Message Author Call Participant 10:01');
+assert.equal(hasPrivacyState(restorablePropertyMessage, 'aria-label'), true);
 restorePrivacyAttributes();
 assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), null);
+assert.equal(restorableAriaMessage.getAttribute('aria-label'), restorableLabel);
+assert.equal(restorableTitleMessage.getAttribute('title'), restorableLabel);
+assert.equal(restorablePropertyMessage.ariaLabel, restorableLabel);
 
 console.log('privacy filter checks passed');

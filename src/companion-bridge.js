@@ -19,9 +19,7 @@ function createRandomToken() {
     try {
       const token = String(cryptoApi.randomUUID());
       if (RANDOM_TOKEN_PATTERN.test(token)) return token;
-    } catch {
-      // Fall through to getRandomValues(), which is available in more contexts.
-    }
+    } catch {}
   }
   if (typeof cryptoApi?.getRandomValues !== 'function') return '';
   try {
@@ -53,9 +51,7 @@ function readContextState() {
   try {
     language = String(globalThis.localStorage?.getItem?.('wa-plus-language') || '').trim();
     privacy = globalThis.localStorage?.getItem?.('wa-plus-privacy') === 'true';
-  } catch {
-    // Runtime settings remain readable from the DOM/defaults when storage is unavailable.
-  }
+  } catch {}
   if (!language) {
     language = String(
       documentRef?.documentElement?.getAttribute?.('lang') ||

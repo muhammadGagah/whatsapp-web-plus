@@ -4,7 +4,7 @@ WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It is a
 
 ## Release history
 
-The current version is **2.6.76**. Read the [WhatsApp Web Plus 2.6.76 changes and earlier release history](CHANGELOG.md).
+The current version is **2.6.80**. Read the [WhatsApp Web Plus 2.6.80 changes and earlier release history](CHANGELOG.md).
 
 ## NVDA add-on
 
@@ -116,7 +116,7 @@ If Tampermonkey reports that some URLs are restricted while you are on a browser
 
 1. Open WhatsApp Web.
 2. Open a chat.
-3. Try `Alt + 1` to move to the chat list or `Alt + 2` to move to the latest message.
+3. Try `Alt + 1` to return to your last position in the chat list or `Alt + 2` to move to the latest message.
 
 ## Main features
 
@@ -149,7 +149,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | `Alt + Shift + 4` | Open Channels |
 | `Alt + Shift + 5` | Open Meta AI |
 | `Alt + Shift + D` | Move between the message history and message writing area |
-| `Alt + 1` | Move to the chat list |
+| `Alt + 1` | Return to the last focused chat-list row without resetting to the first chat |
 | `Alt + 2` | Move to the latest message |
 | `Alt + 3` | Move to the first unread message |
 | `Alt + Up Arrow` | Open the previous chat when enabled in Shortcut remapping |
@@ -157,6 +157,10 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | `Alt + T` | Read the current chat title; press twice quickly to turn Chat activity monitor on or off |
 | `Alt + 0` | Close the open WhatsApp audio or video player, or dismiss the desktop app promotion |
 | `Alt + M` | Start recording a voice message when enabled in Shortcut remapping |
+| `Shift + Enter` | Expand the focused message when it contains WhatsApp's Read more button, then expose the complete text to the screen reader |
+| `Alt + Shift + C` | Open the focused text message or authored image, video, or document caption in a clean browser tab |
+
+`Alt + Shift + C` works only when DOM focus is on a message in the message history, such as while NVDA is in focus mode. A userscript cannot read the NVDA browse-mode virtual cursor. If the message still has **Read more**, the script opens the reader tab first, expands the source message, and then loads the complete text. Text messages and authored image, video, or document captions retain their lists and safe web, email, and telephone links. File names, attachment controls, media controls, quoted content, and message metadata are excluded. Use the **Close reader** button or press `Ctrl + W` to close the tab. `Escape` also closes it when NVDA passes the key to the page; if NVDA is in focus mode, the first press may return NVDA to browse mode and the second press closes the tab.
 
 ### Incoming call controls
 
@@ -193,8 +197,10 @@ Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Ar
 - **Automatically read new messages** can announce new incoming and outgoing messages in the open chat, plus delivery changes such as Sent, Delivered, and Read for outgoing messages. It is off by default.
 - **Open chats at first unread message** moves focus to the first unread message when you press `Enter` on a chat in the chat list. If the chat has no unread messages, WhatsApp focuses the message editor as usual. It is off by default.
 - **Announce sender device** adds a best-effort indicator such as iPhone, iPad, Mac, Android, or WhatsApp Web or Desktop to focused messages and automatic message announcements. It is off by default, and no indicator is added when the device cannot be recognized.
+- **Announce total unread chats** keeps WhatsApp's total unread-chat count available to screen readers. It is on by default; turn it off if the changing count interrupts message reading.
+- **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button; `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is off by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so use DOM focus or focus mode for this shortcut.
 - **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
-- **Clean Status reading** gives each Status a concise accessible name, expands captions when possible, and disables automatic Status advancement while enabled. Use `Left Arrow` and `Right Arrow` to move manually.
+- **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to natural completion without being paused, sought, or restarted; WhatsApp then remains on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
 - **Shortcut remapping** enables or disables the additional `Alt+M`, `Alt+Up Arrow`, and `Alt+Down Arrow` shortcuts individually. `Alt+M` is on by default. The two chat-navigation shortcuts are off until you enable them because they can conflict with commands used by some screen readers and other platforms. All three shortcuts trigger WhatsApp's existing commands.
 - **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`; selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
 - **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually; select **WhatsApp default** immediately if a call loses audio or develops echo.
@@ -252,9 +258,7 @@ WhatsApp Web Plus does not install updates automatically. To update, press `Shif
 
 ## Open a message context menu with NVDA
 
-Right-click, `Shift + F10`, and the keyboard's `Application` key remain available to WhatsApp and the browser; WhatsApp Web Plus never replaces their context menus.
-
-First try `Shift + F10` or the `Application` key on the focused message. If WhatsApp does not open the message menu from keyboard focus, use NVDA's mouse commands below.
+WhatsApp Web Plus does not override a message or chat row to open its context menu. You can try WhatsApp's native `Shift + F10` command or the keyboard's `Application` key on a focused message. If WhatsApp does not respond, use NVDA's mouse commands below.
 
 The following commands use NVDA's **Laptop** keyboard layout. The `NVDA` key means your NVDA modifier key, usually `Insert` or `Caps Lock`.
 
@@ -293,7 +297,7 @@ Use `npm run build` for the installable userscript or `npm run build:debug` for 
 
 This diagnostic is available only in `whatsapp_web_plus.debug.js` and does not collect contact names, captions, media URLs, or WhatsApp identifiers.
 
-1. Install or reload `whatsapp_web_plus.debug.js`, turn off **Clean Status reading**, then open a video Status.
+1. Install or reload `whatsapp_web_plus.debug.js`, turn off **Clean Status reading and stop automatic advancement**, then open a video Status.
 2. Press `Alt+Shift+7` once. NVDA announces that recording has started.
 3. Let the video play until WhatsApp automatically opens the next Status. Do not manually pause or move to the next Status.
 4. Press `Alt+Shift+7` again. The diagnostic stops and is copied to the clipboard.

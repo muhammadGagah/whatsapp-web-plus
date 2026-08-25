@@ -14,6 +14,8 @@ export const STORAGE_KEYS = Object.freeze({
   automaticReading: 'wa-plus-automatic-reading',
   statusReadingCleanup: 'wa-plus-status-reading-cleanup',
   senderDeviceAnnouncements: 'wa-plus-sender-device-announcements',
+  announceUnreadChatTotal: 'wa-plus-announce-unread-chat-total',
+  voiceMessageKeyboardPlayback: 'wa-plus-voice-message-keyboard-playback',
   openChatsAtFirstUnread: 'wa-plus-open-chats-at-first-unread',
   remapVoiceRecording: 'wa-plus-remap-voice-recording',
   remapPreviousChat: 'wa-plus-remap-previous-chat',
@@ -56,6 +58,7 @@ export const STORAGE_KEYS = Object.freeze({
 });
 
 export const SELECTORS = Object.freeze({
+  navbarPrimary: '[data-testid="navbar-primary-section"]',
   side: 'div#side',
   main: 'div#main',
   messageInput: 'div#main footer div[contenteditable="true"]',
@@ -78,6 +81,9 @@ export const SELECTORS = Object.freeze({
   videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
   audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
   statusListFirstRow: '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]',
+  communityDrawer: '[data-testid="community-tab-drawer"]',
+  drawerMiddle: '[data-testid="drawer-middle"]',
+  communityEmptyState: '[data-testid="empty-state-drawer"]',
   communityListFirstRow: '[data-testid="community-tab-drawer"] [data-testid="community-tab-community-cell"]',
   channelListFirstRow: '[data-testid="newsletter-tab-drawer"] [data-testid="newsletter-tab-newsletter-cell"]',
   chatListScroller: '#pane-side',
@@ -85,6 +91,18 @@ export const SELECTORS = Object.freeze({
   chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"], #side [aria-label="Daftar chat"][role="grid"]',
   chatSearch: '#side input[role="textbox"][type="text"], #side [data-testid="chat-list-search-container"] input',
   conversationMessages: '[data-testid="conversation-panel-messages"]',
+  messageContextMenuIndicator: '[data-testid="icon-down-context"][role="button"][aria-label]',
+  messageMention: '[data-testid~="selectable-text"][data-plain-text^="@"][data-app-text-template]',
+  messageTextMetadata: '.copyable-text[data-pre-plain-text]',
+  messageMediaCaption: '.copyable-text[data-pre-plain-text] ' +
+    ':is([data-testid~="image-caption"], [data-testid~="video-caption"]), ' +
+    '[data-testid="msg-container"] [data-testid~="document-caption"]',
+  messagePrimaryText: '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]',
+  messageSentTime: '[data-testid="msg-meta"] [data-testid="msg-time"], [data-testid="msg-time"]',
+  messageReadMoreButton: '[data-testid="caption-read-more-button"]',
+  voiceMessageContainer: '[data-testid="msg-container"]',
+  voiceMessagePlaybackIdentity: '[data-testid="ptt-status"], [data-icon="ptt-status"]',
+  voiceMessagePlaybackProgress: '[role="slider"][aria-valuemin][aria-valuemax][aria-valuenow]',
   cellFrame: '[data-testid="cell-frame-container"], [data-testid="message-yourself-row"]'
 });
 
@@ -92,10 +110,14 @@ export const OWNERS = Object.freeze({
   chatLabel: 'chat-label',
   chatHidden: 'chat-hidden',
   chatStructure: 'chat-structure',
+  chatSelectionRestore: 'chat-selection-restore',
   messageGrid: 'message-grid',
   messageCell: 'message-cell',
+  messageExpandedName: 'message-expanded-name',
+  messageMentionName: 'message-mention-name',
   temporaryFocus: 'temporary-focus',
   metaAIMessageName: 'meta-ai-message-name',
+  unreadChatTotal: 'unread-chat-total',
   cleanUiHidden: 'clean-ui-hidden',
   statusViewer: 'status-viewer'
 });
@@ -139,5 +161,5 @@ export const MESSAGE_MEDIA_CONTENT_SELECTOR = [
   '[data-testid="msg-container"] [data-testid*="contact"]'
 ].join(', ');
 export const PHONE_RE = /(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d/g;
-export const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
+export const PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=|tel:)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
 export const WEB_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;

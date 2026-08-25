@@ -142,9 +142,16 @@ function getRecentSearchesTargets() {
   return targets.filter((el, index, arr) => el && arr.indexOf(el) === index);
 }
 
+export function getCommunityEmptyStateTargets() {
+  return Array.from(document.querySelectorAll?.(SELECTORS.communityEmptyState) || [])
+    .filter(panel => Array.from(panel.querySelectorAll?.('svg title') || [])
+      .some(title => normalizeText(title.textContent || '') === 'wds-ic-communities-filled'));
+}
+
 export function getCleanUiHiddenTargets() {
   return [
     getDesktopAppPromo(),
+    ...getCommunityEmptyStateTargets(),
     document.querySelector('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]'),
     document.querySelector('#side [data-testid="chatlist-e2e-message"]'),
     ...getRecentSearchesTargets()
@@ -199,7 +206,6 @@ export const CLEAN_UI_CSS = `
     display: none !important;
   }
 
-  /* Reveal chat menus on hover or keyboard focus. */
   [data-testid="chat-list"] [role="row"] [data-testid="context-btn"] {
     opacity: 0 !important;
   }

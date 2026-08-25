@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.76
+// @version      2.6.80
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.76",
+    scriptVersion: "2.6.80",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.76";
+  var SCRIPT_VERSION = "2.6.80";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -50,6 +50,8 @@
     automaticReading: "wa-plus-automatic-reading",
     statusReadingCleanup: "wa-plus-status-reading-cleanup",
     senderDeviceAnnouncements: "wa-plus-sender-device-announcements",
+    announceUnreadChatTotal: "wa-plus-announce-unread-chat-total",
+    voiceMessageKeyboardPlayback: "wa-plus-voice-message-keyboard-playback",
     openChatsAtFirstUnread: "wa-plus-open-chats-at-first-unread",
     remapVoiceRecording: "wa-plus-remap-voice-recording",
     remapPreviousChat: "wa-plus-remap-previous-chat",
@@ -91,6 +93,7 @@
     customDeliveryRead: "wa-plus-custom-delivery-read"
   });
   var SELECTORS = Object.freeze({
+    navbarPrimary: '[data-testid="navbar-primary-section"]',
     side: "div#side",
     main: "div#main",
     messageInput: 'div#main footer div[contenteditable="true"]',
@@ -113,6 +116,9 @@
     videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
     audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
     statusListFirstRow: '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]',
+    communityDrawer: '[data-testid="community-tab-drawer"]',
+    drawerMiddle: '[data-testid="drawer-middle"]',
+    communityEmptyState: '[data-testid="empty-state-drawer"]',
     communityListFirstRow: '[data-testid="community-tab-drawer"] [data-testid="community-tab-community-cell"]',
     channelListFirstRow: '[data-testid="newsletter-tab-drawer"] [data-testid="newsletter-tab-newsletter-cell"]',
     chatListScroller: "#pane-side",
@@ -120,16 +126,30 @@
     chatListInSide: '#side [data-testid="chat-list"], #side [aria-label="Chat list"][role="grid"], #side [aria-label="Daftar chat"][role="grid"]',
     chatSearch: '#side input[role="textbox"][type="text"], #side [data-testid="chat-list-search-container"] input',
     conversationMessages: '[data-testid="conversation-panel-messages"]',
+    messageContextMenuIndicator: '[data-testid="icon-down-context"][role="button"][aria-label]',
+    messageMention: '[data-testid~="selectable-text"][data-plain-text^="@"][data-app-text-template]',
+    messageTextMetadata: ".copyable-text[data-pre-plain-text]",
+    messageMediaCaption: '.copyable-text[data-pre-plain-text] :is([data-testid~="image-caption"], [data-testid~="video-caption"]), [data-testid="msg-container"] [data-testid~="document-caption"]',
+    messagePrimaryText: '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]',
+    messageSentTime: '[data-testid="msg-meta"] [data-testid="msg-time"], [data-testid="msg-time"]',
+    messageReadMoreButton: '[data-testid="caption-read-more-button"]',
+    voiceMessageContainer: '[data-testid="msg-container"]',
+    voiceMessagePlaybackIdentity: '[data-testid="ptt-status"], [data-icon="ptt-status"]',
+    voiceMessagePlaybackProgress: '[role="slider"][aria-valuemin][aria-valuemax][aria-valuenow]',
     cellFrame: '[data-testid="cell-frame-container"], [data-testid="message-yourself-row"]'
   });
   var OWNERS = Object.freeze({
     chatLabel: "chat-label",
     chatHidden: "chat-hidden",
     chatStructure: "chat-structure",
+    chatSelectionRestore: "chat-selection-restore",
     messageGrid: "message-grid",
     messageCell: "message-cell",
+    messageExpandedName: "message-expanded-name",
+    messageMentionName: "message-mention-name",
     temporaryFocus: "temporary-focus",
     metaAIMessageName: "meta-ai-message-name",
+    unreadChatTotal: "unread-chat-total",
     cleanUiHidden: "clean-ui-hidden",
     statusViewer: "status-viewer"
   });
@@ -170,7 +190,7 @@
     '[data-testid="msg-container"] [data-testid*="contact"]'
   ].join(", ");
   var PHONE_RE = /(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d/g;
-  var PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
+  var PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=|tel:)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
   var WEB_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 
   // src/locales/en.js
@@ -185,8 +205,26 @@
     privacyMode: "Privacy mode",
     reduceAnnouncements: "Remove repeated or unhelpful screen-reader announcements",
     automaticReading: "Automatically read new messages",
-    statusReadingCleanup: "Clean Status reading",
+    statusReadingCleanup: "Clean Status reading and stop automatic advancement",
     senderDeviceAnnouncements: "Announce sender device",
+    announceUnreadChatTotal: "Announce total unread chats",
+    voiceMessageKeyboardPlayback: "Play or pause focused voice messages with Enter or Space",
+    messageReaderDocumentTitle: "Message - WhatsApp Web Plus",
+    messageReaderHeading: "Message",
+    messageReaderClose: "Close reader",
+    messageReaderLoadingDocumentTitle: "Loading message - WhatsApp Web Plus",
+    messageReaderLoadingHeading: "Loading message",
+    messageReaderFailureDocumentTitle: "Message could not be loaded - WhatsApp Web Plus",
+    messageReaderFailureHeading: "Message could not be loaded",
+    messageReaderSentAt: "Sent:",
+    messageReaderTimeUnavailable: "Sent time unavailable.",
+    messageReaderNoText: "No readable text was found in the focused message.",
+    messageReaderExpansionUnavailable: "This message cannot be expanded safely. Use Shift+Enter first, then try again.",
+    messageReaderPopupBlocked: "The message reader tab could not be opened. Allow pop-ups for WhatsApp Web, then try again.",
+    messageReaderLoading: "Loading the complete message.",
+    messageReaderExpansionFailed: "The complete message could not be loaded. Return to WhatsApp, expand it with Shift+Enter, then try again.",
+    messageReaderUnsafeLink: "link unavailable",
+    messageReaderLinkDestination: "destination: {destination}",
     audioProfiles: "Voice-message recording profile",
     audioProfileWhatsApp: "WhatsApp default (no processing)",
     audioProfileNatural: "Natural (raw 48 kilohertz, no equalizer)",
@@ -355,8 +393,26 @@
     privacyMode: "Mode privasi",
     reduceAnnouncements: "Hapus pengumuman pembaca layar yang berulang atau tidak membantu",
     automaticReading: "Bacakan pesan baru secara otomatis",
-    statusReadingCleanup: "Bersihkan pembacaan Status",
+    statusReadingCleanup: "Bersihkan pembacaan Status dan hentikan perpindahan otomatis",
     senderDeviceAnnouncements: "Umumkan perangkat pengirim",
+    announceUnreadChatTotal: "Umumkan jumlah total chat yang belum dibaca",
+    voiceMessageKeyboardPlayback: "Putar atau jeda pesan suara yang difokuskan dengan Enter atau Spasi",
+    messageReaderDocumentTitle: "Pesan - WhatsApp Web Plus",
+    messageReaderHeading: "Pesan",
+    messageReaderClose: "Tutup pembaca",
+    messageReaderLoadingDocumentTitle: "Memuat pesan - WhatsApp Web Plus",
+    messageReaderLoadingHeading: "Memuat pesan",
+    messageReaderFailureDocumentTitle: "Pesan tidak dapat dimuat - WhatsApp Web Plus",
+    messageReaderFailureHeading: "Pesan tidak dapat dimuat",
+    messageReaderSentAt: "Dikirim:",
+    messageReaderTimeUnavailable: "Waktu pengiriman tidak tersedia.",
+    messageReaderNoText: "Tidak ditemukan teks yang dapat dibaca pada pesan yang difokuskan.",
+    messageReaderExpansionUnavailable: "Pesan ini tidak dapat diperluas dengan aman. Gunakan Shift+Enter terlebih dahulu, lalu coba lagi.",
+    messageReaderPopupBlocked: "Tab pembaca pesan tidak dapat dibuka. Izinkan pop-up untuk WhatsApp Web, lalu coba lagi.",
+    messageReaderLoading: "Memuat pesan lengkap.",
+    messageReaderExpansionFailed: "Pesan lengkap tidak dapat dimuat. Kembali ke WhatsApp, perluas dengan Shift+Enter, lalu coba lagi.",
+    messageReaderUnsafeLink: "tautan tidak tersedia",
+    messageReaderLinkDestination: "tujuan: {destination}",
     audioProfiles: "Profil perekaman pesan suara",
     audioProfileWhatsApp: "Bawaan WhatsApp (tanpa pemrosesan)",
     audioProfileNatural: "Alami (mentah 48 kilohertz, tanpa ekualiser)",
@@ -539,6 +595,8 @@
   var automaticReading = readSetting(STORAGE_KEYS.automaticReading, "false") === "true";
   var statusReadingCleanup = readSetting(STORAGE_KEYS.statusReadingCleanup, "false") === "true";
   var senderDeviceAnnouncements = readSetting(STORAGE_KEYS.senderDeviceAnnouncements, "false") === "true";
+  var announceUnreadChatTotal = readSetting(STORAGE_KEYS.announceUnreadChatTotal, "true") === "true";
+  var voiceMessageKeyboardPlayback = readSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, "false") === "true";
   var openChatsAtFirstUnread = readSetting(STORAGE_KEYS.openChatsAtFirstUnread, "false") === "true";
   var customTextStorageKeys = Object.freeze({
     "unread-divider": STORAGE_KEYS.customUnreadDivider,
@@ -894,6 +952,24 @@
     senderDeviceAnnouncements = nextValue;
     return true;
   }
+  function isUnreadChatTotalAnnouncementEnabled() {
+    return announceUnreadChatTotal;
+  }
+  function setUnreadChatTotalAnnouncement(value) {
+    const nextValue = !!value;
+    if (!writeSetting(STORAGE_KEYS.announceUnreadChatTotal, String(nextValue))) return false;
+    announceUnreadChatTotal = nextValue;
+    return true;
+  }
+  function isVoiceMessageKeyboardPlaybackEnabled() {
+    return voiceMessageKeyboardPlayback;
+  }
+  function setVoiceMessageKeyboardPlayback(value) {
+    const nextValue = !!value;
+    if (!writeSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, String(nextValue))) return false;
+    voiceMessageKeyboardPlayback = nextValue;
+    return true;
+  }
   function shouldOpenChatsAtFirstUnread() {
     return openChatsAtFirstUnread;
   }
@@ -990,6 +1066,7 @@
   var privacyAttributes = /* @__PURE__ */ new Map();
   var senderDeviceLabels = /* @__PURE__ */ new Map();
   var documentCaptionLabels = /* @__PURE__ */ new Map();
+  var messageMentionLabels = /* @__PURE__ */ new Map();
   function hasActiveState(el) {
     const current2 = el && el.getAttribute("aria-current");
     return !!el && (el.getAttribute("aria-pressed") === "true" || el.getAttribute("aria-selected") === "true" || current2 !== null && current2 !== "false" || el.getAttribute("data-navbar-item-selected") === "true");
@@ -1040,7 +1117,14 @@
     return replaceOutsideWebUrls(text, PHONE_RE, replacePhoneCandidateWith(""));
   }
   function replacePhonesOutsideWebUrls(text, el = null) {
-    return replaceOutsideWebUrls(text, PHONE_RE, replacePhoneCandidateWith(tForHost("participant", el)));
+    return replaceOutsideWebUrls(
+      text,
+      PHONE_RE,
+      replacePhoneCandidateWith(tForHost("participant", el))
+    );
+  }
+  function isIPv4LikeCandidate(text) {
+    return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(text);
   }
   function replacePhoneUrlWith(replacement) {
     return (match, offset, source) => {
@@ -1049,54 +1133,99 @@
       return replacement + (hasTrailingTime ? trailingHour[0] : "");
     };
   }
+  var MESSAGE_PHONE_REFERENCE_RE = /(?:https?:\/\/|www\.)[^\s<>"']+|\btel:(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d|\bwa\.me\/(?:\+)?\d[\d()./‐‑‒–—―-]{5,}\d/gi;
   function maskMessagePhoneLinks(text, el = null) {
-    return text.replace(PHONE_URL_RE, replacePhoneUrlWith(tForHost("phoneLink", el)));
-  }
-  function maskPhoneBearingWebUrls(text, el = null) {
-    WEB_URL_RE.lastIndex = 0;
-    return text.replace(WEB_URL_RE, (url) => {
-      PHONE_RE.lastIndex = 0;
-      let match;
-      while ((match = PHONE_RE.exec(url)) !== null) {
-        if (isPhoneCandidate(match[0], match.index, url)) return tForHost("phoneLink", el);
-      }
-      return url;
+    const label = tForHost("phoneLink", el);
+    return text.replace(MESSAGE_PHONE_REFERENCE_RE, (match, offset, source) => {
+      const trailingHour = match.match(/\s+\d{1,2}$/);
+      const hasTrailingTime = trailingHour && /^:\d{2}\b/.test(source.slice(offset + match.length));
+      let reference = hasTrailingTime ? match.slice(0, -trailingHour[0].length) : match;
+      const terminalSuffix = reference.match(/[.,!?;:)\]}\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/iu)?.[0] || "";
+      if (terminalSuffix) reference = reference.slice(0, -terminalSuffix.length);
+      if (!isExplicitPhoneDestinationHref(reference)) return match;
+      return label + terminalSuffix + (hasTrailingTime ? trailingHour[0] : "");
     });
   }
   function maskMessagePhones(text, el = null) {
     return maskMessagePhoneLinks(
-      replacePhonesOutsideWebUrls(maskPhoneBearingWebUrls(text, el), el),
+      replaceOutsideWebUrls(
+        text,
+        PHONE_RE,
+        replacePhoneCandidateWith(tForHost("participant", el), "message")
+      ),
       el
     );
   }
+  function maskMessagePhoneContent(text, el = null) {
+    return maskMessagePhones(text, el);
+  }
+  function hasExplicitPhoneValue(value) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(value || "");
+    } catch {
+      return false;
+    }
+    const candidate = decoded.replace(/^\/+|\/+$/g, "").split(/[;?&#]/, 1)[0].trim();
+    if (!candidate || isIPv4LikeCandidate(candidate)) return false;
+    PHONE_RE.lastIndex = 0;
+    const match = PHONE_RE.exec(candidate);
+    if (!match || match.index !== 0 || match[0] !== candidate) return false;
+    const digitCount = candidate.replace(/\D/g, "").length;
+    return digitCount >= 7 && digitCount <= 16;
+  }
+  function isExplicitPhoneDestinationHref(href) {
+    if (!href) return false;
+    let url;
+    try {
+      const base = location.href || `${location.origin}/`;
+      const normalizedHref = /^(?:wa\.me\/|www\.)/i.test(href) ? `https://${href}` : href;
+      url = new URL(normalizedHref, base);
+    } catch {
+      return false;
+    }
+    if (url.protocol === "tel:") return hasExplicitPhoneValue(url.pathname);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "wa.me" || hostname === "www.wa.me") {
+      return hasExplicitPhoneValue(url.pathname);
+    }
+    return url.searchParams.has("phone") && hasExplicitPhoneValue(url.searchParams.get("phone"));
+  }
+  function hasExplicitPhoneDestination(el) {
+    const link = el?.matches?.('a[href], [role="link"]') ? el : el?.closest?.('a[href], [role="link"]');
+    return isExplicitPhoneDestinationHref(link?.getAttribute?.("href") || "");
+  }
   function maskPhoneLinkName(text, el) {
     const label = tForHost("phoneLink", el);
+    if (!hasExplicitPhoneDestination(el)) return maskMessagePhoneLinks(text, el);
     return text.replace(PHONE_URL_RE, replacePhoneUrlWith(label)).replace(PHONE_RE, replacePhoneCandidateWith(label));
   }
   function maskPhoneNumbers(text, el = null) {
     const participant = tForHost("participant", el);
     return text.replace(PHONE_URL_RE, replacePhoneUrlWith(participant)).replace(PHONE_RE, replacePhoneCandidateWith(participant));
   }
-  function replacePhoneCandidateWith(replacement) {
+  function replacePhoneCandidateWith(replacement, context = "identity") {
     return (match, offset, source) => {
       const trailingHour = match.match(/\s+\d{1,2}$/);
       const hasTrailingTime = trailingHour && /^:\d{2}\b/.test(source.slice(offset + match.length));
       const phone = hasTrailingTime ? match.slice(0, -trailingHour[0].length) : match;
       const candidateSource = hasTrailingTime ? source.slice(0, offset + phone.length) : source;
       const masked = typeof replacement === "function" ? replacement(phone, offset, candidateSource) : replacement;
-      return isPhoneCandidate(phone, offset, candidateSource) ? masked + (hasTrailingTime ? trailingHour[0] : "") : match;
+      return isPhoneCandidate(phone, offset, candidateSource, context) ? masked + (hasTrailingTime ? trailingHour[0] : "") : match;
     };
   }
-  function isPhoneCandidate(raw, offset, source) {
+  function isPhoneCandidate(raw, offset, source, context = "identity") {
     const before = source[offset - 1] || "";
     const after = source[offset + raw.length] || "";
     if (/[A-Za-z0-9_]/.test(before) || /[A-Za-z0-9_]/.test(after)) return false;
     const trimmed = raw.trim();
+    if (isIPv4LikeCandidate(trimmed)) return false;
     if (!trimmed.startsWith("+") && isDatedVersionCandidate(trimmed)) return false;
     const digits = trimmed.replace(/\D/g, "");
     if (digits.length > 16) return false;
     if (digits.startsWith("000")) return false;
     if (trimmed.startsWith("+") || digits.startsWith("00")) return digits.length >= 7;
+    if (context === "message") return false;
     return digits.length >= 9;
   }
   function isDatedVersionCandidate(text) {
@@ -1137,6 +1266,122 @@
       inserted: true
     };
   }
+  function getAccessibleMentionText(mention, el) {
+    const renderedText = normalizeText(mention?.textContent || "");
+    const storedText = normalizeText(mention?.getAttribute?.("data-plain-text") || "");
+    const plainText = renderedText.startsWith("@") ? renderedText : storedText.startsWith("@") ? storedText : "";
+    if (!plainText.startsWith("@")) return "";
+    let identity = plainText.slice(1).replace(/^\s*~\s*/, "").trim();
+    if (!identity) return "";
+    if (isPrivacyMode) identity = maskPhoneNumbers(identity, el);
+    return `@${identity}`;
+  }
+  function getPrimaryMessageBody(message, requireMentions = false) {
+    const selector = '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]';
+    const candidates = Array.from(message?.querySelectorAll?.(selector) || []).filter((candidate) => !candidate.closest?.('[data-testid="quoted-message"]'));
+    const matching = requireMentions ? candidates.find((candidate) => candidate.querySelectorAll?.(SELECTORS.messageMention)?.length) : candidates[0];
+    if (matching) return matching;
+    const fallback = message?.querySelector?.(selector);
+    if (!fallback || fallback.closest?.('[data-testid="quoted-message"]')) return null;
+    if (requireMentions && !fallback.querySelectorAll?.(SELECTORS.messageMention)?.length) return null;
+    return fallback;
+  }
+  function restoreMessageMentionNames(text, message) {
+    const bodyEl = getPrimaryMessageBody(message, true);
+    if (!bodyEl?.querySelectorAll) return text;
+    const mentions = Array.from(bodyEl.querySelectorAll(SELECTORS.messageMention) || []).filter((mention) => !mention.closest?.('[data-testid="quoted-message"]'));
+    if (!mentions.length) return text;
+    const bodyText = normalizeText(bodyEl.textContent || "");
+    const mentionParts = [];
+    let bodyCursor = 0;
+    for (const mention of mentions) {
+      const nativeText = normalizeText(
+        mention.textContent || mention.getAttribute?.("data-plain-text") || ""
+      );
+      const accessibleText = getAccessibleMentionText(mention, message);
+      const mentionStart = nativeText && bodyText.indexOf(nativeText, bodyCursor);
+      if (!nativeText || !accessibleText || mentionStart < bodyCursor) return text;
+      mentionParts.push({
+        before: bodyText.slice(bodyCursor, mentionStart),
+        accessibleText
+      });
+      bodyCursor = mentionStart + nativeText.length;
+    }
+    const tail = bodyText.slice(bodyCursor);
+    const replacements = [];
+    const phonePattern = new RegExp(PHONE_RE.source, "g");
+    const ignorableBoundary = /^[\s\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/u;
+    const getIdentityRange = (match) => {
+      const trailingHour = match[0].match(/\s+\d{1,2}$/);
+      const hasTrailingTime = trailingHour && /^:\d{2}\b/.test(text.slice(match.index + match[0].length));
+      const raw = hasTrailingTime ? match[0].slice(0, -trailingHour[0].length) : match[0];
+      return isPhoneCandidate(raw, match.index, text, "identity") ? { start: match.index, end: match.index + raw.length } : null;
+    };
+    if (mentionParts[0].before.trim()) {
+      let sourceCursor = text.indexOf(mentionParts[0].before);
+      if (sourceCursor < 0) return text;
+      sourceCursor += mentionParts[0].before.length;
+      for (let index = 0; index < mentionParts.length; index++) {
+        if (index > 0) {
+          const before = mentionParts[index].before;
+          if (!text.startsWith(before, sourceCursor)) return text;
+          sourceCursor += before.length;
+        }
+        phonePattern.lastIndex = sourceCursor;
+        const match = phonePattern.exec(text);
+        const identityRange = match && getIdentityRange(match);
+        if (!identityRange || !ignorableBoundary.test(text.slice(sourceCursor, match.index))) return text;
+        replacements.push({
+          start: identityRange.start,
+          end: identityRange.end,
+          value: mentionParts[index].accessibleText
+        });
+        sourceCursor = identityRange.end;
+      }
+      if (tail && !text.startsWith(tail, sourceCursor)) return text;
+    } else {
+      let trailingAnchor = tail;
+      if (!trailingAnchor.trim()) {
+        if (message.querySelector?.('[data-testid="quoted-message"]')) return text;
+        trailingAnchor = normalizeText(
+          message.querySelector?.('[data-testid="msg-meta"]')?.textContent || ""
+        );
+      }
+      if (!trailingAnchor.trim()) return text;
+      let sourceCursor = text.lastIndexOf(trailingAnchor);
+      if (sourceCursor < 0) return text;
+      for (let index = mentionParts.length - 1; index >= 0; index--) {
+        phonePattern.lastIndex = 0;
+        let previousMatch = null;
+        let match;
+        while (match = phonePattern.exec(text)) {
+          const identityRange = getIdentityRange(match);
+          if (identityRange?.end <= sourceCursor && ignorableBoundary.test(text.slice(identityRange.end, sourceCursor))) {
+            previousMatch = { match, identityRange };
+          }
+          if (match.index >= sourceCursor) break;
+        }
+        if (!previousMatch) return text;
+        replacements.push({
+          start: previousMatch.identityRange.start,
+          end: previousMatch.identityRange.end,
+          value: mentionParts[index].accessibleText
+        });
+        sourceCursor = previousMatch.identityRange.start;
+        if (index > 0) {
+          const before = mentionParts[index].before;
+          const beforeStart = sourceCursor - before.length;
+          if (beforeStart < 0 || text.slice(beforeStart, sourceCursor) !== before) return text;
+          sourceCursor = beforeStart;
+        }
+      }
+    }
+    replacements.sort((a, b) => b.start - a.start);
+    for (const replacement of replacements) {
+      text = text.slice(0, replacement.start) + replacement.value + text.slice(replacement.end);
+    }
+    return text;
+  }
   function filterMessageIdentities(text, el) {
     const message = el && el.closest && el.closest(".focusable-list-item");
     if (!message || !message.querySelector) {
@@ -1154,7 +1399,7 @@
     const senderLabelState = senderLabelEl && privacyAttributes.get(senderLabelEl)?.get("aria-label");
     const senderLabel = senderLabelEl && (senderLabelState?.raw || senderLabelEl.getAttribute("aria-label") || "").replace(/:\s*$/, "").trim();
     const metadataSender = senderMatch && senderMatch[1] || authorPhone;
-    const bodyEl = message.querySelector('.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]');
+    const bodyEl = getPrimaryMessageBody(message);
     const body = bodyEl && normalizeText(bodyEl.textContent || "");
     const bodyCandidates = body ? [...new Set([body, body.replace(/^@\s*/, "")].filter(Boolean))] : [];
     const bodyStart = bodyCandidates.reduce((found, candidate) => {
@@ -1297,6 +1542,12 @@
   function prepareNamedAttribute(el, name, value) {
     let raw = String(value);
     const isMessageLabel = isSenderDeviceMessageLabel(el, name);
+    const mentionState = name === "aria-label" && messageMentionLabels.get(el);
+    if (isMessageLabel && mentionState && raw === mentionState.appliedValue) {
+      raw = mentionState.baseValue;
+    } else if (mentionState && (!isMessageLabel || raw !== mentionState.baseValue)) {
+      messageMentionLabels.delete(el);
+    }
     const documentState = name === "aria-label" && documentCaptionLabels.get(el);
     if (isMessageLabel && documentState && (raw === documentState.appliedValue || raw === documentState.rawValue)) {
       raw = documentState.baseValue;
@@ -1312,9 +1563,12 @@
     const context = isPrivacyMode ? getPrivacyContext(el) : false;
     if (!isMessageLabel && !context) return raw;
     raw = cleanString(raw, false, el);
-    if (name === "aria-label" && el.matches?.(".focusable-list-item") && el.closest?.(SELECTORS.conversationMessages) && !hasDirectMetaAISender(el) && el.querySelector?.('[data-testid="icon-down-context"][role="button"][aria-label]')) {
+    if (name === "aria-label" && el.matches?.(".focusable-list-item") && el.closest?.(SELECTORS.conversationMessages) && !hasDirectMetaAISender(el) && el.querySelector?.(SELECTORS.messageContextMenuIndicator)) {
       raw = raw.replace(getMessageContextInstructionRegex(), "").trim();
     }
+    const mentionBaseValue = raw;
+    if (isMessageLabel) raw = restoreMessageMentionNames(raw, el);
+    const mentionsRestored = raw !== mentionBaseValue;
     const documentBaseValue = raw;
     let documentCaptionInserted = false;
     if (isMessageLabel) {
@@ -1334,7 +1588,9 @@
     const baseValue = raw;
     if (isPrivacyMode && context) {
       const masked = applyPrivacyFilter(raw, context, el);
-      if (masked !== raw) rememberPrivacyAttribute(el, name, raw, masked);
+      if (masked !== raw) {
+        rememberPrivacyAttribute(el, name, mentionsRestored ? mentionBaseValue : raw, masked);
+      }
       raw = masked;
     }
     const decorated = isMessageLabel && hostLanguage ? appendSenderDevice(raw, getSenderDeviceMessageId(el), el) : raw;
@@ -1349,7 +1605,23 @@
     } else {
       documentCaptionLabels.delete(el);
     }
+    if (mentionsRestored) {
+      messageMentionLabels.set(el, { baseValue: mentionBaseValue, appliedValue: decorated });
+    } else {
+      messageMentionLabels.delete(el);
+    }
     return decorated;
+  }
+  function getNamedAttributeSource(el, name) {
+    const current2 = el?.getAttribute?.(name) || "";
+    if (!current2) return current2;
+    const deviceState = name === "aria-label" && senderDeviceLabels.get(el);
+    if (deviceState && current2 === deviceState.appliedValue) return deviceState.baseValue;
+    const privacyState = privacyAttributes.get(el)?.get(name);
+    if (privacyState && current2 === privacyState.masked) return privacyState.raw;
+    const documentState = name === "aria-label" && documentCaptionLabels.get(el);
+    if (documentState && current2 === documentState.appliedValue) return documentState.rawValue;
+    return current2;
   }
   Element.prototype.setAttribute = function(name, value) {
     if ((name === "aria-label" || name === "title") && value && typeof value === "string") {
@@ -1430,6 +1702,11 @@
     for (const el of [...documentCaptionLabels.keys()]) {
       if (!el.isConnected || el === rootEl || rootEl.contains && rootEl.contains(el)) {
         documentCaptionLabels.delete(el);
+      }
+    }
+    for (const el of [...messageMentionLabels.keys()]) {
+      if (!el.isConnected || el === rootEl || rootEl.contains && rootEl.contains(el)) {
+        messageMentionLabels.delete(el);
       }
     }
   }
@@ -1808,6 +2085,8 @@
 
   // src/chat-accessibility.js
   var lastFocusedChatRowNode = null;
+  var lastFocusedChatTitle = "";
+  var lastFocusedChatRowIndex = -1;
   var lastFocusedMessageNode = null;
   var lastFocusedMessageId = "";
   var announcementTimer = null;
@@ -2014,12 +2293,17 @@
       state = null;
     }
     const currentRole = (el.getAttribute("role") || "").trim();
-    if (currentRole && currentRole !== role && !isReplaceableMessageSection(el, role, currentRole, owner)) return false;
+    if (currentRole && currentRole !== role && !isReplaceableGridcellSection(el, role, currentRole, owner)) return false;
     applyOwnedAttribute(el, "role", role, owner);
     return true;
   }
-  function isReplaceableMessageSection(el, requestedRole, currentRole, owner) {
-    return owner === OWNERS.messageCell && requestedRole === "gridcell" && currentRole === "section" && el.matches?.(".focusable-list-item") && !!el.closest?.(SELECTORS.conversationMessages);
+  function isReplaceableGridcellSection(el, requestedRole, currentRole, owner) {
+    const isMessageCell = owner === OWNERS.messageCell && requestedRole === "gridcell" && currentRole === "section" && el.matches?.(".focusable-list-item") && !!el.closest?.(SELECTORS.conversationMessages);
+    if (isMessageCell) return true;
+    if (owner !== OWNERS.chatStructure || requestedRole !== "gridcell" || currentRole !== "section" || !el.hasAttribute?.("tabindex") || !el.hasAttribute?.("aria-selected")) return false;
+    const gridcell = el.parentElement;
+    const row = gridcell?.parentElement;
+    return gridcell?.getAttribute?.("role") === "gridcell" && row?.matches?.('div[role="row"]') && row.querySelector?.(':scope > [role="gridcell"]') === gridcell && gridcell.querySelector?.(":scope > [tabindex][aria-selected]") === el && !!row.closest?.(SELECTORS.chatListInSide);
   }
   function releaseMessageAttributes(owner, keep) {
     for (const el of [...ownedElements]) {
@@ -2034,7 +2318,7 @@
   function canApplyOwnedMessageRole(el, role, owner) {
     const state = ownedAttributes.get(el)?.get("role");
     const currentRole = (el.getAttribute("role") || "").trim();
-    return !currentRole || currentRole === role || state?.owner === owner && currentRole === state.appliedValue || isReplaceableMessageSection(el, role, currentRole, owner);
+    return !currentRole || currentRole === role || state?.owner === owner && currentRole === state.appliedValue || isReplaceableGridcellSection(el, role, currentRole, owner);
   }
   function ensureMessageGridLabel() {
     let label = document.getElementById("wa-plus-message-grid-label");
@@ -2060,8 +2344,476 @@
     const target = messages2.includes(preferred) && preferred || messages2.includes(activeCell) && activeCell || messages2.find((message) => message.getAttribute("tabindex") === "0") || messages2.includes(rememberedCell) && rememberedCell || messages2[0];
     if (target) setMessageGridTabStop(messages2, target);
   }
+  function hasRenderedMessagePopup() {
+    if (getActiveModal()) return true;
+    return Array.from(document.querySelectorAll?.('[role="menu"], [role="listbox"]') || []).some(isRenderedElement);
+  }
+  function isPrimaryMessageItem(item) {
+    if (!item?.matches?.(".focusable-list-item")) return false;
+    const liveRole = (item.getAttribute?.("role") || "").toLowerCase();
+    if (item.matches?.('a[href], button, input, textarea, select, [contenteditable="true"]') || ["button", "link", "textbox", "menu", "listbox"].includes(liveRole) || liveRole.startsWith("menuitem") || item.hasAttribute?.("aria-haspopup")) return false;
+    const row = item.closest?.('div[role="row"]');
+    if (!row || row.querySelector?.(".focusable-list-item") !== item) return false;
+    const messageContainer = item.closest?.(SELECTORS.conversationMessages);
+    const main = item.closest?.(SELECTORS.main);
+    if (!messageContainer || !main || document.querySelector(SELECTORS.main) !== main || !messageContainer.contains?.(item) || !main.contains?.(item)) return false;
+    const ownedCellRole = ownedAttributes.get(item)?.get("role");
+    if (ownedCellRole && ownedCellRole.owner !== OWNERS.messageCell) return false;
+    if (ownedCellRole?.owner === OWNERS.messageCell) {
+      if (liveRole !== "gridcell") return false;
+      const grid = item.closest?.('[role="grid"]');
+      if (!grid || ownedAttributes.get(grid)?.get("role")?.owner !== OWNERS.messageGrid) return false;
+    }
+    return true;
+  }
+  function getFocusedPrimaryMessageItem(event) {
+    const item = event.target;
+    return document.activeElement === item && isPrimaryMessageItem(item) ? item : null;
+  }
+  function getRawMessageReadMoreControls(messageItem) {
+    return Array.from(
+      messageItem.querySelectorAll?.(SELECTORS.messageReadMoreButton) || []
+    ).filter((button) => {
+      const messageContainer = button.closest?.(SELECTORS.voiceMessageContainer);
+      return messageItem.contains?.(button) && button.closest?.(".focusable-list-item") === messageItem && messageContainer && messageItem.contains?.(messageContainer) && !button.closest?.('[data-testid="quoted-message"]');
+    });
+  }
+  function getMessageReadMoreCandidates(messageItem) {
+    return getRawMessageReadMoreControls(messageItem).filter((button) => {
+      const isButton2 = button.matches?.("button") || (button.getAttribute?.("role") || "").toLowerCase() === "button";
+      return isButton2 && !button.closest?.('[role="menu"], [role^="menuitem"], [role="listbox"], [role="dialog"], [role="alertdialog"], a[href], [role="link"]') && isRenderedElement(button) && !button.disabled && button.getAttribute?.("aria-disabled") !== "true" && button.getAttribute?.("aria-hidden") !== "true" && button.getAttribute?.("tabindex") !== "-1" && !button.hasAttribute?.("aria-haspopup");
+    });
+  }
+  function getMessageReadMoreButton(messageItem) {
+    const candidates = getMessageReadMoreCandidates(messageItem);
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+  function hasMessageReadMoreControl(messageItem) {
+    return getRawMessageReadMoreControls(messageItem).length > 0;
+  }
+  var pendingMessageExpansion = null;
+  var heldMessageExpansionKey = null;
+  function consumeMessageExpansionKey(event) {
+    event.preventDefault();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+    else event.stopPropagation?.();
+  }
+  function clearPendingMessageExpansion(request = pendingMessageExpansion) {
+    if (!request || pendingMessageExpansion !== request) return;
+    request.observer?.disconnect();
+    if (request.timeoutId) clearTimeout(request.timeoutId);
+    pendingMessageExpansion = null;
+  }
+  function getPrimaryMessageTextRoot(messageItem) {
+    const getOutermostCandidates = (selector) => {
+      const candidates = Array.from(
+        messageItem.querySelectorAll?.(selector) || []
+      ).filter((candidate) => messageItem.contains?.(candidate) && candidate.closest?.(".focusable-list-item") === messageItem && !candidate.closest?.('[data-testid="quoted-message"]'));
+      return candidates.filter((candidate) => !candidates.some(
+        (other) => other !== candidate && other.contains?.(candidate)
+      ));
+    };
+    const mediaCaptions = getOutermostCandidates(SELECTORS.messageMediaCaption);
+    if (mediaCaptions.length) return mediaCaptions.length === 1 ? mediaCaptions[0] : null;
+    const primaryText = getOutermostCandidates(SELECTORS.messagePrimaryText);
+    return primaryText.length === 1 ? primaryText[0] : null;
+  }
+  function isExcludedPrimaryMessageNode(node, messageItem, isRoot = false) {
+    if (!node || node.nodeType != null && node.nodeType !== 1) return false;
+    for (let current2 = node; current2 && current2 !== messageItem; current2 = current2.parentElement) {
+      if (current2.hidden || current2.inert || current2.getAttribute?.("aria-hidden") === "true") return true;
+      if (typeof window.getComputedStyle === "function") {
+        const style = window.getComputedStyle(current2);
+        if (style.display === "none" || style.visibility === "hidden") return true;
+      }
+    }
+    if (isRoot) return false;
+    const testId = node.getAttribute?.("data-testid") || "";
+    const role = (node.getAttribute?.("role") || "").toLowerCase();
+    const tagName = (node.tagName || "").toLowerCase();
+    const owningMessage = node.closest?.(".focusable-list-item");
+    return owningMessage && owningMessage !== messageItem || testId === "quoted-message" || testId === "msg-meta" || testId === "caption-read-more-button" || /(?:^|-)reaction(?:-|$)/i.test(testId) || ["button", "input", "textarea", "select"].includes(tagName) || role === "button" || role === "menu" || role === "listbox" || role === "dialog" || role === "alertdialog" || role.startsWith("menuitem");
+  }
+  function getNodeChildren(node) {
+    return Array.from(node?.childNodes || node?.children || []);
+  }
+  function collectReaderText(node, messageItem, isRoot = false) {
+    if (node?.nodeType === 3) return node.nodeValue || "";
+    if (!node || node.nodeType != null && node.nodeType !== 1 || isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return "";
+    const tagName = (node.tagName || "").toLowerCase();
+    if (tagName === "br") return "\n";
+    if (tagName === "img") return node.getAttribute?.("alt") || "";
+    const children = getNodeChildren(node);
+    return children.length ? children.map((child) => collectReaderText(child, messageItem)).join("") : node.textContent || "";
+  }
+  function appendReaderRun(runs, run) {
+    if (!run) return;
+    if (run.type === "text" && !run.text) return;
+    const previous = runs[runs.length - 1];
+    if (run.type === "text" && previous?.type === "text") previous.text += run.text;
+    else runs.push(run);
+  }
+  function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false) {
+    if (node?.nodeType === 3) {
+      appendReaderRun(runs, { type: "text", text: node.nodeValue || "" });
+      return;
+    }
+    if (!node || node.nodeType != null && node.nodeType !== 1 || isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return;
+    const tagName = (node.tagName || "").toLowerCase();
+    if (tagName === "ul" || tagName === "ol") {
+      runs.push({ type: "listStart", ordered: tagName === "ol" });
+      getNodeChildren(node).forEach(
+        (child) => collectPrimaryMessageReaderRuns(child, messageItem, runs)
+      );
+      runs.push({ type: "listEnd" });
+      return;
+    }
+    if (tagName === "li") {
+      runs.push({ type: "listItemStart" });
+      getNodeChildren(node).forEach(
+        (child) => collectPrimaryMessageReaderRuns(child, messageItem, runs)
+      );
+      runs.push({ type: "listItemEnd" });
+      return;
+    }
+    if (tagName === "br") {
+      runs.push({ type: "break" });
+      return;
+    }
+    if (tagName === "img") {
+      appendReaderRun(runs, { type: "text", text: node.getAttribute?.("alt") || "" });
+      return;
+    }
+    if (tagName === "a" && node.hasAttribute?.("href")) {
+      const text = collectReaderText(node, messageItem, true);
+      appendReaderRun(runs, {
+        type: "link",
+        text,
+        href: node.getAttribute("href") || ""
+      });
+      return;
+    }
+    const children = getNodeChildren(node);
+    if (!children.length) {
+      appendReaderRun(runs, { type: "text", text: node.textContent || "" });
+      return;
+    }
+    children.forEach((child) => collectPrimaryMessageReaderRuns(child, messageItem, runs));
+  }
+  function getMessageSentAt(messageItem, root) {
+    const metadataWrappers = Array.from(
+      messageItem.querySelectorAll?.(SELECTORS.messageTextMetadata) || []
+    ).filter((wrapper) => wrapper.contains?.(root) && wrapper.closest?.(".focusable-list-item") === messageItem && !wrapper.closest?.('[data-testid="quoted-message"]'));
+    if (metadataWrappers.length === 1) {
+      const metadata = metadataWrappers[0].getAttribute?.("data-pre-plain-text") || "";
+      const timestamp = metadata.match(/^\[([^\]]+)\]/)?.[1]?.trim() || "";
+      if (timestamp) return timestamp;
+    }
+    const timeCandidates = Array.from(
+      messageItem.querySelectorAll?.(SELECTORS.messageSentTime) || []
+    ).filter((candidate) => candidate.closest?.(".focusable-list-item") === messageItem && !candidate.closest?.('[data-testid="quoted-message"]') && isRenderedElement(candidate));
+    const times = [...new Set(timeCandidates.map((candidate) => cleanString(candidate.textContent || candidate.getAttribute?.("aria-label") || "", false)).filter(Boolean))];
+    return times.length === 1 ? times[0] : "";
+  }
+  function getMessageReaderSnapshot(messageItem) {
+    const root = messageItem && getPrimaryMessageTextRoot(messageItem);
+    if (!root) return null;
+    const runs = [];
+    collectPrimaryMessageReaderRuns(root, messageItem, runs, true);
+    const normalizedText = cleanString(runs.map(
+      (run) => run.type === "break" ? "\n" : run.text || ""
+    ).join(""), false);
+    if (!normalizedText) return null;
+    return {
+      runs,
+      textLength: normalizedText.length,
+      sentAt: getMessageSentAt(messageItem, root)
+    };
+  }
+  function getPrimaryMessageText(messageItem) {
+    const root = getPrimaryMessageTextRoot(messageItem);
+    if (!root) return "";
+    const parts = [];
+    const collect = (node, isRoot = false) => {
+      if (node?.nodeType === 3) {
+        parts.push(node.nodeValue || "");
+        return;
+      }
+      if (!node || node.nodeType != null && node.nodeType !== 1 || isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return;
+      if (!isRoot) {
+        const tagName = (node.tagName || "").toLowerCase();
+        if (tagName === "img") {
+          const alternative = node.getAttribute?.("alt") || "";
+          if (alternative) parts.push(alternative);
+          return;
+        }
+      }
+      const children = getNodeChildren(node);
+      if (!children.length) parts.push(node.textContent || "");
+      else children.forEach((child) => collect(child));
+    };
+    collect(root, true);
+    return cleanString(parts.join(""), false);
+  }
+  function getMessageExpansionIdentity(messageItem) {
+    const wrapper = messageItem.closest?.('[data-testid^="conv-msg-"][data-id]');
+    return wrapper ? {
+      wrapper,
+      dataId: wrapper.getAttribute?.("data-id") || ""
+    } : null;
+  }
+  function getFocusedMessageReaderSource(event) {
+    const messageItem = getFocusedPrimaryMessageItem(event);
+    if (!messageItem) return null;
+    const readMoreButton = getMessageReadMoreButton(messageItem);
+    return {
+      messageItem,
+      identity: getMessageExpansionIdentity(messageItem),
+      readMoreButton,
+      hasReadMoreControl: hasMessageReadMoreControl(messageItem),
+      snapshot: getMessageReaderSnapshot(messageItem)
+    };
+  }
+  function isMessageReaderSourceCurrent(source) {
+    if (!source?.messageItem || !isPrimaryMessageItem(source.messageItem)) return false;
+    const { identity } = source;
+    return !!identity?.dataId && (identity.wrapper?.isConnected && identity.wrapper.contains?.(source.messageItem) && identity.wrapper.getAttribute?.("data-id") === identity.dataId);
+  }
+  function getMessageExpansionSourceLabel(messageItem) {
+    return getNamedAttributeSource(messageItem, "aria-label");
+  }
+  function buildExpandedMessageLabel(request, expandedText) {
+    const source = cleanString(request.sourceLabel || "", false);
+    const collapsed = cleanString(request.collapsedText || "", false);
+    const controlName = cleanString(request.controlName || "", false);
+    if (!source || !collapsed || !controlName || !expandedText) return "";
+    let bodyStart = source.indexOf(collapsed);
+    let bodyAnchor = collapsed;
+    if (bodyStart < 0) {
+      bodyAnchor = collapsed.replace(/(?:\u2026|\.{3})\s*$/, "").trim();
+      if (bodyAnchor.length < 16) return "";
+      bodyStart = source.indexOf(bodyAnchor);
+    }
+    if (bodyStart < 0 || source.indexOf(bodyAnchor, bodyStart + 1) >= 0) return "";
+    const controlStart = source.indexOf(controlName, bodyStart + bodyAnchor.length);
+    if (controlStart < 0 || source.indexOf(controlName, controlStart + controlName.length) >= 0) return "";
+    const prefix = source.slice(0, bodyStart).trim();
+    const suffix = source.slice(controlStart + controlName.length).trim();
+    return cleanString([prefix, expandedText, suffix].filter(Boolean).join(" "), false);
+  }
+  function tryCommitExpandedMessageName(request) {
+    if (!request || pendingMessageExpansion !== request) return false;
+    const { messageItem, identity } = request;
+    const identityChanged = identity && (!identity.wrapper?.isConnected || !identity.wrapper.contains?.(messageItem) || identity.wrapper.getAttribute?.("data-id") !== identity.dataId);
+    if (identityChanged || !isPrimaryMessageItem(messageItem)) {
+      clearPendingMessageExpansion(request);
+      return false;
+    }
+    const expandedText = getPrimaryMessageText(messageItem);
+    if (!expandedText || expandedText === request.collapsedText || expandedText.length <= request.collapsedText.length || getMessageReadMoreButton(messageItem)) return false;
+    const currentLabel = messageItem.getAttribute?.("aria-label") || "";
+    if (currentLabel !== request.appliedLabel) {
+      clearPendingMessageExpansion(request);
+      return false;
+    }
+    const rebuilt = buildExpandedMessageLabel(request, expandedText);
+    if (!rebuilt) {
+      clearPendingMessageExpansion(request);
+      return false;
+    }
+    clearPendingMessageExpansion(request);
+    const prepared = prepareNamedAttribute(messageItem, "aria-label", rebuilt);
+    applyOwnedAttribute(messageItem, "aria-label", prepared, OWNERS.messageExpandedName);
+    return true;
+  }
+  function armMessageExpansionNameSync(messageItem, button) {
+    if (messageItem.hasAttribute?.("aria-labelledby") || isMetaAIReply(messageItem)) return null;
+    releaseOwnedAttribute(messageItem, "aria-label", OWNERS.messageExpandedName);
+    const sourceLabel = getMessageExpansionSourceLabel(messageItem);
+    const appliedLabel = messageItem.getAttribute?.("aria-label") || "";
+    const collapsedText = getPrimaryMessageText(messageItem);
+    const controlName = button.getAttribute?.("aria-label") || button.textContent || "";
+    if (!sourceLabel || !appliedLabel || !collapsedText || !cleanString(controlName, false)) return null;
+    clearPendingMessageExpansion();
+    const request = {
+      messageItem,
+      identity: getMessageExpansionIdentity(messageItem),
+      sourceLabel,
+      appliedLabel,
+      collapsedText,
+      controlName,
+      observer: null,
+      timeoutId: null
+    };
+    request.observer = new MutationObserver(() => tryCommitExpandedMessageName(request));
+    request.observer.observe(messageItem, { childList: true, characterData: true, subtree: true });
+    request.timeoutId = setTimeout(() => clearPendingMessageExpansion(request), 1500);
+    pendingMessageExpansion = request;
+    return request;
+  }
+  function activateMessageReadMore(messageItem, button) {
+    if (!messageItem || !button || getMessageReadMoreButton(messageItem) !== button) return false;
+    const request = armMessageExpansionNameSync(messageItem, button);
+    button.click();
+    if (request && !tryCommitExpandedMessageName(request)) {
+      window.requestAnimationFrame(() => tryCommitExpandedMessageName(request));
+    }
+    return true;
+  }
+  function handleMessageReadMoreKeydown(event) {
+    if (event.key === "Enter" && !event.repeat) heldMessageExpansionKey = null;
+    if (event.key === "Enter" && event.repeat && heldMessageExpansionKey?.messageItem === event.target) {
+      consumeMessageExpansionKey(event);
+      return true;
+    }
+    if (event.defaultPrevented || event.isComposing || event.key !== "Enter" || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.getModifierState?.("AltGraph")) return false;
+    if (hasRenderedMessagePopup()) return false;
+    const messageItem = getFocusedPrimaryMessageItem(event);
+    if (pendingMessageExpansion?.messageItem === messageItem) {
+      consumeMessageExpansionKey(event);
+      return true;
+    }
+    const button = messageItem && getMessageReadMoreButton(messageItem);
+    if (!button) return false;
+    consumeMessageExpansionKey(event);
+    if (!event.repeat) {
+      heldMessageExpansionKey = { messageItem };
+      activateMessageReadMore(messageItem, button);
+    }
+    return true;
+  }
+  function handleMessageReadMoreKeyup(event) {
+    if (event.key === "Enter") heldMessageExpansionKey = null;
+    return false;
+  }
+  function getVoiceMessagePlaybackButton(messageItem) {
+    const messageContainer = messageItem.querySelector?.(SELECTORS.voiceMessageContainer);
+    if (!messageContainer || !messageItem.contains?.(messageContainer) || messageContainer.closest?.('[data-testid="quoted-message"]')) return null;
+    const belongsToPrimaryMessage = (node) => messageContainer.contains?.(node) && !node.closest?.('[data-testid="quoted-message"]');
+    const hasVoiceIdentity = Array.from(
+      messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackIdentity) || []
+    ).some(belongsToPrimaryMessage);
+    const progressControls = Array.from(
+      messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackProgress) || []
+    ).filter(belongsToPrimaryMessage);
+    if (!hasVoiceIdentity || !progressControls.length) return null;
+    const isEligiblePlaybackButton = (control) => belongsToPrimaryMessage(control) && isRenderedElement(control) && !control.disabled && control.getAttribute("aria-disabled") !== "true" && control.getAttribute("aria-hidden") !== "true" && control.getAttribute("tabindex") !== "-1" && !control.closest?.('[role="menu"], [role^="menuitem"]') && !control.hasAttribute?.("aria-haspopup");
+    const candidates = /* @__PURE__ */ new Set();
+    for (const progress of progressControls) {
+      for (let playerRoot = progress.parentElement; playerRoot && messageContainer.contains?.(playerRoot); playerRoot = playerRoot.parentElement) {
+        const buttons = Array.from(playerRoot.querySelectorAll?.("button") || []).filter(isEligiblePlaybackButton);
+        if (!buttons.length) {
+          if (playerRoot === messageContainer) break;
+          continue;
+        }
+        if (buttons.length === 1) candidates.add(buttons[0]);
+        break;
+      }
+    }
+    return candidates.size === 1 ? candidates.values().next().value : null;
+  }
+  function getFocusedVoiceMessagePlaybackButton(event) {
+    const button = event.target;
+    if (event.key !== "Enter" || document.activeElement !== button || !button?.matches?.("button")) return null;
+    const messageItem = button.closest?.(".focusable-list-item");
+    if (!isPrimaryMessageItem(messageItem)) return null;
+    const playbackButton = getVoiceMessagePlaybackButton(messageItem);
+    return playbackButton === button ? button : null;
+  }
+  function handleVoiceMessagePlaybackKeydown(event) {
+    if (!isVoiceMessageKeyboardPlaybackEnabled() || event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.getModifierState?.("AltGraph") || !["Enter", " "].includes(event.key)) return false;
+    if (hasRenderedMessagePopup()) return false;
+    const focusedButton = getFocusedVoiceMessagePlaybackButton(event);
+    const messageItem = focusedButton ? null : getFocusedPrimaryMessageItem(event);
+    const button = focusedButton || messageItem && getVoiceMessagePlaybackButton(messageItem);
+    if (!button) return false;
+    event.preventDefault();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+    else event.stopPropagation?.();
+    if (!event.repeat) button.click();
+    return true;
+  }
+  var chatListShortcutArrowAnchor = null;
+  function clearChatListShortcutArrowAnchor() {
+    chatListShortcutArrowAnchor = null;
+  }
+  function armChatListShortcutArrowAnchor(row) {
+    const chatList = row?.closest?.(SELECTORS.chatListInSide);
+    const activator = getChatRowActivator(row);
+    if (!row?.isConnected || !chatList?.isConnected || !chatList.contains?.(row) || row.closest?.(SELECTORS.chatListInSide) !== chatList || !activator?.isConnected) {
+      clearChatListShortcutArrowAnchor();
+      return;
+    }
+    chatListShortcutArrowAnchor = { row, activator, chatList, consumed: false };
+  }
+  function trackChatListShortcutArrowFocus(target, interactionType) {
+    const anchor = chatListShortcutArrowAnchor;
+    if (!anchor) return;
+    if (interactionType === "pointer" || target !== anchor.activator || !anchor.row?.isConnected || !anchor.activator?.isConnected || !anchor.chatList?.isConnected || !anchor.chatList.contains?.(anchor.row) || getChatRowActivator(anchor.row) !== anchor.activator) {
+      clearChatListShortcutArrowAnchor();
+    }
+  }
+  function handleChatListShortcutArrowKeydown(event) {
+    const anchor = chatListShortcutArrowAnchor;
+    if (!anchor || event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.getModifierState?.("AltGraph") || !["ArrowUp", "ArrowDown"].includes(event.key) || getActiveModal()) return false;
+    const target = event.target;
+    const row = target?.closest?.('div[role="row"]');
+    const chatList = row?.closest?.(SELECTORS.chatListInSide);
+    const activator = getChatRowActivator(row);
+    const anchorIsCurrent = document.activeElement === target && target === activator && row === anchor.row && target === anchor.activator && chatList === anchor.chatList && row?.isConnected && target?.isConnected && chatList?.isConnected && chatList.contains?.(row) && isChatsTabActive();
+    if (!anchorIsCurrent) {
+      clearChatListShortcutArrowAnchor();
+      return false;
+    }
+    if (anchor.consumed) return false;
+    const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter((candidate) => {
+      const candidateActivator = getChatRowActivator(candidate);
+      return candidate?.isConnected && chatList.contains?.(candidate) && candidate.closest?.(SELECTORS.chatListInSide) === chatList && candidate.querySelector?.(SELECTORS.cellFrame) && isRenderedElement(candidate) && isRenderedElement(candidateActivator);
+    });
+    const currentIndex = rows.indexOf(row);
+    if (currentIndex < 0) {
+      clearChatListShortcutArrowAnchor();
+      return false;
+    }
+    anchor.consumed = true;
+    event.preventDefault();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+    else event.stopPropagation?.();
+    const nextIndex = currentIndex + (event.key === "ArrowUp" ? -1 : 1);
+    if (nextIndex < 0 || nextIndex >= rows.length) {
+      normalizeChatListTabStops(chatList, row);
+      clearChatListShortcutArrowAnchor();
+      return true;
+    }
+    const nextRow = rows[nextIndex];
+    const handleFailure = () => {
+      if (chatListShortcutArrowAnchor === anchor && document.activeElement === anchor.activator && anchor.row?.isConnected && anchor.chatList?.isConnected && anchor.chatList.contains?.(anchor.row) && getChatRowActivator(anchor.row) === anchor.activator) {
+        normalizeChatListTabStops(anchor.chatList, anchor.row);
+      }
+      clearChatListShortcutArrowAnchor();
+    };
+    const shouldContinue = () => {
+      const valid = chatListShortcutArrowAnchor === anchor && document.activeElement === anchor.activator && !getActiveModal() && anchor.row?.isConnected && anchor.activator?.isConnected && anchor.chatList?.isConnected && anchor.chatList.contains?.(anchor.row) && getChatRowActivator(anchor.row) === anchor.activator;
+      if (!valid && chatListShortcutArrowAnchor === anchor) {
+        clearChatListShortcutArrowAnchor();
+      }
+      return valid;
+    };
+    const started = focusChatRow(
+      nextRow,
+      handleFailure,
+      shouldContinue,
+      clearChatListShortcutArrowAnchor
+    );
+    if (!started) handleFailure();
+    return true;
+  }
   function handleMessageGridKeydown(event) {
-    if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    if (handleChatListShortcutArrowKeydown(event)) return true;
+    if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return false;
+    if (event.shiftKey && event.key === "Enter") return handleMessageReadMoreKeydown(event);
+    if (event.shiftKey) return false;
+    if (event.key === "Enter" || event.key === " ") return handleVoiceMessagePlaybackKeydown(event);
     if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return false;
     const cell = event.target?.closest?.('[role="gridcell"]');
     if (!cell || event.target !== cell || ownedAttributes.get(cell)?.get("role")?.owner !== OWNERS.messageCell) return false;
@@ -2133,12 +2885,47 @@
     });
     normalizeMessageGridTabStops(messages2);
   }
+  function refreshMessageMentionNames(rootEl = document) {
+    if (!rootEl?.querySelectorAll) return;
+    releaseOwnedWithin(rootEl, OWNERS.messageMentionName);
+    const messages2 = [
+      ...rootEl.matches?.(".focusable-list-item") ? [rootEl] : [],
+      ...Array.from(rootEl.querySelectorAll(".focusable-list-item"))
+    ];
+    for (const message of new Set(messages2)) {
+      const mentions = Array.from(message.querySelectorAll?.(SELECTORS.messageMention) || []).filter((mention) => !mention.closest?.('[data-testid="quoted-message"]'));
+      for (const mention of mentions) {
+        const control = mention.closest?.('[role="button"][tabindex]');
+        if (!control || control === message || !message.contains?.(control)) continue;
+        const rendered = cleanString(mention.textContent || "", false);
+        if (!rendered?.startsWith("@")) continue;
+        let label = rendered;
+        if (isPrivacyModeEnabled()) {
+          const identity = rendered.slice(1).replace(/^\s*~\s*/, "").trim();
+          const safeIdentity = cleanString(identity, "identity", mention);
+          if (!safeIdentity) continue;
+          if (safeIdentity !== identity) label = `@${safeIdentity}`;
+        }
+        applyOwnedAttribute(control, "aria-label", label, OWNERS.messageMentionName);
+      }
+    }
+  }
   function applyChatMaskedLabel(el, label) {
     applyOwnedAttribute(el, "aria-labelledby", null, OWNERS.chatLabel);
     applyOwnedAttribute(el, "aria-label", label, OWNERS.chatLabel);
   }
   function applyChatMaskedHidden(el) {
     applyOwnedAttribute(el, "aria-hidden", "true", OWNERS.chatHidden);
+  }
+  function neutralizeChatRowSelectableState(activator) {
+    const state = ownedAttributes.get(activator)?.get("aria-selected");
+    if (state?.owner === OWNERS.chatSelectionRestore && activator.getAttribute("aria-selected") === state.appliedValue) return;
+    const selected = activator.getAttribute("aria-selected");
+    if (selected === "false") {
+      applyOwnedAttribute(activator, "aria-selected", "undefined", OWNERS.chatSelectionRestore);
+      return;
+    }
+    releaseOwnedAttribute(activator, "aria-selected", OWNERS.chatSelectionRestore);
   }
   function getChatRowGridcell(row) {
     if (!row || !row.querySelector) return null;
@@ -2153,15 +2940,42 @@
   function getChatRowActivator(row) {
     const gridcell = getChatRowGridcell(row);
     if (!gridcell || !gridcell.querySelector) return gridcell;
-    return gridcell.querySelector(`:scope > [tabindex][aria-selected], :scope > [tabindex]:not(${SELECTORS.cellFrame})`) || gridcell;
+    const candidate = gridcell.querySelector(
+      `:scope > [tabindex][aria-selected], :scope > [tabindex]:not(${SELECTORS.cellFrame})`
+    );
+    if (!candidate) return gridcell;
+    const tagName = String(candidate.localName || candidate.tagName || "").toLowerCase();
+    const role = String(candidate.getAttribute?.("role") || "").toLowerCase();
+    const hasRowSelectionState = candidate.hasAttribute?.("aria-selected");
+    if ((tagName === "button" || role === "button") && hasRowSelectionState) return candidate;
+    const nativeInteractiveTags = /* @__PURE__ */ new Set(["a", "button", "input", "select", "textarea", "summary"]);
+    const interactiveRoles = /* @__PURE__ */ new Set([
+      "button",
+      "checkbox",
+      "combobox",
+      "link",
+      "menuitem",
+      "menuitemcheckbox",
+      "menuitemradio",
+      "option",
+      "radio",
+      "slider",
+      "spinbutton",
+      "switch",
+      "tab",
+      "textbox",
+      "treeitem"
+    ]);
+    return nativeInteractiveTags.has(tagName) || interactiveRoles.has(role) ? gridcell : candidate;
   }
-  function focusChatRow(row, onFailure, shouldContinue = () => true) {
+  function focusChatRow(row, onFailure, shouldContinue = () => true, onSuccess = null) {
     if (!shouldContinue() || !getChatRowActivator(row) || getActiveModal()) return false;
     const rowTitle = getChatRowTitle(row);
     const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
     const focusTarget = (retried = false) => {
       if (!shouldContinue() || getActiveModal()) return false;
-      const currentRow = row.isConnected ? row : findChatRowByTitle(getChatListRows(), rowTitle);
+      const connectedRowTitle = row.isConnected ? getChatRowTitle(row) : "";
+      const currentRow = row.isConnected && connectedRowTitle === rowTitle ? row : findChatRowByTitle(getChatListRows(), rowTitle);
       if (!currentRow) {
         if (!retried) {
           schedule(() => focusTarget(true));
@@ -2177,18 +2991,22 @@
         return false;
       }
       if (document.activeElement === currentTarget) {
-        lastFocusedChatRowNode = currentRow;
+        rememberChatRowState(currentRow);
+        armChatListShortcutArrowAnchor(currentRow);
+        onSuccess?.(currentRow, currentTarget);
         return true;
       }
       const chatList = currentRow.closest(SELECTORS.chatListInSide);
       if (chatList) normalizeChatListTabStops(chatList, currentRow);
-      currentTarget.focus({ preventScroll: true });
-      if (document.activeElement !== currentTarget && !retried) {
+      const focused = focusItem(currentTarget);
+      if (!focused && !retried) {
         schedule(() => focusTarget(true));
-      } else if (document.activeElement !== currentTarget) {
+      } else if (!focused) {
         if (onFailure) onFailure();
       } else {
-        lastFocusedChatRowNode = currentRow;
+        rememberChatRowState(currentRow);
+        armChatListShortcutArrowAnchor(currentRow);
+        onSuccess?.(currentRow, currentTarget);
       }
       return document.activeElement === currentTarget || !retried;
     };
@@ -2199,13 +3017,14 @@
     releaseOwnedWithin(rootEl, OWNERS.chatLabel);
     releaseOwnedWithin(rootEl, OWNERS.chatHidden);
     releaseOwnedWithin(rootEl, OWNERS.chatStructure);
+    releaseOwnedWithin(rootEl, OWNERS.chatSelectionRestore);
   }
   function restoreChatRowNativeMasksOutsideChatList() {
     for (const el of [...ownedElements]) {
       const attributes = ownedAttributes.get(el);
       if (!attributes || el.closest && el.closest(SELECTORS.chatListInSide)) continue;
       for (const [name, state] of [...attributes]) {
-        if (state.owner === OWNERS.chatLabel || state.owner === OWNERS.chatHidden || state.owner === OWNERS.chatStructure) {
+        if (state.owner === OWNERS.chatLabel || state.owner === OWNERS.chatHidden || state.owner === OWNERS.chatStructure || state.owner === OWNERS.chatSelectionRestore) {
           releaseOwnedAttribute(el, name, state.owner);
         }
       }
@@ -2257,6 +3076,7 @@
       applyChatMaskedLabel(activator, label);
       applyOwnedAttribute(gridcell, "role", "presentation", OWNERS.chatStructure);
       applyOwnedAttribute(gridcell, "tabindex", null, OWNERS.chatStructure);
+      neutralizeChatRowSelectableState(activator);
       applyChatRowDescendantMasks(row, activator);
       if (transferFocus) activator.focus({ preventScroll: true });
       return true;
@@ -2271,17 +3091,20 @@
     if (rows.length === 0) return;
     const visibleRows = getElementsInsideViewport(rows, getChatListViewport(chatList));
     const activeRow = document.activeElement?.closest?.('div[role="row"]');
-    const target = rows.includes(preferredRow) && preferredRow || rows.includes(activeRow) && activeRow || rows.includes(lastFocusedChatRowNode) && lastFocusedChatRowNode || getPreferredChatRow(visibleRows) || rows[0];
+    const hasRememberedState = !!lastFocusedChatRowNode || !!lastFocusedChatTitle;
+    const target = rows.includes(preferredRow) && preferredRow || rows.includes(activeRow) && activeRow || getPreferredChatRow(visibleRows, null, true) || (!hasRememberedState ? rows[0] : null);
+    if (!target) return;
     rows.forEach((row) => {
       const gridcell = getChatRowGridcell(row);
       const activator = getChatRowActivator(row);
-      if (!gridcell || !activator || activator === gridcell) return;
-      applyOwnedAttribute(gridcell, "tabindex", null, OWNERS.chatStructure);
+      if (!gridcell || !activator) return;
+      if (activator !== gridcell) applyOwnedAttribute(gridcell, "tabindex", null, OWNERS.chatStructure);
       applyOwnedAttribute(activator, "tabindex", row === target ? "0" : "-1", OWNERS.chatStructure);
     });
   }
   function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
     if (!rootEl || !rootEl.querySelectorAll) return null;
+    refreshMessageMentionNames(rootEl);
     if (!isAnnouncementReductionEnabled()) {
       releaseMessageAttributes(OWNERS.messageGrid, () => false);
       releaseMessageAttributes(OWNERS.messageCell, () => false);
@@ -2468,6 +3291,24 @@
   function getChatListRowCandidates(chatList) {
     return chatList.querySelectorAll('[data-testid^="list-item-"], div[role="row"]');
   }
+  function orderChatRowsByPosition(rows) {
+    return Array.from(rows).map((row, index) => ({ row, index, y: getChatRowTranslateY(row) })).sort((a, b) => a.y - b.y || a.index - b.index).map((entry) => entry.row);
+  }
+  function rememberChatRowState(row) {
+    lastFocusedChatRowNode = row;
+    lastFocusedChatTitle = getChatRowTitle(row);
+    lastFocusedChatRowIndex = -1;
+    const chatList = row?.closest?.(SELECTORS.chatListInSide) || row?.closest?.(SELECTORS.chatList);
+    if (!chatList) return;
+    const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter((candidate) => candidate.querySelector?.(SELECTORS.cellFrame));
+    const index = rows.indexOf(row);
+    if (index >= 0) lastFocusedChatRowIndex = index;
+  }
+  function getRememberedPositionChatRow(rows) {
+    if (lastFocusedChatRowIndex < 0 || rows.length === 0) return null;
+    const positionedRows = orderChatRowsByPosition(rows);
+    return positionedRows[Math.min(lastFocusedChatRowIndex, positionedRows.length - 1)] || null;
+  }
   function getChatRowTranslateY(row) {
     const transform = row && row.style ? row.style.transform || "" : "";
     const translateMatch = transform.match(/translateY\((-?\d+(?:\.\d+)?)px\)/i);
@@ -2605,18 +3446,42 @@
   }
   function findChatRowByTitle(rows, title) {
     if (!title) return null;
-    return rows.find((row) => getChatRowTitle(row) === title) || null;
+    const matches = rows.filter((row) => getChatRowTitle(row) === title);
+    return matches.length === 1 ? matches[0] : null;
   }
-  function getPreferredChatRow(rows, origin = null) {
+  function getUniqueChatTabStopRow(rows, allowManagedTabStop = false) {
+    const matches = rows.filter((row) => {
+      const activator = getChatRowActivator(row);
+      if (!activator || activator.getAttribute("tabindex") !== "0") return false;
+      const state = ownedAttributes.get(activator)?.get("tabindex");
+      if (!state) return true;
+      if (state.owner === OWNERS.temporaryFocus) return false;
+      return state.owner !== OWNERS.chatStructure || allowManagedTabStop;
+    });
+    return matches.length === 1 ? matches[0] : null;
+  }
+  function getPreferredChatRow(rows, origin = null, allowSemanticFallback = false) {
+    const originRow = origin?.closest?.('div[role="row"]');
+    const originInChatList = originRow && rows.includes(originRow) && originRow.closest?.(SELECTORS.chatListInSide);
+    if (originInChatList) return originRow;
+    if (lastFocusedChatTitle && rows.includes(lastFocusedChatRowNode)) {
+      const connectedTitle = getChatRowTitle(lastFocusedChatRowNode);
+      if (connectedTitle === lastFocusedChatTitle) {
+        return lastFocusedChatRowNode;
+      }
+    }
+    if (lastFocusedChatTitle) {
+      const rememberedRow = findChatRowByTitle(rows, lastFocusedChatTitle);
+      if (rememberedRow) return rememberedRow;
+      if (!allowSemanticFallback) return null;
+    }
+    if (lastFocusedChatRowNode && !allowSemanticFallback) return null;
     const selectedRow = getSelectedChatRow(rows);
     const currentChatRow = findChatRowByTitle(rows, getCurrentChatTitle());
-    const startedInChatList = !!(origin && origin.closest && origin.closest(SELECTORS.chatListInSide));
-    const mayUseRememberedRow = origin === null || startedInChatList;
-    if (currentChatRow) return currentChatRow;
     if (selectedRow) return selectedRow;
-    if (mayUseRememberedRow && rows.includes(lastFocusedChatRowNode)) return lastFocusedChatRowNode;
-    const startedAtDocumentRoot = !origin || origin === document.body || origin === document.documentElement;
-    return startedAtDocumentRoot ? rows[0] || null : null;
+    if (currentChatRow) return currentChatRow;
+    const hasRememberedState = !!lastFocusedChatRowNode || !!lastFocusedChatTitle;
+    return getUniqueChatTabStopRow(rows, !hasRememberedState) || (hasRememberedState ? getRememberedPositionChatRow(rows) : null);
   }
   function isRenderedElement(el) {
     if (!el || !el.isConnected || el.hidden || el.inert || el.getAttribute("aria-hidden") === "true") return false;
@@ -2638,14 +3503,15 @@
     }
     return dialogs.at(-1) || null;
   }
-  function rememberFocusedRow(target) {
+  function rememberFocusedRow(target, interactionType = "focus") {
+    trackChatListShortcutArrowFocus(target, interactionType);
     if (!target.closest) return;
     const row = target.closest('div[role="row"]');
     if (!row) return;
     const side = document.querySelector(SELECTORS.side);
-    if (isAnnouncementReductionEnabled() && side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
-      applyChatRowNativeMask(row);
-      lastFocusedChatRowNode = row;
+    if (side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
+      if (isAnnouncementReductionEnabled()) applyChatRowNativeMask(row);
+      rememberChatRowState(row);
     }
     const main = document.querySelector(SELECTORS.main);
     if (isChatMainActive(main) && main.contains(row)) {
@@ -2668,10 +3534,13 @@
     if (chatList) normalizeChatListTabStops(chatList);
   }
   function getRememberedFocus() {
-    return { lastFocusedChatRowNode, lastFocusedMessageNode, lastFocusedMessageId };
+    return { lastFocusedChatRowNode, lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId };
   }
   function clearRememberedChatRow() {
     lastFocusedChatRowNode = null;
+    lastFocusedChatTitle = "";
+    lastFocusedChatRowIndex = -1;
+    clearChatListShortcutArrowAnchor();
   }
   function clearRememberedMessageRow() {
     lastFocusedMessageNode = null;
@@ -3681,10 +4550,7 @@
 
   // src/status-accessibility.js
   var MAX_EXPANSION_CHECKS = 4;
-  var MAX_PAUSE_CHECKS = 4;
-  var STATUS_VIDEO_LIMIT_SECONDS = 30;
-  var STATUS_VIDEO_LIMIT_GUARD_SECONDS = 0.5;
-  var STATUS_VIDEO_END_GUARD_SECONDS = 0.35;
+  var MAX_PAUSE_CHECKS = 12;
   var TIME_RE = new RegExp("\\p{N}{1,2}[:.]\\p{N}{2}", "u");
   var LOCALIZED_CLOCK_RE = new RegExp("(?:\\b(?:today|yesterday|hoy|ayer|hari\\s+ini|kemarin|heute|gestern|um|at|oggi|ieri|hier)\\b(?:\\s+\\p{L}[\\p{L}'\u2019-]*){0,3}\\s+)?\\p{N}{1,2}[:.]\\p{N}{2}(?:\\s*[ap]\\.?m\\.?)?", "iu");
   var GENERIC_CLOCK_RE = new RegExp("((?:[\\p{L}\\p{M}\\p{N}][\\p{L}\\p{M}\\p{N}'\u2019.,\u060C-]*\\s+){0,12}\\p{N}{1,2}[:.]\\p{N}{2}(?:\\s*[ap]\\.?m\\.?)?)", "u");
@@ -3724,28 +4590,26 @@
   function connected(element) {
     return !!element && element.isConnected !== false;
   }
-  function isActiveStatusVideo(video) {
-    if (!isStatusReadingCleanupEnabled() || video?.tagName !== "VIDEO") return false;
-    const root = video.closest?.(SELECTORS.statusPlayerRoot);
-    const statusVideos = uniqueElements([
-      ...queryAll(root, SELECTORS.statusVideo),
-      query(root, SELECTORS.statusVideo)
+  function isActiveStatusMedia(media) {
+    if (!isStatusReadingCleanupEnabled() || !["VIDEO", "AUDIO"].includes(media?.tagName)) return false;
+    if (media.tagName === "VIDEO" && !isRenderedElement(media)) return false;
+    const root = media.closest?.(SELECTORS.statusPlayerRoot);
+    if (!connected(root) || !isRenderedElement(root)) return false;
+    const marker = root.matches?.(SELECTORS.statusActiveMarker) ? root : root.closest?.(SELECTORS.statusActiveMarker) || query(root, SELECTORS.statusActiveMarker);
+    if (!connected(marker) || !isRenderedElement(marker) || marker !== root && !marker.contains?.(root) && !root.contains?.(marker)) return false;
+    const selector = media.tagName === "VIDEO" ? SELECTORS.statusVideo : SELECTORS.statusAudio;
+    const statusMedia = uniqueElements([
+      ...queryAll(root, selector),
+      query(root, selector)
     ]);
-    return connected(root) && isRenderedElement(root) && isRenderedElement(video) && statusVideos.some((statusVideo) => isRenderedElement(statusVideo) && (statusVideo === video || !!statusVideo.contains?.(video)));
-  }
-  function shouldSuppressStatusVideoTimeUpdate(video) {
-    if (!isActiveStatusVideo(video)) return false;
-    if (video?.tagName !== "VIDEO" || video.ended || !Number.isFinite(video.duration) || video.duration <= STATUS_VIDEO_LIMIT_SECONDS || !Number.isFinite(video.currentTime) || video.currentTime < STATUS_VIDEO_LIMIT_SECONDS - STATUS_VIDEO_LIMIT_GUARD_SECONDS) return false;
-    return true;
-  }
-  function shouldPauseStatusVideoBeforeEnd(video) {
-    return isActiveStatusVideo(video) && !video.ended && !video.paused && Number.isFinite(video.duration) && Number.isFinite(video.currentTime) && video.duration - video.currentTime <= STATUS_VIDEO_END_GUARD_SECONDS;
+    return statusMedia.some((candidate) => candidate === media || !!candidate?.contains?.(media));
   }
   function isWhatsAppStatusAutoAdvanceListener(type, listener) {
-    if (type !== "timeupdate") return false;
     if (typeof listener !== "function") return false;
     try {
-      return Function.prototype.toString.call(listener).includes("status_video_max_duration");
+      const source = Function.prototype.toString.call(listener);
+      if (type === "timeupdate") return source.includes("status_video_max_duration");
+      return type === "ended" && source.includes("WAWebStatusEventHandlersMap") && source.includes("MediaEvents.OnEnd");
     } catch {
       return false;
     }
@@ -3768,11 +4632,9 @@
       let wrapped = wrappers.get(type);
       if (!wrapped) {
         wrapped = function(event) {
-          if (shouldPauseStatusVideoBeforeEnd(this)) {
-            this.pause();
-            return;
-          }
-          if (!shouldSuppressStatusVideoTimeUpdate(this)) return listener.call(this, event);
+          if (type === "ended" && isActiveStatusMedia(this)) return;
+          if (type === "timeupdate" && isActiveStatusMedia(this)) return;
+          return listener.call(this, event);
         };
         wrappers.set(type, wrapped);
       }
@@ -3870,7 +4732,7 @@
     const videoNode = queryRendered(root, SELECTORS.statusVideo);
     const imageNode = queryRendered(root, SELECTORS.statusImage);
     const voiceNode = videoNode || imageNode || textNode ? null : query(root, SELECTORS.statusVoice);
-    const audioNode = voiceNode ? query(root, SELECTORS.statusAudio) : null;
+    const audioNode = query(root, SELECTORS.statusAudio);
     const mediaNode = videoNode || imageNode || voiceNode || textNode;
     const contentButton = mediaNode?.closest?.("button") || null;
     if (!connected(contentButton) || !isRenderedElement(contentButton)) return null;
@@ -4116,7 +4978,7 @@
       viewer.root?.getAttribute?.("data-status-id") || viewer.mediaNode?.getAttribute?.("data-status-id") || mediaElement?.getAttribute?.("data-status-id") || viewer.root?.getAttribute?.("data-media-id") || viewer.mediaNode?.getAttribute?.("data-media-id") || mediaElement?.getAttribute?.("data-media-id") || viewer.contentButton?.getAttribute?.("data-status-id") || viewer.contentButton?.getAttribute?.("data-media-id") || ""
     );
     if (stableIdentity) return `id:${stableIdentity}`;
-    if (!viewer.videoNode && !viewer.voiceNode) return "";
+    if (!viewer.videoNode && !viewer.audioNode) return "";
     const source = cleanText(mediaElement?.currentSrc || mediaElement?.getAttribute?.("src") || "");
     return source ? `src:${source}` : "";
   }
@@ -4136,10 +4998,25 @@
     if (!previousClock || !nextClock || normalizeClockText(previousClock) !== normalizeClockText(nextClock)) return false;
     return previousText === previousClock || nextText === nextClock;
   }
+  function sameLogicalStatus(record, viewer, identity, sender, time, progress, mediaIdentity) {
+    if (!record) return false;
+    if (!sender && !time && !progress) return false;
+    const recordStable = record.mediaIdentity?.startsWith("id:") || false;
+    const mediaStable = mediaIdentity?.startsWith("id:") || false;
+    if (recordStable && mediaStable) return record.mediaIdentity === mediaIdentity;
+    const sameContentButton = record.contentButton === viewer.contentButton;
+    const completeUnchangedIdentity = !!(record.sender && sender && record.time && time && record.progress && progress && record.identity === identity);
+    if (!sameContentButton) return completeUnchangedIdentity;
+    if (record.identity === identity) return true;
+    if (record.sender && !sender || record.time && !time || record.progress && !progress) return false;
+    const changed = (previous, next) => !!previous && !!next && previous !== next;
+    const timeChanged = changed(record.time, time) && !timesRepresentSameClock(record.time, time);
+    return !changed(record.sender, sender) && !timeChanged && !changed(record.progress, progress);
+  }
   function sameIdentity(record, viewer, identity, sender, time, progress, mediaIdentity) {
     if (!record || record.contentButton !== viewer.contentButton) return false;
-    if (!sender && !time && !progress) return false;
-    const mediaKind = viewer.videoNode ? "video" : viewer.voiceNode ? "audio" : viewer.textNode ? "text" : "other";
+    if (!sameLogicalStatus(record, viewer, identity, sender, time, progress, mediaIdentity)) return false;
+    const mediaKind = viewer.videoNode ? "video" : viewer.audioNode ? "audio" : viewer.textNode ? "text" : "other";
     if (record.mediaKind && record.mediaKind !== mediaKind) return false;
     if (record.mediaIdentity && mediaIdentity && record.mediaIdentity !== mediaIdentity) {
       const recordStable2 = record.mediaIdentity.startsWith("id:");
@@ -4150,12 +5027,7 @@
     }
     const recordStable = record.mediaIdentity?.startsWith("id:") || false;
     const mediaStable = mediaIdentity?.startsWith("id:") || false;
-    if (recordStable && !mediaStable) return false;
-    if (record.identity === identity) return true;
-    if (record.sender && !sender || record.time && !time || record.progress && !progress) return false;
-    const changed = (previous, next) => !!previous && !!next && previous !== next;
-    const timeChanged = changed(record.time, time) && !timesRepresentSameClock(record.time, time);
-    return !changed(record.sender, sender) && !timeChanged && !changed(record.progress, progress);
+    return !(recordStable && !mediaStable);
   }
   function releaseTarget(target) {
     if (!target) return;
@@ -4182,7 +5054,8 @@
   function ensureRecord(viewer, sender, time, title, progress) {
     const identity = createIdentity(sender, time, progress);
     const mediaIdentity = getMediaIdentity(viewer);
-    const mediaKind = viewer.videoNode ? "video" : viewer.voiceNode ? "audio" : viewer.textNode ? "text" : "other";
+    const mediaKind = viewer.videoNode ? "video" : viewer.audioNode ? "audio" : viewer.textNode ? "text" : "other";
+    const playableMediaPossible = !!(viewer.videoNode || viewer.audioNode || viewer.voiceNode || title);
     if (sameIdentity(current, viewer, identity, sender, time, progress, mediaIdentity)) {
       current.generation = generation;
       current.identity = identity || current.identity;
@@ -4192,8 +5065,18 @@
       current.progress = progress || current.progress;
       if (mediaIdentity || !current.mediaIdentity?.startsWith("id:")) current.mediaIdentity = mediaIdentity;
       current.mediaKind = mediaKind;
+      current.playableMediaPossible ||= playableMediaPossible;
       return current;
     }
+    const preservePlayableMedia = sameLogicalStatus(
+      current,
+      viewer,
+      identity,
+      sender,
+      time,
+      progress,
+      mediaIdentity
+    ) && !!current?.playableMediaPossible;
     releaseRecordTargets(current);
     generation += 1;
     current = {
@@ -4205,6 +5088,7 @@
       progress,
       mediaIdentity,
       mediaKind,
+      playableMediaPossible: playableMediaPossible || preservePlayableMedia,
       contentButton: viewer.contentButton,
       summaryTarget: null,
       summaryShell: null,
@@ -4226,13 +5110,19 @@
     };
     return current;
   }
-  function applyPrivacy(value, host) {
-    return isPrivacyModeEnabled() ? maskPhoneNumbers(value, host) : value;
+  function applyPrivacy(value, host, context = "message") {
+    if (!isPrivacyModeEnabled()) return value;
+    return context === "identity" ? maskPhoneNumbers(value, host) : maskMessagePhoneContent(value, host);
   }
   function composeLabel(viewer, record) {
     const body = getCaption(viewer, record);
     const media = viewer.textNode ? "" : viewer.voiceNode ? t("voiceMessage") : record.title || getMediaFallback();
-    const fields = [record.sender, media, body, record.time].map((value) => applyPrivacy(cleanText(value), viewer.contentButton)).filter(Boolean);
+    const fields = [
+      applyPrivacy(cleanText(record.sender), viewer.contentButton, "identity"),
+      applyPrivacy(cleanText(media), viewer.contentButton),
+      applyPrivacy(cleanText(body), viewer.contentButton),
+      applyPrivacy(cleanText(record.time), viewer.contentButton)
+    ].filter(Boolean);
     const isolatedFields = fields.map(isolateBidiText);
     const separator = t("statusSummarySeparator") || ". ";
     return isolatedFields.reduce((label, field, index) => {
@@ -4293,7 +5183,8 @@
       record.captionBaselineCaptured = true;
     }
     commitLabel(viewer, record);
-    if (!viewer.videoNode) {
+    const confirmedStaticStatus = !viewer.videoNode && !viewer.audioNode && !record.playableMediaPossible && !!(viewer.textNode || viewer.imageNode);
+    if (confirmedStaticStatus) {
       if (record.pauseAttempted && !record.pauseControlFound) {
         if (findPauseButton(viewer)) {
           record.pauseAttempted = false;
@@ -4301,6 +5192,11 @@
         }
       }
       if (!record.pauseAttempted) {
+        record.pauseChecks += 1;
+        if (record.pauseChecks < MAX_PAUSE_CHECKS) {
+          scheduleStatusAccessibilitySync();
+          return;
+        }
         const pause = findPauseButton(viewer);
         if (pause) {
           record.pauseControlFound = true;
@@ -4311,11 +5207,6 @@
             return;
           }
           activateControl(pause);
-          scheduleStatusAccessibilitySync();
-          return;
-        }
-        record.pauseChecks += 1;
-        if (record.pauseChecks < MAX_PAUSE_CHECKS) {
           scheduleStatusAccessibilitySync();
           return;
         }
@@ -4398,7 +5289,7 @@
       return;
     }
     if (options.retryControls && current) {
-      if (current.mediaKind !== "video" && !current.pauseControlFound) {
+      if (current.mediaKind !== "video" && current.mediaKind !== "audio" && !current.pauseControlFound) {
         current.pauseAttempted = false;
         current.pauseChecks = 0;
       }
@@ -4419,6 +5310,322 @@
     scheduled = false;
     scheduleToken += 1;
     releaseCurrent();
+  }
+
+  // src/message-reader.js
+  var READER_EXPANSION_TIMEOUT_MS = 2e3;
+  var SAFE_READER_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:"]);
+  function clearNode(node) {
+    if (node) node.textContent = "";
+  }
+  function appendText(documentRef, parent, text) {
+    if (!text) return;
+    parent.appendChild(documentRef.createTextNode(String(text)));
+  }
+  function getSafeMessageReaderUrl(rawHref) {
+    try {
+      const url = new URL(String(rawHref || ""), location.href);
+      return SAFE_READER_PROTOCOLS.has(url.protocol) ? url : null;
+    } catch {
+      return null;
+    }
+  }
+  function getVisibleUrlHostname(text) {
+    const candidate = String(text || "").trim();
+    if (!/^(?:https?:\/\/|www\.)/i.test(candidate)) return "";
+    try {
+      return new URL(/^www\./i.test(candidate) ? `https://${candidate}` : candidate).hostname;
+    } catch {
+      return "";
+    }
+  }
+  function appendReaderLink(documentRef, parent, run) {
+    const safeUrl = getSafeMessageReaderUrl(run.href);
+    const visibleText = run.text || (safeUrl ? safeUrl.href : run.href) || "";
+    if (!safeUrl) {
+      appendText(documentRef, parent, visibleText);
+      appendText(documentRef, parent, ` (${t("messageReaderUnsafeLink")})`);
+      return;
+    }
+    const link = documentRef.createElement("a");
+    link.setAttribute("href", safeUrl.href);
+    link.setAttribute("referrerpolicy", "no-referrer");
+    link.textContent = visibleText || safeUrl.hostname || safeUrl.protocol;
+    parent.appendChild(link);
+    const visibleHostname = getVisibleUrlHostname(visibleText);
+    if (visibleHostname && visibleHostname.toLowerCase() !== safeUrl.hostname.toLowerCase()) {
+      appendText(documentRef, parent, ` (${t("messageReaderLinkDestination", {
+        destination: safeUrl.hostname
+      })})`);
+    }
+  }
+  function appendReaderRuns(documentRef, parent, runs) {
+    const containers = [parent];
+    const currentContainer = () => containers[containers.length - 1];
+    for (const run of runs || []) {
+      if (run.type === "break") {
+        currentContainer().appendChild(documentRef.createElement("br"));
+      } else if (run.type === "link") {
+        appendReaderLink(documentRef, currentContainer(), run);
+      } else if (run.type === "listStart") {
+        const list = documentRef.createElement(run.ordered ? "ol" : "ul");
+        currentContainer().appendChild(list);
+        containers.push(list);
+      } else if (run.type === "listEnd") {
+        if (containers.length > 1) containers.pop();
+      } else if (run.type === "listItemStart") {
+        const item = documentRef.createElement("li");
+        currentContainer().appendChild(item);
+        containers.push(item);
+      } else if (run.type === "listItemEnd") {
+        if (containers.length > 1) containers.pop();
+      } else {
+        appendText(documentRef, currentContainer(), run.text || "");
+      }
+    }
+  }
+  var readerEscapeDocuments = /* @__PURE__ */ new WeakSet();
+  function closeReaderWindow(readerWindow) {
+    try {
+      readerWindow?.close?.();
+    } catch {
+    }
+  }
+  function handleReaderEscapeKeydown(event, readerWindow) {
+    if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.key !== "Escape" && event.code !== "Escape") return false;
+    event.preventDefault();
+    closeReaderWindow(readerWindow);
+    return true;
+  }
+  function installReaderEscapeHandler(documentRef, readerWindow) {
+    if (!documentRef?.addEventListener || readerEscapeDocuments.has(documentRef)) return false;
+    readerEscapeDocuments.add(documentRef);
+    documentRef.addEventListener(
+      "keydown",
+      (event) => handleReaderEscapeKeydown(event, readerWindow)
+    );
+    return true;
+  }
+  function installCurrentReaderEscapeHandler(readerWindow) {
+    try {
+      return installReaderEscapeHandler(readerWindow?.document, readerWindow);
+    } catch {
+      return false;
+    }
+  }
+  function createReaderView(documentRef, {
+    titleKey = "messageReaderDocumentTitle",
+    headingKey = "messageReaderHeading",
+    readerWindow = null
+  } = {}) {
+    const language2 = getSupportedLanguage(getLanguage()) || "en";
+    const root = documentRef.documentElement;
+    root.setAttribute("lang", language2);
+    root.setAttribute("dir", "ltr");
+    clearNode(documentRef.head);
+    clearNode(documentRef.body);
+    const charset = documentRef.createElement("meta");
+    charset.setAttribute("charset", "utf-8");
+    documentRef.head.appendChild(charset);
+    const viewport = documentRef.createElement("meta");
+    viewport.setAttribute("name", "viewport");
+    viewport.setAttribute("content", "width=device-width, initial-scale=1");
+    documentRef.head.appendChild(viewport);
+    const titleText = t(titleKey);
+    const title = documentRef.createElement("title");
+    title.textContent = titleText;
+    documentRef.head.appendChild(title);
+    documentRef.title = titleText;
+    const style = documentRef.createElement("style");
+    style.textContent = `
+    *, *::before, *::after { box-sizing: border-box; }
+    html { background: Canvas; color: CanvasText; }
+    body {
+      margin: 0;
+      background: Canvas;
+      color: CanvasText;
+      font-family: system-ui, sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+    main {
+      inline-size: 100%;
+      max-inline-size: 65rem;
+      margin-inline: auto;
+      padding-block: 1.5rem 3rem;
+      padding-inline: clamp(1rem, 4vw, 3rem);
+    }
+    h1 { font-size: 1.5rem; line-height: 1.3; margin-block: 0 1.5rem; }
+    button {
+      margin-block: 1.5rem 0;
+      padding: 0.55rem 0.85rem;
+      border: 1px solid ButtonBorder;
+      border-radius: 0.35rem;
+      background: ButtonFace;
+      color: ButtonText;
+      font: inherit;
+      cursor: pointer;
+    }
+    article { max-inline-size: 70ch; }
+    .message-reader-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .message-reader-time { margin-block-start: 1.5rem; }
+    a { color: LinkText; text-decoration: underline; text-underline-offset: 0.15em; }
+    a:focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+  `;
+    documentRef.head.appendChild(style);
+    const main = documentRef.createElement("main");
+    const heading = documentRef.createElement("h1");
+    heading.setAttribute("id", "message-reader-heading");
+    heading.textContent = t(headingKey);
+    main.appendChild(heading);
+    const closeButton = documentRef.createElement("button");
+    closeButton.setAttribute("type", "button");
+    closeButton.setAttribute("id", "message-reader-close");
+    closeButton.textContent = t("messageReaderClose");
+    closeButton.onclick = () => closeReaderWindow(readerWindow);
+    const content = documentRef.createElement("div");
+    main.appendChild(content);
+    main.appendChild(closeButton);
+    documentRef.body.appendChild(main);
+    return { documentRef, content };
+  }
+  function renderReaderWindow(readerWindow, render, viewOptions = {}) {
+    const view = createReaderView(readerWindow.document, {
+      ...viewOptions,
+      readerWindow
+    });
+    render(view);
+    installCurrentReaderEscapeHandler(readerWindow);
+    return view;
+  }
+  function renderReaderState(view, key) {
+    clearNode(view.content);
+    const paragraph = view.documentRef.createElement("p");
+    paragraph.textContent = t(key);
+    view.content.appendChild(paragraph);
+  }
+  function renderReaderSnapshot(view, snapshot) {
+    clearNode(view.content);
+    const article = view.documentRef.createElement("article");
+    article.setAttribute("aria-labelledby", "message-reader-heading");
+    const body = view.documentRef.createElement("div");
+    body.setAttribute("class", "message-reader-body");
+    body.setAttribute("dir", "auto");
+    appendReaderRuns(view.documentRef, body, snapshot.runs);
+    article.appendChild(body);
+    const timeParagraph = view.documentRef.createElement("p");
+    timeParagraph.setAttribute("class", "message-reader-time");
+    if (snapshot.sentAt) {
+      appendText(view.documentRef, timeParagraph, `${t("messageReaderSentAt")} `);
+      const timeValue = view.documentRef.createElement("span");
+      timeValue.setAttribute("dir", "auto");
+      timeValue.textContent = snapshot.sentAt;
+      timeParagraph.appendChild(timeValue);
+    } else {
+      timeParagraph.textContent = t("messageReaderTimeUnavailable");
+    }
+    article.appendChild(timeParagraph);
+    view.content.appendChild(article);
+  }
+  function consumeShortcut(event) {
+    event.preventDefault();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+    else event.stopPropagation?.();
+  }
+  function finishExpansion(request, snapshot = null) {
+    if (request.settled) return true;
+    request.settled = true;
+    request.observer?.disconnect();
+    if (request.timeoutId) clearTimeout(request.timeoutId);
+    if (request.readerWindow.closed) return true;
+    try {
+      renderReaderWindow(request.readerWindow, (view) => {
+        if (snapshot) renderReaderSnapshot(view, snapshot);
+        else renderReaderState(view, "messageReaderExpansionFailed");
+      }, snapshot ? {} : {
+        titleKey: "messageReaderFailureDocumentTitle",
+        headingKey: "messageReaderFailureHeading"
+      });
+    } catch {
+    }
+    return true;
+  }
+  function tryFinishExpandedReader(request) {
+    if (request.settled) return true;
+    if (!isMessageReaderSourceCurrent(request.source)) {
+      return finishExpansion(request);
+    }
+    if (hasMessageReadMoreControl(request.source.messageItem)) return false;
+    const snapshot = getMessageReaderSnapshot(request.source.messageItem);
+    if (!snapshot || snapshot.textLength <= request.source.snapshot.textLength) return false;
+    return finishExpansion(request, snapshot);
+  }
+  function startExpandedReader(request) {
+    request.observer = new MutationObserver(() => tryFinishExpandedReader(request));
+    request.observer.observe(request.source.messageItem, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+    request.timeoutId = setTimeout(() => finishExpansion(request), READER_EXPANSION_TIMEOUT_MS);
+    if (!activateMessageReadMore(request.source.messageItem, request.source.readMoreButton)) {
+      finishExpansion(request);
+      return;
+    }
+    if (!tryFinishExpandedReader(request)) {
+      const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 50));
+      schedule(() => tryFinishExpandedReader(request));
+    }
+  }
+  function handleMessageReaderShortcut(event) {
+    if (event.defaultPrevented || event.isComposing || event.repeat || !event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.code !== "KeyC" || event.getModifierState?.("AltGraph")) return false;
+    const source = getFocusedMessageReaderSource(event);
+    if (!source) return false;
+    consumeShortcut(event);
+    if (!source.snapshot) {
+      announce(t("messageReaderNoText"));
+      return true;
+    }
+    if (source.hasReadMoreControl && (!source.readMoreButton || !isMessageReaderSourceCurrent(source))) {
+      announce(t("messageReaderExpansionUnavailable"));
+      return true;
+    }
+    let readerWindow = null;
+    try {
+      readerWindow = window.open("about:blank", "_blank");
+    } catch {
+      readerWindow = null;
+    }
+    if (!readerWindow) {
+      announce(t("messageReaderPopupBlocked"));
+      return true;
+    }
+    readerWindow.opener = null;
+    let view;
+    try {
+      view = renderReaderWindow(readerWindow, (initialView) => {
+        if (source.readMoreButton) renderReaderState(initialView, "messageReaderLoading");
+        else renderReaderSnapshot(initialView, source.snapshot);
+      }, source.readMoreButton ? {
+        titleKey: "messageReaderLoadingDocumentTitle",
+        headingKey: "messageReaderLoadingHeading"
+      } : {});
+    } catch {
+      readerWindow.close?.();
+      return true;
+    }
+    if (!source.readMoreButton) {
+      return true;
+    }
+    startExpandedReader({
+      source,
+      readerWindow,
+      view,
+      observer: null,
+      timeoutId: null,
+      settled: false
+    });
+    return true;
   }
 
   // src/appearance.js
@@ -4503,9 +5710,13 @@
     });
     return targets.filter((el, index, arr) => el && arr.indexOf(el) === index);
   }
+  function getCommunityEmptyStateTargets() {
+    return Array.from(document.querySelectorAll?.(SELECTORS.communityEmptyState) || []).filter((panel) => Array.from(panel.querySelectorAll?.("svg title") || []).some((title) => normalizeText(title.textContent || "") === "wds-ic-communities-filled"));
+  }
   function getCleanUiHiddenTargets() {
     return [
       getDesktopAppPromo(),
+      ...getCommunityEmptyStateTargets(),
       document.querySelector('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]'),
       document.querySelector('#side [data-testid="chatlist-e2e-message"]'),
       ...getRecentSearchesTargets()
@@ -4554,7 +5765,6 @@
     display: none !important;
   }
 
-  /* Reveal chat menus on hover or keyboard focus. */
   [data-testid="chat-list"] [role="row"] [data-testid="context-btn"] {
     opacity: 0 !important;
   }
@@ -4653,6 +5863,9 @@
   var passiveAnnouncements = [];
   var passiveAnnouncementGeneration = 0;
   var pendingFocusRequest = 0;
+  var pendingCommunityClose = null;
+  var pendingCommunitySectionClose = null;
+  var COMMUNITY_FOCUS_COMMIT_RETRIES = 3;
   var DELIVERY_STATUS_BY_KEY = Object.freeze({
     deliveryPending: "Pending",
     deliverySent: "Sent",
@@ -4666,6 +5879,8 @@
   });
   function cancelPendingFocusRequests() {
     pendingFocusRequest++;
+    pendingCommunityClose = null;
+    pendingCommunitySectionClose = null;
   }
   function beginFocusRequest() {
     return ++pendingFocusRequest;
@@ -4908,6 +6123,8 @@
       return false;
     }
     const enabled = isPrivacyModeEnabled();
+    const messageContainer = document.querySelector(SELECTORS.conversationMessages);
+    if (messageContainer) refreshMessageMentionNames(messageContainer);
     refreshStatusAccessibility();
     resetPassiveAnnouncementContext();
     clearMessageLog();
@@ -4980,16 +6197,245 @@
     rows.push(...Array.from(node.querySelectorAll?.('div[role="row"]') || []));
     return preferLast ? rows.at(-1) || null : rows[0] || null;
   }
+  function getCommunityDrawer(node) {
+    if (!node || node.nodeType !== 1) return null;
+    if (node.getAttribute?.("data-testid") === "community-tab-drawer") return node;
+    return node.closest?.(SELECTORS.communityDrawer) || null;
+  }
+  function armCommunityCloseRecovery(event) {
+    if (event.key !== "Escape" && event.code !== "Escape" || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey || event.repeat || event.isComposing || event.defaultPrevented) return;
+    const drawer = getCommunityDrawer(event.target) || getCommunityDrawer(document.activeElement) || document.querySelector(SELECTORS.communityDrawer);
+    if (!drawer || !hasActiveState(getNavButton("navCommunities"))) return;
+    pendingCommunityClose = {
+      drawer,
+      origin: document.activeElement,
+      allowCommunityFocusShell: true,
+      request: beginFocusRequest()
+    };
+  }
+  function getCommunityEmptyState() {
+    return getCommunityEmptyStateTargets()[0] || null;
+  }
+  function getCommunityEmptyStateFocusShell(panel) {
+    const drawerMiddle = panel?.closest?.(SELECTORS.drawerMiddle);
+    let ancestor = panel?.parentElement || null;
+    while (ancestor && ancestor !== drawerMiddle) {
+      if (ancestor.getAttribute?.("tabindex") === "-1") return ancestor;
+      ancestor = ancestor.parentElement;
+    }
+    return null;
+  }
+  function armCommunitySectionCloseRecovery(event) {
+    if (event.key !== "Escape" && event.code !== "Escape" || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey || event.repeat || event.isComposing || event.defaultPrevented || !hasActiveState(getNavButton("navChats")) || getActiveNonChatTabLabelKey() || document.querySelector(SELECTORS.communityDrawer)) return;
+    const panel = getCommunityEmptyState();
+    if (!panel || !panel.closest?.(SELECTORS.drawerMiddle)) return;
+    const origin = document.activeElement;
+    const focusShell = getCommunityEmptyStateFocusShell(panel);
+    const originCanBeStranded = !origin || origin === document.body || origin === document.documentElement || origin.isConnected === false || panel.contains?.(origin) || focusShell?.contains?.(origin);
+    if (!originCanBeStranded) return;
+    pendingCommunitySectionClose = {
+      panel,
+      focusShell,
+      origin,
+      allowCommunityFocusShell: true,
+      request: beginFocusRequest()
+    };
+  }
+  function getCommunityRecoveryFocusTargets(recovery) {
+    if (!recovery?.allowCommunityFocusShell) return { panel: null, focusShell: null };
+    const currentPanel = getCommunityEmptyState();
+    const panel = currentPanel?.closest?.(SELECTORS.drawerMiddle) ? currentPanel : recovery.panel;
+    const currentFocusShell = panel ? getCommunityEmptyStateFocusShell(panel) : null;
+    const focusShell = currentFocusShell || recovery.focusShell || null;
+    if (currentPanel?.closest?.(SELECTORS.drawerMiddle)) recovery.panel = currentPanel;
+    if (currentFocusShell) recovery.focusShell = currentFocusShell;
+    return { panel, focusShell };
+  }
+  function isKnownTransientCommunityFocus(active, recovery) {
+    const { panel, focusShell } = getCommunityRecoveryFocusTargets(recovery);
+    return !!active && (active === panel || panel?.contains?.(active) || active === focusShell || focusShell?.contains?.(active));
+  }
+  function armCommunityChatCloseRecovery(event) {
+    if (event.key !== "Escape" && event.code !== "Escape" || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey || event.repeat || event.isComposing || event.defaultPrevented || !hasActiveState(getNavButton("navChats")) || getActiveNonChatTabLabelKey()) return;
+    const main = document.querySelector(SELECTORS.main);
+    const conversation = main?.querySelector?.(SELECTORS.conversationMessages);
+    if (!conversation || !isChatMainActive(main)) return;
+    const recovery = {
+      origin: document.activeElement,
+      originRoot: main,
+      allowCommunityFocusShell: true,
+      request: beginFocusRequest()
+    };
+    const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+    const tryRecover = (attempt) => {
+      if (!isFocusRequestCurrent(recovery.request) || getActiveModal() || !hasActiveState(getNavButton("navChats")) || getActiveNonChatTabLabelKey()) return;
+      const chatClosed = !isChatMainActive();
+      const communityPanel = getCommunityEmptyState();
+      if (chatClosed && communityPanel?.closest?.(SELECTORS.drawerMiddle)) {
+        recovery.panel = communityPanel;
+        recovery.focusShell = getCommunityEmptyStateFocusShell(communityPanel);
+        recoverChatListFocusAfterCommunityClose(
+          recovery,
+          () => !isChatMainActive() && !!getCommunityEmptyState()
+        );
+        return;
+      }
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+    };
+    schedule(() => tryRecover(1));
+  }
+  function isCommunityChatFocusRecoveryReady(request, isClosed) {
+    return isFocusRequestCurrent(request) && !getActiveModal() && isClosed() && hasActiveState(getNavButton("navChats")) && !getActiveNonChatTabLabelKey();
+  }
+  function isCommunityRecoveryFocusCandidate(active, recovery, chatList) {
+    return !active || active === document.body || active === document.documentElement || active.isConnected === false || active === recovery.origin || chatList?.contains?.(active) || isKnownTransientCommunityFocus(active, recovery);
+  }
+  function recoverChatListFocusAfterCommunityClose(recovery, isClosed) {
+    const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
+    let lastStableRow = null;
+    let lastStableTarget = null;
+    let lastStableChatList = null;
+    let stableFrames = 0;
+    let attempt = 0;
+    const shouldContinue = () => isCommunityChatFocusRecoveryReady(recovery.request, isClosed);
+    const verifyFinalFocus = (row, target, chatList, retry = 0, stableFrames2 = 0) => {
+      schedule(() => {
+        if (!shouldContinue()) return;
+        if (target.isConnected && document.activeElement === target) {
+          if (stableFrames2 >= 1) return;
+          verifyFinalFocus(row, target, chatList, retry, stableFrames2 + 1);
+          return;
+        }
+        const active = document.activeElement;
+        if (retry >= COMMUNITY_FOCUS_COMMIT_RETRIES || !isCommunityRecoveryFocusCandidate(active, recovery, chatList)) return;
+        const canRetry = () => shouldContinue() && isCommunityRecoveryFocusCandidate(
+          document.activeElement,
+          recovery,
+          chatList
+        );
+        focusChatRow(
+          row,
+          null,
+          canRetry,
+          (focusedRow, focusedTarget) => verifyFinalFocus(
+            focusedRow,
+            focusedTarget,
+            focusedRow?.closest?.(SELECTORS.chatListInSide) || chatList,
+            retry + 1,
+            0
+          )
+        );
+      });
+    };
+    const focusStableRow = (row, target, chatList) => {
+      if (!shouldContinue() || !isCommunityRecoveryFocusCandidate(
+        document.activeElement,
+        recovery,
+        chatList
+      )) return;
+      if (!focusItem(chatList)) return;
+      const shouldFinalizeRowFocus = () => {
+        if (!shouldContinue()) return false;
+        return isCommunityRecoveryFocusCandidate(
+          document.activeElement,
+          recovery,
+          chatList
+        );
+      };
+      focusChatRow(
+        row,
+        null,
+        shouldFinalizeRowFocus,
+        (focusedRow, focusedTarget) => verifyFinalFocus(
+          focusedRow,
+          focusedTarget,
+          chatList
+        )
+      );
+    };
+    const waitForStableRow = () => {
+      if (!shouldContinue()) return;
+      attempt++;
+      const rows = getChatListRows();
+      const row = getPreferredChatRow(
+        rows,
+        document.body,
+        attempt >= SHORTCUT_RENDER_RETRIES
+      );
+      const target = getChatRowActivator(row);
+      const chatList = row?.closest?.(SELECTORS.chatListInSide);
+      const validTarget = row?.isConnected && target?.isConnected && chatList?.isConnected && isRenderedElement(chatList) && isRenderedElement(row) && isRenderedElement(target);
+      if (!validTarget) {
+        if (attempt < SHORTCUT_RENDER_RETRIES) schedule(waitForStableRow);
+        return;
+      }
+      if (row === lastStableRow && target === lastStableTarget && chatList === lastStableChatList) {
+        stableFrames++;
+      } else {
+        lastStableRow = row;
+        lastStableTarget = target;
+        lastStableChatList = chatList;
+        stableFrames = 1;
+      }
+      if (stableFrames < 2) {
+        if (attempt < SHORTCUT_RENDER_RETRIES) schedule(waitForStableRow);
+        return;
+      }
+      focusStableRow(row, target, chatList);
+    };
+    waitForStableRow();
+  }
   function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSibling = null) {
     const remembered = getRememberedFocus();
+    const communityClose = pendingCommunityClose && (rootEl === pendingCommunityClose.drawer || rootEl.contains?.(pendingCommunityClose.drawer)) ? pendingCommunityClose : null;
+    if (communityClose) pendingCommunityClose = null;
+    const communitySectionClose = pendingCommunitySectionClose && (rootEl === pendingCommunitySectionClose.panel || rootEl.contains?.(pendingCommunitySectionClose.panel)) ? pendingCommunitySectionClose : null;
+    if (communitySectionClose) pendingCommunitySectionClose = null;
     const lostChat = remembered.lastFocusedChatRowNode && (rootEl === remembered.lastFocusedChatRowNode || rootEl.contains?.(remembered.lastFocusedChatRowNode));
     const lostMessage = remembered.lastFocusedMessageNode && (rootEl === remembered.lastFocusedMessageNode || rootEl.contains?.(remembered.lastFocusedMessageNode));
-    if (!lostChat && !lostMessage) return;
+    if (!communityClose && !communitySectionClose && !lostChat && !lostMessage) return;
     const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
     schedule(() => {
-      if (getActiveModal() || document.activeElement !== document.body) return;
+      if (communityClose) {
+        const tryRecover = (attempt) => {
+          const active = document.activeElement;
+          const focusIsStranded = isCommunityRecoveryFocusCandidate(
+            active,
+            communityClose,
+            null
+          ) || getChatListRows().some((row) => row.contains?.(active));
+          if (!isFocusRequestCurrent(communityClose.request) || getActiveModal() || document.querySelector(SELECTORS.communityDrawer) || !focusIsStranded) return;
+          const switchedElsewhere = ["navStatus", "navChannels", "navMetaAI"].some((selectorKey) => hasActiveState(getNavButton(selectorKey)));
+          if (switchedElsewhere) return;
+          if (hasActiveState(getNavButton("navChats")) && !hasActiveState(getNavButton("navCommunities"))) {
+            recoverChatListFocusAfterCommunityClose(
+              communityClose,
+              () => !document.querySelector(SELECTORS.communityDrawer) && !hasActiveState(getNavButton("navCommunities"))
+            );
+            return;
+          }
+          if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+        };
+        tryRecover(1);
+        return;
+      }
+      if (communitySectionClose) {
+        const active = document.activeElement;
+        const focusIsStranded = isCommunityRecoveryFocusCandidate(
+          active,
+          communitySectionClose,
+          null
+        ) || getChatListRows().some((row) => row.contains?.(active));
+        if (!isFocusRequestCurrent(communitySectionClose.request) || getActiveModal() || getCommunityEmptyState() || !hasActiveState(getNavButton("navChats")) || getActiveNonChatTabLabelKey() || !focusIsStranded) return;
+        recoverChatListFocusAfterCommunityClose(
+          communitySectionClose,
+          () => !getCommunityEmptyState()
+        );
+        return;
+      }
+      if (getActiveModal()) return;
+      if (document.activeElement !== document.body) return;
       if (lostChat) {
-        clearRememberedChatRow();
         focusChatListShortcut(document.body);
       } else {
         clearRememberedMessageRow();
@@ -5228,25 +6674,7 @@
     const tryFocus = (attempt) => {
       if (!isFocusRequestCurrent(request) || getActiveModal()) return;
       const rows = getChatListRows();
-      const mainActive = isChatMainActive();
-      const fromChatSearch = !!(origin && origin.closest && origin.closest(SELECTORS.chatSearch));
-      let target = fromChatSearch ? null : getPreferredChatRow(rows, origin);
-      if (!target && (!mainActive || fromChatSearch)) {
-        const scroller = document.querySelector(SELECTORS.chatListScroller);
-        if (scroller && scroller.scrollTop > 0) {
-          scroller.scrollTop = 0;
-          if (attempt < SHORTCUT_RENDER_RETRIES) {
-            schedule(() => tryFocus(attempt + 1));
-            return;
-          }
-        }
-        const firstRow = rows[0] || null;
-        if (firstRow && !isNearChatListTop(firstRow) && attempt < SHORTCUT_RENDER_RETRIES) {
-          schedule(() => tryFocus(attempt + 1));
-          return;
-        }
-        target = firstRow && isNearChatListTop(firstRow) ? firstRow : null;
-      }
+      const target = getPreferredChatRow(rows, origin, attempt >= SHORTCUT_RENDER_RETRIES);
       const retryOrAnnounce = () => {
         if (attempt < SHORTCUT_RENDER_RETRIES) {
           schedule(() => tryFocus(attempt + 1));
@@ -5508,6 +6936,7 @@
   }
   function handleNavShortcut(e) {
     if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return false;
+    if (handleMessageReaderShortcut(e)) return true;
     const navTargets = {
       Digit1: ["navChats", t("chats")],
       Digit2: ["navStatus", t("status"), SELECTORS.statusListFirstRow],
@@ -5670,9 +7099,56 @@
     }
     if (handleIncomingCallShortcut(e)) return;
     const activeModal = getActiveModal();
+    if (!activeModal) {
+      armCommunityCloseRecovery(e);
+      armCommunitySectionCloseRecovery(e);
+      armCommunityChatCloseRecovery(e);
+    }
     if (handleModalMediaShortcut(e, activeModal)) return;
     if (e.repeat || e.metaKey || e.getModifierState("AltGraph") || activeModal) return;
     if (handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
+  }
+
+  // src/unread-chat-total.js
+  var UNREAD_TOTAL_STATUS_SELECTOR = '[role="status"], [aria-live]';
+  var UNREAD_TOTAL_TEXT_RE = /^\d{1,4}\+?$/u;
+  function normalizeUnreadTotalText(value) {
+    return String(value || "").replace(/\s+/gu, " ").trim();
+  }
+  function isUnreadChatTotalStatus(el) {
+    if (!el || el.getAttribute?.("role") !== "status" && !el.hasAttribute?.("aria-live")) return false;
+    return [
+      el.getAttribute?.("aria-label"),
+      el.getAttribute?.("title"),
+      el.textContent
+    ].some((value) => UNREAD_TOTAL_TEXT_RE.test(normalizeUnreadTotalText(value)));
+  }
+  function getUnreadChatTotalStatuses(button) {
+    const tile = button?.parentElement;
+    if (!tile) return [];
+    return Array.from(tile.querySelectorAll?.(UNREAD_TOTAL_STATUS_SELECTOR) || []).filter((el) => el !== button && isUnreadChatTotalStatus(el));
+  }
+  function refreshUnreadChatTotal() {
+    const desired = /* @__PURE__ */ new Set();
+    if (!isUnreadChatTotalAnnouncementEnabled()) {
+      const chatsButton = getNavButton("navChats");
+      getUnreadChatTotalStatuses(chatsButton).forEach((el) => {
+        desired.add(el);
+        applyOwnedAttribute(el, "aria-live", "off", OWNERS.unreadChatTotal);
+        if (el.getAttribute?.("role") === "status") {
+          applyOwnedAttribute(el, "role", null, OWNERS.unreadChatTotal);
+        }
+      });
+    }
+    for (const el of [...ownedElements]) {
+      const attributes = ownedAttributes.get(el);
+      const ownsRole = attributes?.get("role")?.owner === OWNERS.unreadChatTotal;
+      const ownsAriaLive = attributes?.get("aria-live")?.owner === OWNERS.unreadChatTotal;
+      if ((ownsRole || ownsAriaLive) && !desired.has(el)) {
+        releaseOwnedAttribute(el, "role", OWNERS.unreadChatTotal);
+        releaseOwnedAttribute(el, "aria-live", OWNERS.unreadChatTotal);
+      }
+    }
   }
 
   // src/settings-menu.js
@@ -5961,7 +7437,9 @@
       ["reduceAnnouncements", "reduce-announcements"],
       ["automaticReading", "automatic-reading"],
       ["chatActivity", "chat-activity"],
-      ["senderDeviceAnnouncements", "sender-device-announcements"]
+      ["senderDeviceAnnouncements", "sender-device-announcements"],
+      ["announceUnreadChatTotal", "announce-unread-chat-total"],
+      ["voiceMessageKeyboardPlayback", "voice-message-keyboard-playback"]
     ].forEach(([labelKey, action]) => {
       const item = createMenuItem("menuitemcheckbox", action);
       item.dataset.labelKey = labelKey;
@@ -6170,6 +7648,8 @@
       "automatic-reading": isAutomaticReadingEnabled(),
       "chat-activity": isChatActivityEnabled(),
       "sender-device-announcements": isSenderDeviceAnnouncementEnabled(),
+      "announce-unread-chat-total": isUnreadChatTotalAnnouncementEnabled(),
+      "voice-message-keyboard-playback": isVoiceMessageKeyboardPlaybackEnabled(),
       "open-chats-at-first-unread": shouldOpenChatsAtFirstUnread(),
       "status-reading-cleanup": isStatusReadingCleanupEnabled(),
       "remap-voice-recording": isShortcutRemapEnabled("voice-recording"),
@@ -6453,6 +7933,11 @@
         refreshSenderDeviceLabels();
         discardPassiveAnnouncements("pulse");
       }
+    } else if (action === "announce-unread-chat-total") {
+      saved = setUnreadChatTotalAnnouncement(!isUnreadChatTotalAnnouncementEnabled());
+      if (saved) refreshUnreadChatTotal();
+    } else if (action === "voice-message-keyboard-playback") {
+      saved = setVoiceMessageKeyboardPlayback(!isVoiceMessageKeyboardPlaybackEnabled());
     } else if (action.startsWith("audio-profile-")) {
       saved = selectAudioExperimentProfile(item.dataset.audioProfile);
     } else if (action.startsWith("call-audio-profile-")) {
@@ -6848,7 +8333,10 @@
   }
   function recleanMessageAncestor(node) {
     const message = node && (node.closest?.(`${SELECTORS.conversationMessages} .focusable-list-item`) || node.querySelector?.(".focusable-list-item"));
-    if (message) cleanNamedAttribute(message, "aria-label");
+    if (message) {
+      cleanNamedAttribute(message, "aria-label");
+      refreshMessageMentionNames(message);
+    }
   }
   function handleAttributeMutation(mutation) {
     const el = mutation.target;
@@ -6867,7 +8355,7 @@
       recleanMessageAncestor(el);
       return getRoleFixRoot(el);
     }
-    if (attrName === "data-pre-plain-text") {
+    if (attrName === "data-pre-plain-text" || attrName === "data-plain-text" || attrName === "data-app-text-template") {
       recleanMessageAncestor(el);
       return null;
     }
@@ -6897,11 +8385,22 @@
   function createCleanupObserver() {
     return new MutationObserver((mutations) => {
       let pulseRelevant = false;
+      let statusRelevant = false;
+      let unreadTotalRelevant = false;
       reconcileUnreadTarget();
       for (const mutation of mutations) {
         const target = mutation.target?.nodeType === 1 ? mutation.target : mutation.target?.parentElement;
         const targetInConversation = !!(target?.matches?.(SELECTORS.conversationMessages) || target?.closest?.(SELECTORS.conversationMessages));
         if (targetInConversation) pulseRelevant = true;
+        const markerAttributeMutation = mutation.type === "attributes" && mutation.attributeName === "data-animate-status-viewer";
+        const targetInStatus = !!(target?.matches?.(SELECTORS.statusPlayerRoot) || target?.closest?.(SELECTORS.statusPlayerRoot) || target?.matches?.(SELECTORS.statusActiveMarker) || markerAttributeMutation && target?.querySelector?.(SELECTORS.statusPlayerRoot));
+        const progressStyleOnly = mutation.type === "attributes" && mutation.attributeName === "style" && !!(target?.matches?.(SELECTORS.statusProgressSegment) || target?.closest?.(SELECTORS.statusProgressSegment));
+        if (targetInStatus && !progressStyleOnly) statusRelevant = true;
+        const targetInPrimaryNavbar = !!(target?.matches?.(SELECTORS.navbarPrimary) || target?.closest?.(SELECTORS.navbarPrimary));
+        const navbarNodeChanged = mutation.type === "childList" && [...mutation.addedNodes, ...mutation.removedNodes].some(
+          (node) => node.nodeType === 1 && (node.matches?.(SELECTORS.navbarPrimary) || node.querySelector?.(SELECTORS.navbarPrimary))
+        );
+        if (targetInPrimaryNavbar || navbarNodeChanged) unreadTotalRelevant = true;
         if (mutation.type === "attributes") {
           scheduleRoleFix(handleAttributeMutation(mutation));
           continue;
@@ -6923,6 +8422,9 @@
         if (mutation.type === "childList") {
           mutation.addedNodes.forEach((node) => {
             scheduleRoleFix(handleAddedNode(node));
+            if (node.nodeType === 1 && (node.matches?.(SELECTORS.statusPlayerRoot) || node.querySelector?.(SELECTORS.statusPlayerRoot))) {
+              statusRelevant = true;
+            }
             if (node.nodeType === 1 && (node.matches?.(SELECTORS.conversationMessages) || node.querySelector?.(SELECTORS.conversationMessages))) {
               pulseRelevant = true;
             }
@@ -6930,6 +8432,7 @@
           mutation.removedNodes.forEach((node) => {
             if (node.nodeType !== 1) return;
             if (node.matches?.(SELECTORS.statusPlayerRoot) || node.querySelector?.(SELECTORS.statusPlayerRoot)) {
+              statusRelevant = true;
               releaseStatusAccessibility(node);
             }
             forgetPrivacyState(node);
@@ -6942,7 +8445,8 @@
           scheduleCleanUiSync();
         }
       }
-      scheduleStatusAccessibilitySync();
+      if (statusRelevant) scheduleStatusAccessibilitySync();
+      if (unreadTotalRelevant) refreshUnreadChatTotal();
       pruneDetachedOwnedElements();
       if (pulseRelevant) scheduleChatPulseSync();
     });
@@ -6955,29 +8459,34 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ["aria-label", "aria-labelledby", "id", "data-id", "title", "role", "class", "tabindex", "hidden", "style", "disabled", "aria-disabled", "aria-hidden", "aria-pressed", "aria-selected", "aria-expanded", "src", "poster", "data-testid", "data-status-id", "data-media-id", "data-animate-status-viewer", "data-navbar-item-selected", "data-pre-plain-text"]
+        attributeFilter: ["aria-label", "aria-labelledby", "aria-live", "id", "data-id", "title", "role", "class", "tabindex", "hidden", "style", "disabled", "aria-disabled", "aria-hidden", "aria-pressed", "aria-selected", "aria-expanded", "src", "poster", "data-testid", "data-status-id", "data-media-id", "data-animate-status-viewer", "data-navbar-item-selected", "data-pre-plain-text", "data-plain-text", "data-app-text-template"]
       });
       cleanElementAttributes(document.body);
+      refreshUnreadChatTotal();
       const chatList = fixAccessibilityRoles(document.body);
       if (chatList) normalizeChatListTabStops(chatList);
     } else {
       setTimeout(startCleanupObserver, 100);
     }
   }
+  startStatusAutoAdvanceGuard();
   onDomReady(function() {
     try {
       ensureLiveRegion();
       startSettingsMenu();
       startCleanupObserver();
-      startStatusAutoAdvanceGuard();
       updateStyleSheets();
       window.addEventListener("keydown", handleShortcuts, true);
-      document.addEventListener("keydown", handleMessageGridKeydown, true);
+      window.addEventListener("keydown", handleMessageGridKeydown, true);
+      window.addEventListener("keyup", handleMessageReadMoreKeyup, true);
       document.addEventListener("focusin", (event) => {
-        rememberFocusedRow(event.target);
+        rememberFocusedRow(event.target, "focus");
         scheduleStatusAccessibilitySync();
-      });
-      document.addEventListener("mousedown", (event) => rememberFocusedRow(event.target));
+      }, true);
+      document.addEventListener("pointerdown", (event) => {
+        cancelPendingFocusRequests();
+        rememberFocusedRow(event.target, "pointer");
+      }, true);
       scheduleStatusAccessibilitySync();
       if (isChatActivityEnabled()) startStatusTracking();
       if (isAutomaticReadingEnabled()) captureChatPulseBaseline();

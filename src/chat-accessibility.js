@@ -11,11 +11,12 @@ import {
   _origSetAttribute,
   cleanString,
   getDirectMetaAISender,
+  getNamedAttributeSource,
   hasActiveState,
   hasDirectMetaAISender,
   isStatusTabActive,
   isPrivacyModeEnabled,
-  privacyAttributes
+  prepareNamedAttribute
 } from './privacy.js';
 import {
   applyOwnedAttribute,
@@ -33,6 +34,7 @@ import {
   getUnreadDividerRegex,
   getViewStatusRegex,
   isAnnouncementReductionEnabled,
+  isVoiceMessageKeyboardPlaybackEnabled,
   t,
   tForLanguage
 } from './settings-state.js';
@@ -42,6 +44,8 @@ import {
 } from './companion-bridge.js';
 
 let lastFocusedChatRowNode = null;
+let lastFocusedChatTitle = '';
+let lastFocusedChatRowIndex = -1;
 let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
 let announcementTimer = null;
@@ -304,17 +308,30 @@ export function applyOwnedMessageRole(el, role, owner) {
   }
   const currentRole = (el.getAttribute('role') || '').trim();
   if (currentRole && currentRole !== role &&
-    !isReplaceableMessageSection(el, role, currentRole, owner)) return false;
+    !isReplaceableGridcellSection(el, role, currentRole, owner)) return false;
   applyOwnedAttribute(el, 'role', role, owner);
   return true;
 }
 
-function isReplaceableMessageSection(el, requestedRole, currentRole, owner) {
-  return owner === OWNERS.messageCell &&
+function isReplaceableGridcellSection(el, requestedRole, currentRole, owner) {
+  const isMessageCell = owner === OWNERS.messageCell &&
     requestedRole === 'gridcell' &&
     currentRole === 'section' &&
     el.matches?.('.focusable-list-item') &&
     !!el.closest?.(SELECTORS.conversationMessages);
+  if (isMessageCell) return true;
+
+  if (owner !== OWNERS.chatStructure || requestedRole !== 'gridcell' ||
+    currentRole !== 'section' || !el.hasAttribute?.('tabindex') ||
+    !el.hasAttribute?.('aria-selected')) return false;
+
+  const gridcell = el.parentElement;
+  const row = gridcell?.parentElement;
+  return gridcell?.getAttribute?.('role') === 'gridcell' &&
+    row?.matches?.('div[role="row"]') &&
+    row.querySelector?.(':scope > [role="gridcell"]') === gridcell &&
+    gridcell.querySelector?.(':scope > [tabindex][aria-selected]') === el &&
+    !!row.closest?.(SELECTORS.chatListInSide);
 }
 
 function releaseMessageAttributes(owner, keep) {
@@ -333,7 +350,7 @@ function canApplyOwnedMessageRole(el, role, owner) {
   const currentRole = (el.getAttribute('role') || '').trim();
   return !currentRole || currentRole === role ||
     (state?.owner === owner && currentRole === state.appliedValue) ||
-    isReplaceableMessageSection(el, role, currentRole, owner);
+    isReplaceableGridcellSection(el, role, currentRole, owner);
 }
 
 function ensureMessageGridLabel() {
@@ -367,9 +384,619 @@ function normalizeMessageGridTabStops(messages, preferred = null) {
   if (target) setMessageGridTabStop(messages, target);
 }
 
+function hasRenderedMessagePopup() {
+  if (getActiveModal()) return true;
+  return Array.from(document.querySelectorAll?.('[role="menu"], [role="listbox"]') || [])
+    .some(isRenderedElement);
+}
+
+function isPrimaryMessageItem(item) {
+  if (!item?.matches?.('.focusable-list-item')) return false;
+  const liveRole = (item.getAttribute?.('role') || '').toLowerCase();
+  if (item.matches?.('a[href], button, input, textarea, select, [contenteditable="true"]') ||
+    ['button', 'link', 'textbox', 'menu', 'listbox'].includes(liveRole) ||
+    liveRole.startsWith('menuitem') || item.hasAttribute?.('aria-haspopup')) return false;
+  const row = item.closest?.('div[role="row"]');
+  if (!row || row.querySelector?.('.focusable-list-item') !== item) return false;
+  const messageContainer = item.closest?.(SELECTORS.conversationMessages);
+  const main = item.closest?.(SELECTORS.main);
+  if (!messageContainer || !main || document.querySelector(SELECTORS.main) !== main ||
+    !messageContainer.contains?.(item) || !main.contains?.(item)) return false;
+
+  const ownedCellRole = ownedAttributes.get(item)?.get('role');
+  if (ownedCellRole && ownedCellRole.owner !== OWNERS.messageCell) return false;
+  if (ownedCellRole?.owner === OWNERS.messageCell) {
+    if (liveRole !== 'gridcell') return false;
+    const grid = item.closest?.('[role="grid"]');
+    if (!grid || ownedAttributes.get(grid)?.get('role')?.owner !== OWNERS.messageGrid) return false;
+  }
+  return true;
+}
+
+export function getFocusedPrimaryMessageItem(event) {
+  const item = event.target;
+  return document.activeElement === item && isPrimaryMessageItem(item) ? item : null;
+}
+
+function getRawMessageReadMoreControls(messageItem) {
+  return Array.from(
+    messageItem.querySelectorAll?.(SELECTORS.messageReadMoreButton) || []
+  ).filter(button => {
+    const messageContainer = button.closest?.(SELECTORS.voiceMessageContainer);
+    return messageItem.contains?.(button) &&
+      button.closest?.('.focusable-list-item') === messageItem &&
+      messageContainer && messageItem.contains?.(messageContainer) &&
+      !button.closest?.('[data-testid="quoted-message"]');
+  });
+}
+
+function getMessageReadMoreCandidates(messageItem) {
+  return getRawMessageReadMoreControls(messageItem).filter(button => {
+    const isButton = button.matches?.('button') ||
+      (button.getAttribute?.('role') || '').toLowerCase() === 'button';
+    return isButton &&
+      !button.closest?.('[role="menu"], [role^="menuitem"], [role="listbox"], ' +
+        '[role="dialog"], [role="alertdialog"], a[href], [role="link"]') &&
+      isRenderedElement(button) && !button.disabled &&
+      button.getAttribute?.('aria-disabled') !== 'true' &&
+      button.getAttribute?.('aria-hidden') !== 'true' &&
+      button.getAttribute?.('tabindex') !== '-1' &&
+      !button.hasAttribute?.('aria-haspopup');
+  });
+}
+
+export function getMessageReadMoreButton(messageItem) {
+  const candidates = getMessageReadMoreCandidates(messageItem);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+export function hasMessageReadMoreControl(messageItem) {
+  return getRawMessageReadMoreControls(messageItem).length > 0;
+}
+
+let pendingMessageExpansion = null;
+let heldMessageExpansionKey = null;
+
+function consumeMessageExpansionKey(event) {
+  event.preventDefault();
+  if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+  else event.stopPropagation?.();
+}
+
+function clearPendingMessageExpansion(request = pendingMessageExpansion) {
+  if (!request || pendingMessageExpansion !== request) return;
+  request.observer?.disconnect();
+  if (request.timeoutId) clearTimeout(request.timeoutId);
+  pendingMessageExpansion = null;
+}
+
+function getPrimaryMessageTextRoot(messageItem) {
+  const getOutermostCandidates = selector => {
+    const candidates = Array.from(
+      messageItem.querySelectorAll?.(selector) || []
+    ).filter(candidate => messageItem.contains?.(candidate) &&
+      candidate.closest?.('.focusable-list-item') === messageItem &&
+      !candidate.closest?.('[data-testid="quoted-message"]'));
+    return candidates.filter(candidate => !candidates.some(other =>
+      other !== candidate && other.contains?.(candidate)
+    ));
+  };
+
+  // Prefer the authored media caption root; thumbnail alternatives often duplicate it.
+  const mediaCaptions = getOutermostCandidates(SELECTORS.messageMediaCaption);
+  if (mediaCaptions.length) return mediaCaptions.length === 1 ? mediaCaptions[0] : null;
+
+  const primaryText = getOutermostCandidates(SELECTORS.messagePrimaryText);
+  return primaryText.length === 1 ? primaryText[0] : null;
+}
+
+function isExcludedPrimaryMessageNode(node, messageItem, isRoot = false) {
+  if (!node || (node.nodeType != null && node.nodeType !== 1)) return false;
+  for (let current = node; current && current !== messageItem; current = current.parentElement) {
+    if (current.hidden || current.inert || current.getAttribute?.('aria-hidden') === 'true') return true;
+    if (typeof window.getComputedStyle === 'function') {
+      const style = window.getComputedStyle(current);
+      if (style.display === 'none' || style.visibility === 'hidden') return true;
+    }
+  }
+  if (isRoot) return false;
+  const testId = node.getAttribute?.('data-testid') || '';
+  const role = (node.getAttribute?.('role') || '').toLowerCase();
+  const tagName = (node.tagName || '').toLowerCase();
+  const owningMessage = node.closest?.('.focusable-list-item');
+  return (owningMessage && owningMessage !== messageItem) ||
+    testId === 'quoted-message' || testId === 'msg-meta' ||
+    testId === 'caption-read-more-button' || /(?:^|-)reaction(?:-|$)/i.test(testId) ||
+    ['button', 'input', 'textarea', 'select'].includes(tagName) ||
+    role === 'button' || role === 'menu' || role === 'listbox' ||
+    role === 'dialog' || role === 'alertdialog' || role.startsWith('menuitem');
+}
+
+function getNodeChildren(node) {
+  return Array.from(node?.childNodes || node?.children || []);
+}
+
+function collectReaderText(node, messageItem, isRoot = false) {
+  if (node?.nodeType === 3) return node.nodeValue || '';
+  if (!node || (node.nodeType != null && node.nodeType !== 1) ||
+    isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return '';
+  const tagName = (node.tagName || '').toLowerCase();
+  if (tagName === 'br') return '\n';
+  if (tagName === 'img') return node.getAttribute?.('alt') || '';
+  const children = getNodeChildren(node);
+  return children.length
+    ? children.map(child => collectReaderText(child, messageItem)).join('')
+    : node.textContent || '';
+}
+
+function appendReaderRun(runs, run) {
+  if (!run) return;
+  if (run.type === 'text' && !run.text) return;
+  const previous = runs[runs.length - 1];
+  if (run.type === 'text' && previous?.type === 'text') previous.text += run.text;
+  else runs.push(run);
+}
+
+function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false) {
+  if (node?.nodeType === 3) {
+    appendReaderRun(runs, { type: 'text', text: node.nodeValue || '' });
+    return;
+  }
+  if (!node || (node.nodeType != null && node.nodeType !== 1) ||
+    isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return;
+
+  const tagName = (node.tagName || '').toLowerCase();
+  if (tagName === 'ul' || tagName === 'ol') {
+    runs.push({ type: 'listStart', ordered: tagName === 'ol' });
+    getNodeChildren(node).forEach(child =>
+      collectPrimaryMessageReaderRuns(child, messageItem, runs)
+    );
+    runs.push({ type: 'listEnd' });
+    return;
+  }
+  if (tagName === 'li') {
+    runs.push({ type: 'listItemStart' });
+    getNodeChildren(node).forEach(child =>
+      collectPrimaryMessageReaderRuns(child, messageItem, runs)
+    );
+    runs.push({ type: 'listItemEnd' });
+    return;
+  }
+  if (tagName === 'br') {
+    runs.push({ type: 'break' });
+    return;
+  }
+  if (tagName === 'img') {
+    appendReaderRun(runs, { type: 'text', text: node.getAttribute?.('alt') || '' });
+    return;
+  }
+  if (tagName === 'a' && node.hasAttribute?.('href')) {
+    const text = collectReaderText(node, messageItem, true);
+    appendReaderRun(runs, {
+      type: 'link',
+      text,
+      href: node.getAttribute('href') || ''
+    });
+    return;
+  }
+
+  const children = getNodeChildren(node);
+  if (!children.length) {
+    appendReaderRun(runs, { type: 'text', text: node.textContent || '' });
+    return;
+  }
+  children.forEach(child => collectPrimaryMessageReaderRuns(child, messageItem, runs));
+}
+
+function getMessageSentAt(messageItem, root) {
+  const metadataWrappers = Array.from(
+    messageItem.querySelectorAll?.(SELECTORS.messageTextMetadata) || []
+  ).filter(wrapper => wrapper.contains?.(root) &&
+    wrapper.closest?.('.focusable-list-item') === messageItem &&
+    !wrapper.closest?.('[data-testid="quoted-message"]'));
+  if (metadataWrappers.length === 1) {
+    const metadata = metadataWrappers[0].getAttribute?.('data-pre-plain-text') || '';
+    const timestamp = metadata.match(/^\[([^\]]+)\]/)?.[1]?.trim() || '';
+    if (timestamp) return timestamp;
+  }
+
+  const timeCandidates = Array.from(
+    messageItem.querySelectorAll?.(SELECTORS.messageSentTime) || []
+  ).filter(candidate => candidate.closest?.('.focusable-list-item') === messageItem &&
+    !candidate.closest?.('[data-testid="quoted-message"]') && isRenderedElement(candidate));
+  const times = [...new Set(timeCandidates
+    .map(candidate => cleanString(candidate.textContent || candidate.getAttribute?.('aria-label') || '', false))
+    .filter(Boolean))];
+  return times.length === 1 ? times[0] : '';
+}
+
+export function getMessageReaderSnapshot(messageItem) {
+  const root = messageItem && getPrimaryMessageTextRoot(messageItem);
+  if (!root) return null;
+  const runs = [];
+  collectPrimaryMessageReaderRuns(root, messageItem, runs, true);
+  const normalizedText = cleanString(runs.map(run =>
+    run.type === 'break' ? '\n' : run.text || ''
+  ).join(''), false);
+  if (!normalizedText) return null;
+  return {
+    runs,
+    textLength: normalizedText.length,
+    sentAt: getMessageSentAt(messageItem, root)
+  };
+}
+
+function getPrimaryMessageText(messageItem) {
+  const root = getPrimaryMessageTextRoot(messageItem);
+  if (!root) return '';
+
+  const parts = [];
+  const collect = (node, isRoot = false) => {
+    if (node?.nodeType === 3) {
+      parts.push(node.nodeValue || '');
+      return;
+    }
+    if (!node || (node.nodeType != null && node.nodeType !== 1) ||
+      isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return;
+    if (!isRoot) {
+      const tagName = (node.tagName || '').toLowerCase();
+      if (tagName === 'img') {
+        const alternative = node.getAttribute?.('alt') || '';
+        if (alternative) parts.push(alternative);
+        return;
+      }
+    }
+    const children = getNodeChildren(node);
+    if (!children.length) parts.push(node.textContent || '');
+    else children.forEach(child => collect(child));
+  };
+  collect(root, true);
+  return cleanString(parts.join(''), false);
+}
+
+function getMessageExpansionIdentity(messageItem) {
+  const wrapper = messageItem.closest?.('[data-testid^="conv-msg-"][data-id]');
+  return wrapper ? {
+    wrapper,
+    dataId: wrapper.getAttribute?.('data-id') || ''
+  } : null;
+}
+
+export function getFocusedMessageReaderSource(event) {
+  const messageItem = getFocusedPrimaryMessageItem(event);
+  if (!messageItem) return null;
+  const readMoreButton = getMessageReadMoreButton(messageItem);
+  return {
+    messageItem,
+    identity: getMessageExpansionIdentity(messageItem),
+    readMoreButton,
+    hasReadMoreControl: hasMessageReadMoreControl(messageItem),
+    snapshot: getMessageReaderSnapshot(messageItem)
+  };
+}
+
+export function isMessageReaderSourceCurrent(source) {
+  if (!source?.messageItem || !isPrimaryMessageItem(source.messageItem)) return false;
+  const { identity } = source;
+  return !!identity?.dataId && (
+    identity.wrapper?.isConnected && identity.wrapper.contains?.(source.messageItem) &&
+    identity.wrapper.getAttribute?.('data-id') === identity.dataId
+  );
+}
+
+function getMessageExpansionSourceLabel(messageItem) {
+  return getNamedAttributeSource(messageItem, 'aria-label');
+}
+
+function buildExpandedMessageLabel(request, expandedText) {
+  const source = cleanString(request.sourceLabel || '', false);
+  const collapsed = cleanString(request.collapsedText || '', false);
+  const controlName = cleanString(request.controlName || '', false);
+  if (!source || !collapsed || !controlName || !expandedText) return '';
+
+  let bodyStart = source.indexOf(collapsed);
+  let bodyAnchor = collapsed;
+  if (bodyStart < 0) {
+    bodyAnchor = collapsed.replace(/(?:\u2026|\.{3})\s*$/, '').trim();
+    if (bodyAnchor.length < 16) return '';
+    bodyStart = source.indexOf(bodyAnchor);
+  }
+  if (bodyStart < 0 || source.indexOf(bodyAnchor, bodyStart + 1) >= 0) return '';
+
+  const controlStart = source.indexOf(controlName, bodyStart + bodyAnchor.length);
+  if (controlStart < 0 || source.indexOf(controlName, controlStart + controlName.length) >= 0) return '';
+  const prefix = source.slice(0, bodyStart).trim();
+  const suffix = source.slice(controlStart + controlName.length).trim();
+  return cleanString([prefix, expandedText, suffix].filter(Boolean).join(' '), false);
+}
+
+function tryCommitExpandedMessageName(request) {
+  if (!request || pendingMessageExpansion !== request) return false;
+  const { messageItem, identity } = request;
+  const identityChanged = identity && (
+    !identity.wrapper?.isConnected || !identity.wrapper.contains?.(messageItem) ||
+    identity.wrapper.getAttribute?.('data-id') !== identity.dataId
+  );
+  if (identityChanged || !isPrimaryMessageItem(messageItem)) {
+    clearPendingMessageExpansion(request);
+    return false;
+  }
+
+  const expandedText = getPrimaryMessageText(messageItem);
+  if (!expandedText || expandedText === request.collapsedText ||
+    expandedText.length <= request.collapsedText.length ||
+    getMessageReadMoreButton(messageItem)) return false;
+
+  const currentLabel = messageItem.getAttribute?.('aria-label') || '';
+  if (currentLabel !== request.appliedLabel) {
+    clearPendingMessageExpansion(request);
+    return false;
+  }
+  const rebuilt = buildExpandedMessageLabel(request, expandedText);
+  if (!rebuilt) {
+    clearPendingMessageExpansion(request);
+    return false;
+  }
+
+  clearPendingMessageExpansion(request);
+  const prepared = prepareNamedAttribute(messageItem, 'aria-label', rebuilt);
+  applyOwnedAttribute(messageItem, 'aria-label', prepared, OWNERS.messageExpandedName);
+  return true;
+}
+
+function armMessageExpansionNameSync(messageItem, button) {
+  if (messageItem.hasAttribute?.('aria-labelledby') || isMetaAIReply(messageItem)) return null;
+  releaseOwnedAttribute(messageItem, 'aria-label', OWNERS.messageExpandedName);
+  const sourceLabel = getMessageExpansionSourceLabel(messageItem);
+  const appliedLabel = messageItem.getAttribute?.('aria-label') || '';
+  const collapsedText = getPrimaryMessageText(messageItem);
+  const controlName = button.getAttribute?.('aria-label') || button.textContent || '';
+  if (!sourceLabel || !appliedLabel || !collapsedText || !cleanString(controlName, false)) return null;
+
+  clearPendingMessageExpansion();
+  const request = {
+    messageItem,
+    identity: getMessageExpansionIdentity(messageItem),
+    sourceLabel,
+    appliedLabel,
+    collapsedText,
+    controlName,
+    observer: null,
+    timeoutId: null
+  };
+  request.observer = new MutationObserver(() => tryCommitExpandedMessageName(request));
+  request.observer.observe(messageItem, { childList: true, characterData: true, subtree: true });
+  request.timeoutId = setTimeout(() => clearPendingMessageExpansion(request), 1500);
+  pendingMessageExpansion = request;
+  return request;
+}
+
+export function activateMessageReadMore(messageItem, button) {
+  if (!messageItem || !button || getMessageReadMoreButton(messageItem) !== button) return false;
+  const request = armMessageExpansionNameSync(messageItem, button);
+  button.click();
+  if (request && !tryCommitExpandedMessageName(request)) {
+    window.requestAnimationFrame(() => tryCommitExpandedMessageName(request));
+  }
+  return true;
+}
+
+export function handleMessageReadMoreKeydown(event) {
+  // Keep consuming repeats after synchronous expansion removes the button.
+  if (event.key === 'Enter' && !event.repeat) heldMessageExpansionKey = null;
+  if (event.key === 'Enter' && event.repeat &&
+    heldMessageExpansionKey?.messageItem === event.target) {
+    consumeMessageExpansionKey(event);
+    return true;
+  }
+  if (event.defaultPrevented || event.isComposing || event.key !== 'Enter' ||
+    !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey ||
+    event.getModifierState?.('AltGraph')) return false;
+
+  if (hasRenderedMessagePopup()) return false;
+  const messageItem = getFocusedPrimaryMessageItem(event);
+  if (pendingMessageExpansion?.messageItem === messageItem) {
+    consumeMessageExpansionKey(event);
+    return true;
+  }
+  const button = messageItem && getMessageReadMoreButton(messageItem);
+  if (!button) return false;
+
+  consumeMessageExpansionKey(event);
+  if (!event.repeat) {
+    heldMessageExpansionKey = { messageItem };
+    activateMessageReadMore(messageItem, button);
+  }
+  return true;
+}
+
+export function handleMessageReadMoreKeyup(event) {
+  if (event.key === 'Enter') heldMessageExpansionKey = null;
+  return false;
+}
+
+function getVoiceMessagePlaybackButton(messageItem) {
+  const messageContainer = messageItem.querySelector?.(SELECTORS.voiceMessageContainer);
+  if (!messageContainer || !messageItem.contains?.(messageContainer) ||
+    messageContainer.closest?.('[data-testid="quoted-message"]')) return null;
+
+  const belongsToPrimaryMessage = node => messageContainer.contains?.(node) &&
+    !node.closest?.('[data-testid="quoted-message"]');
+  const hasVoiceIdentity = Array.from(
+    messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackIdentity) || []
+  ).some(belongsToPrimaryMessage);
+  const progressControls = Array.from(
+    messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackProgress) || []
+  ).filter(belongsToPrimaryMessage);
+  if (!hasVoiceIdentity || !progressControls.length) return null;
+
+  const isEligiblePlaybackButton = control => belongsToPrimaryMessage(control) &&
+    isRenderedElement(control) && !control.disabled &&
+    control.getAttribute('aria-disabled') !== 'true' &&
+    control.getAttribute('aria-hidden') !== 'true' &&
+    control.getAttribute('tabindex') !== '-1' &&
+    !control.closest?.('[role="menu"], [role^="menuitem"]') &&
+    !control.hasAttribute?.('aria-haspopup');
+  const candidates = new Set();
+  for (const progress of progressControls) {
+    for (let playerRoot = progress.parentElement;
+      playerRoot && messageContainer.contains?.(playerRoot);
+      playerRoot = playerRoot.parentElement) {
+      const buttons = Array.from(playerRoot.querySelectorAll?.('button') || [])
+        .filter(isEligiblePlaybackButton);
+      if (!buttons.length) {
+        if (playerRoot === messageContainer) break;
+        continue;
+      }
+      if (buttons.length === 1) candidates.add(buttons[0]);
+      break;
+    }
+  }
+  return candidates.size === 1 ? candidates.values().next().value : null;
+}
+
+function getFocusedVoiceMessagePlaybackButton(event) {
+  const button = event.target;
+  if (event.key !== 'Enter' || document.activeElement !== button ||
+    !button?.matches?.('button')) return null;
+  const messageItem = button.closest?.('.focusable-list-item');
+  if (!isPrimaryMessageItem(messageItem)) return null;
+  const playbackButton = getVoiceMessagePlaybackButton(messageItem);
+  return playbackButton === button ? button : null;
+}
+
+export function handleVoiceMessagePlaybackKeydown(event) {
+  if (!isVoiceMessageKeyboardPlaybackEnabled() || event.defaultPrevented || event.isComposing ||
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+    event.getModifierState?.('AltGraph') ||
+    !['Enter', ' '].includes(event.key)) return false;
+
+  if (hasRenderedMessagePopup()) return false;
+  const focusedButton = getFocusedVoiceMessagePlaybackButton(event);
+  const messageItem = focusedButton ? null : getFocusedPrimaryMessageItem(event);
+  const button = focusedButton || (messageItem && getVoiceMessagePlaybackButton(messageItem));
+  if (!button) return false;
+
+  event.preventDefault();
+  if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+  else event.stopPropagation?.();
+  if (!event.repeat) button.click();
+  return true;
+}
+
+let chatListShortcutArrowAnchor = null;
+
+function clearChatListShortcutArrowAnchor() {
+  chatListShortcutArrowAnchor = null;
+}
+
+function armChatListShortcutArrowAnchor(row) {
+  const chatList = row?.closest?.(SELECTORS.chatListInSide);
+  const activator = getChatRowActivator(row);
+  if (!row?.isConnected || !chatList?.isConnected || !chatList.contains?.(row) ||
+    row.closest?.(SELECTORS.chatListInSide) !== chatList || !activator?.isConnected) {
+    clearChatListShortcutArrowAnchor();
+    return;
+  }
+  chatListShortcutArrowAnchor = { row, activator, chatList, consumed: false };
+}
+
+function trackChatListShortcutArrowFocus(target, interactionType) {
+  const anchor = chatListShortcutArrowAnchor;
+  if (!anchor) return;
+  if (interactionType === 'pointer' || target !== anchor.activator ||
+    !anchor.row?.isConnected || !anchor.activator?.isConnected ||
+    !anchor.chatList?.isConnected || !anchor.chatList.contains?.(anchor.row) ||
+    getChatRowActivator(anchor.row) !== anchor.activator) {
+    clearChatListShortcutArrowAnchor();
+  }
+}
+
+function handleChatListShortcutArrowKeydown(event) {
+  const anchor = chatListShortcutArrowAnchor;
+  if (!anchor || event.defaultPrevented || event.isComposing ||
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+    event.getModifierState?.('AltGraph') ||
+    !['ArrowUp', 'ArrowDown'].includes(event.key) || getActiveModal()) return false;
+
+  const target = event.target;
+  const row = target?.closest?.('div[role="row"]');
+  const chatList = row?.closest?.(SELECTORS.chatListInSide);
+  const activator = getChatRowActivator(row);
+  const anchorIsCurrent = document.activeElement === target && target === activator &&
+    row === anchor.row && target === anchor.activator && chatList === anchor.chatList &&
+    row?.isConnected && target?.isConnected && chatList?.isConnected &&
+    chatList.contains?.(row) && isChatsTabActive();
+  if (!anchorIsCurrent) {
+    clearChatListShortcutArrowAnchor();
+    return false;
+  }
+
+  if (anchor.consumed) return false;
+
+  const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter(candidate => {
+    const candidateActivator = getChatRowActivator(candidate);
+    return candidate?.isConnected && chatList.contains?.(candidate) &&
+      candidate.closest?.(SELECTORS.chatListInSide) === chatList &&
+      candidate.querySelector?.(SELECTORS.cellFrame) &&
+      isRenderedElement(candidate) && isRenderedElement(candidateActivator);
+  });
+  const currentIndex = rows.indexOf(row);
+  if (currentIndex < 0) {
+    clearChatListShortcutArrowAnchor();
+    return false;
+  }
+
+  anchor.consumed = true;
+  event.preventDefault();
+  if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+  else event.stopPropagation?.();
+
+  const nextIndex = currentIndex + (event.key === 'ArrowUp' ? -1 : 1);
+  if (nextIndex < 0 || nextIndex >= rows.length) {
+    normalizeChatListTabStops(chatList, row);
+    clearChatListShortcutArrowAnchor();
+    return true;
+  }
+
+  const nextRow = rows[nextIndex];
+  const handleFailure = () => {
+    if (chatListShortcutArrowAnchor === anchor &&
+      document.activeElement === anchor.activator && anchor.row?.isConnected &&
+      anchor.chatList?.isConnected && anchor.chatList.contains?.(anchor.row) &&
+      getChatRowActivator(anchor.row) === anchor.activator) {
+      normalizeChatListTabStops(anchor.chatList, anchor.row);
+    }
+    clearChatListShortcutArrowAnchor();
+  };
+  const shouldContinue = () => {
+    const valid = chatListShortcutArrowAnchor === anchor &&
+      document.activeElement === anchor.activator && !getActiveModal() &&
+      anchor.row?.isConnected && anchor.activator?.isConnected &&
+      anchor.chatList?.isConnected && anchor.chatList.contains?.(anchor.row) &&
+      getChatRowActivator(anchor.row) === anchor.activator;
+    if (!valid && chatListShortcutArrowAnchor === anchor) {
+      clearChatListShortcutArrowAnchor();
+    }
+    return valid;
+  };
+  const started = focusChatRow(
+    nextRow,
+    handleFailure,
+    shouldContinue,
+    clearChatListShortcutArrowAnchor
+  );
+  if (!started) handleFailure();
+  return true;
+}
+
 export function handleMessageGridKeydown(event) {
+  if (handleChatListShortcutArrowKeydown(event)) return true;
   if (event.defaultPrevented || event.isComposing ||
-    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    event.altKey || event.ctrlKey || event.metaKey) return false;
+  if (event.shiftKey && event.key === 'Enter') return handleMessageReadMoreKeydown(event);
+  if (event.shiftKey) return false;
+  if (event.key === 'Enter' || event.key === ' ') return handleVoiceMessagePlaybackKeydown(event);
   if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return false;
 
   const cell = event.target?.closest?.('[role="gridcell"]');
@@ -459,6 +1086,35 @@ function applyMessageGridExperiment() {
   normalizeMessageGridTabStops(messages);
 }
 
+export function refreshMessageMentionNames(rootEl = document) {
+  if (!rootEl?.querySelectorAll) return;
+  releaseOwnedWithin(rootEl, OWNERS.messageMentionName);
+  const messages = [
+    ...(rootEl.matches?.('.focusable-list-item') ? [rootEl] : []),
+    ...Array.from(rootEl.querySelectorAll('.focusable-list-item'))
+  ];
+
+  for (const message of new Set(messages)) {
+    const mentions = Array.from(message.querySelectorAll?.(SELECTORS.messageMention) || [])
+      .filter(mention => !mention.closest?.('[data-testid="quoted-message"]'));
+    for (const mention of mentions) {
+      const control = mention.closest?.('[role="button"][tabindex]');
+      if (!control || control === message || !message.contains?.(control)) continue;
+      const rendered = cleanString(mention.textContent || '', false);
+      if (!rendered?.startsWith('@')) continue;
+
+      let label = rendered;
+      if (isPrivacyModeEnabled()) {
+        const identity = rendered.slice(1).replace(/^\s*~\s*/, '').trim();
+        const safeIdentity = cleanString(identity, 'identity', mention);
+        if (!safeIdentity) continue;
+        if (safeIdentity !== identity) label = `@${safeIdentity}`;
+      }
+      applyOwnedAttribute(control, 'aria-label', label, OWNERS.messageMentionName);
+    }
+  }
+}
+
 function applyChatMaskedLabel(el, label) {
   applyOwnedAttribute(el, 'aria-labelledby', null, OWNERS.chatLabel);
   applyOwnedAttribute(el, 'aria-label', label, OWNERS.chatLabel);
@@ -466,6 +1122,21 @@ function applyChatMaskedLabel(el, label) {
 
 function applyChatMaskedHidden(el) {
   applyOwnedAttribute(el, 'aria-hidden', 'true', OWNERS.chatHidden);
+}
+
+function neutralizeChatRowSelectableState(activator) {
+  const state = ownedAttributes.get(activator)?.get('aria-selected');
+  // Do not mistake our neutral token for a host write.
+  if (state?.owner === OWNERS.chatSelectionRestore &&
+    activator.getAttribute('aria-selected') === state.appliedValue) return;
+
+  const selected = activator.getAttribute('aria-selected');
+  // The ARIA neutral token preserves the selector anchor without making NVDA say "not selected".
+  if (selected === 'false') {
+    applyOwnedAttribute(activator, 'aria-selected', 'undefined', OWNERS.chatSelectionRestore);
+    return;
+  }
+  releaseOwnedAttribute(activator, 'aria-selected', OWNERS.chatSelectionRestore);
 }
 
 export function getChatRowGridcell(row) {
@@ -482,16 +1153,38 @@ export function getChatRowGridcell(row) {
 export function getChatRowActivator(row) {
   const gridcell = getChatRowGridcell(row);
   if (!gridcell || !gridcell.querySelector) return gridcell;
-  return gridcell.querySelector(`:scope > [tabindex][aria-selected], :scope > [tabindex]:not(${SELECTORS.cellFrame})`) || gridcell;
+  const candidate = gridcell.querySelector(
+    `:scope > [tabindex][aria-selected], :scope > [tabindex]:not(${SELECTORS.cellFrame})`
+  );
+  if (!candidate) return gridcell;
+
+  const tagName = String(candidate.localName || candidate.tagName || '').toLowerCase();
+  const role = String(candidate.getAttribute?.('role') || '').toLowerCase();
+  const hasRowSelectionState = candidate.hasAttribute?.('aria-selected');
+  if ((tagName === 'button' || role === 'button') && hasRowSelectionState) return candidate;
+
+  const nativeInteractiveTags = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary']);
+  const interactiveRoles = new Set([
+    'button', 'checkbox', 'combobox', 'link', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'option', 'radio', 'slider', 'spinbutton', 'switch', 'tab',
+    'textbox', 'treeitem'
+  ]);
+  return nativeInteractiveTags.has(tagName) || interactiveRoles.has(role) ? gridcell : candidate;
 }
 
-export function focusChatRow(row, onFailure, shouldContinue = () => true) {
+export function focusChatRow(
+  row,
+  onFailure,
+  shouldContinue = () => true,
+  onSuccess = null
+) {
   if (!shouldContinue() || !getChatRowActivator(row) || getActiveModal()) return false;
   const rowTitle = getChatRowTitle(row);
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const focusTarget = (retried = false) => {
     if (!shouldContinue() || getActiveModal()) return false;
-    const currentRow = row.isConnected
+    const connectedRowTitle = row.isConnected ? getChatRowTitle(row) : '';
+    const currentRow = row.isConnected && connectedRowTitle === rowTitle
       ? row
       : findChatRowByTitle(getChatListRows(), rowTitle);
     if (!currentRow) {
@@ -502,8 +1195,6 @@ export function focusChatRow(row, onFailure, shouldContinue = () => true) {
       }
       return !retried;
     }
-    // Accessible-name cleanup is optional. Keep the native row focusable when
-    // announcement reduction is disabled or WhatsApp's structure cannot be masked.
     applyChatRowNativeMask(currentRow);
     const currentTarget = getChatRowActivator(currentRow);
     if (!currentTarget) {
@@ -512,24 +1203,27 @@ export function focusChatRow(row, onFailure, shouldContinue = () => true) {
     }
 
     if (document.activeElement === currentTarget) {
-      lastFocusedChatRowNode = currentRow;
+      rememberChatRowState(currentRow);
+      armChatListShortcutArrowAnchor(currentRow);
+      onSuccess?.(currentRow, currentTarget);
       return true;
     }
     const chatList = currentRow.closest(SELECTORS.chatListInSide);
     if (chatList) normalizeChatListTabStops(chatList, currentRow);
-    currentTarget.focus({ preventScroll: true });
-    if (document.activeElement !== currentTarget && !retried) {
+    const focused = focusItem(currentTarget);
+    if (!focused && !retried) {
       schedule(() => focusTarget(true));
-    } else if (document.activeElement !== currentTarget) {
+    } else if (!focused) {
       if (onFailure) onFailure();
     } else {
-      lastFocusedChatRowNode = currentRow;
+      rememberChatRowState(currentRow);
+      armChatListShortcutArrowAnchor(currentRow);
+      onSuccess?.(currentRow, currentTarget);
     }
     return document.activeElement === currentTarget || !retried;
   };
 
-  // Let the originating keydown finish before moving focus. This avoids
-  // re-entrant focus bookkeeping in WhatsApp controls such as Download.
+  // Avoid re-entrant focus bookkeeping in WhatsApp controls.
   schedule(() => focusTarget());
   return true;
 }
@@ -538,6 +1232,7 @@ function restoreChatRowNativeMasks(rootEl) {
   releaseOwnedWithin(rootEl, OWNERS.chatLabel);
   releaseOwnedWithin(rootEl, OWNERS.chatHidden);
   releaseOwnedWithin(rootEl, OWNERS.chatStructure);
+  releaseOwnedWithin(rootEl, OWNERS.chatSelectionRestore);
 }
 
 function restoreChatRowNativeMasksOutsideChatList() {
@@ -545,7 +1240,8 @@ function restoreChatRowNativeMasksOutsideChatList() {
     const attributes = ownedAttributes.get(el);
     if (!attributes || (el.closest && el.closest(SELECTORS.chatListInSide))) continue;
     for (const [name, state] of [...attributes]) {
-      if (state.owner === OWNERS.chatLabel || state.owner === OWNERS.chatHidden || state.owner === OWNERS.chatStructure) {
+      if (state.owner === OWNERS.chatLabel || state.owner === OWNERS.chatHidden ||
+        state.owner === OWNERS.chatStructure || state.owner === OWNERS.chatSelectionRestore) {
         releaseOwnedAttribute(el, name, state.owner);
       }
     }
@@ -611,6 +1307,7 @@ export function applyChatRowNativeMask(row) {
     applyChatMaskedLabel(activator, label);
     applyOwnedAttribute(gridcell, 'role', 'presentation', OWNERS.chatStructure);
     applyOwnedAttribute(gridcell, 'tabindex', null, OWNERS.chatStructure);
+    neutralizeChatRowSelectableState(activator);
     applyChatRowDescendantMasks(row, activator);
     if (transferFocus) activator.focus({ preventScroll: true });
     return true;
@@ -627,23 +1324,26 @@ export function normalizeChatListTabStops(chatList, preferredRow = null) {
   if (rows.length === 0) return;
   const visibleRows = getElementsInsideViewport(rows, getChatListViewport(chatList));
   const activeRow = document.activeElement?.closest?.('div[role="row"]');
+  const hasRememberedState = !!lastFocusedChatRowNode || !!lastFocusedChatTitle;
   const target = (rows.includes(preferredRow) && preferredRow) ||
     (rows.includes(activeRow) && activeRow) ||
-    (rows.includes(lastFocusedChatRowNode) && lastFocusedChatRowNode) ||
-    getPreferredChatRow(visibleRows) ||
-    rows[0];
+    getPreferredChatRow(visibleRows, null, true) ||
+    (!hasRememberedState ? rows[0] : null);
+  if (!target) return;
 
   rows.forEach(row => {
     const gridcell = getChatRowGridcell(row);
     const activator = getChatRowActivator(row);
-    if (!gridcell || !activator || activator === gridcell) return;
-    applyOwnedAttribute(gridcell, 'tabindex', null, OWNERS.chatStructure);
+    if (!gridcell || !activator) return;
+    if (activator !== gridcell) applyOwnedAttribute(gridcell, 'tabindex', null, OWNERS.chatStructure);
     applyOwnedAttribute(activator, 'tabindex', row === target ? '0' : '-1', OWNERS.chatStructure);
   });
 }
 
 export function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
   if (!rootEl || !rootEl.querySelectorAll) return null;
+
+  refreshMessageMentionNames(rootEl);
 
   if (!isAnnouncementReductionEnabled()) {
     releaseMessageAttributes(OWNERS.messageGrid, () => false);
@@ -870,6 +1570,31 @@ function getChatListRowCandidates(chatList) {
   return chatList.querySelectorAll('[data-testid^="list-item-"], div[role="row"]');
 }
 
+function orderChatRowsByPosition(rows) {
+  return Array.from(rows)
+    .map((row, index) => ({ row, index, y: getChatRowTranslateY(row) }))
+    .sort((a, b) => (a.y - b.y) || (a.index - b.index))
+    .map(entry => entry.row);
+}
+
+function rememberChatRowState(row) {
+  lastFocusedChatRowNode = row;
+  lastFocusedChatTitle = getChatRowTitle(row);
+  lastFocusedChatRowIndex = -1;
+  const chatList = row?.closest?.(SELECTORS.chatListInSide) || row?.closest?.(SELECTORS.chatList);
+  if (!chatList) return;
+  const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList))
+    .filter(candidate => candidate.querySelector?.(SELECTORS.cellFrame));
+  const index = rows.indexOf(row);
+  if (index >= 0) lastFocusedChatRowIndex = index;
+}
+
+function getRememberedPositionChatRow(rows) {
+  if (lastFocusedChatRowIndex < 0 || rows.length === 0) return null;
+  const positionedRows = orderChatRowsByPosition(rows);
+  return positionedRows[Math.min(lastFocusedChatRowIndex, positionedRows.length - 1)] || null;
+}
+
 export function getChatRowTranslateY(row) {
   const transform = row && row.style ? row.style.transform || '' : '';
   const translateMatch = transform.match(/translateY\((-?\d+(?:\.\d+)?)px\)/i);
@@ -1053,21 +1778,49 @@ export function getCurrentChatTitle() {
 
 export function findChatRowByTitle(rows, title) {
   if (!title) return null;
-  return rows.find(row => getChatRowTitle(row) === title) || null;
+  const matches = rows.filter(row => getChatRowTitle(row) === title);
+  return matches.length === 1 ? matches[0] : null;
 }
 
-export function getPreferredChatRow(rows, origin = null) {
+function getUniqueChatTabStopRow(rows, allowManagedTabStop = false) {
+  const matches = rows.filter(row => {
+    const activator = getChatRowActivator(row);
+    if (!activator || activator.getAttribute('tabindex') !== '0') return false;
+    const state = ownedAttributes.get(activator)?.get('tabindex');
+    if (!state) return true;
+    if (state.owner === OWNERS.temporaryFocus) return false;
+    return state.owner !== OWNERS.chatStructure || allowManagedTabStop;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function getPreferredChatRow(rows, origin = null, allowSemanticFallback = false) {
+  const originRow = origin?.closest?.('div[role="row"]');
+  const originInChatList = originRow && rows.includes(originRow) &&
+    originRow.closest?.(SELECTORS.chatListInSide);
+  if (originInChatList) return originRow;
+
+  if (lastFocusedChatTitle && rows.includes(lastFocusedChatRowNode)) {
+    const connectedTitle = getChatRowTitle(lastFocusedChatRowNode);
+    if (connectedTitle === lastFocusedChatTitle) {
+      return lastFocusedChatRowNode;
+    }
+  }
+  if (lastFocusedChatTitle) {
+    const rememberedRow = findChatRowByTitle(rows, lastFocusedChatTitle);
+    if (rememberedRow) return rememberedRow;
+    if (!allowSemanticFallback) return null;
+  }
+  if (lastFocusedChatRowNode && !allowSemanticFallback) return null;
+
   const selectedRow = getSelectedChatRow(rows);
   const currentChatRow = findChatRowByTitle(rows, getCurrentChatTitle());
-  const startedInChatList = !!(origin && origin.closest && origin.closest(SELECTORS.chatListInSide));
-  const mayUseRememberedRow = origin === null || startedInChatList;
 
-  if (currentChatRow) return currentChatRow;
   if (selectedRow) return selectedRow;
-  if (mayUseRememberedRow && rows.includes(lastFocusedChatRowNode)) return lastFocusedChatRowNode;
-
-  const startedAtDocumentRoot = !origin || origin === document.body || origin === document.documentElement;
-  return startedAtDocumentRoot ? (rows[0] || null) : null;
+  if (currentChatRow) return currentChatRow;
+  const hasRememberedState = !!lastFocusedChatRowNode || !!lastFocusedChatTitle;
+  return getUniqueChatTabStopRow(rows, !hasRememberedState) ||
+    (hasRememberedState ? getRememberedPositionChatRow(rows) : null);
 }
 
 export function isRenderedElement(el) {
@@ -1094,16 +1847,17 @@ export function getActiveModal(preferredTarget = document.activeElement) {
   return dialogs.at(-1) || null;
 }
 
-export function rememberFocusedRow(target) {
+export function rememberFocusedRow(target, interactionType = 'focus') {
+  trackChatListShortcutArrowFocus(target, interactionType);
   if (!target.closest) return;
 
   const row = target.closest('div[role="row"]');
   if (!row) return;
 
   const side = document.querySelector(SELECTORS.side);
-  if (isAnnouncementReductionEnabled() && side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
-    applyChatRowNativeMask(row);
-    lastFocusedChatRowNode = row;
+  if (side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
+    if (isAnnouncementReductionEnabled()) applyChatRowNativeMask(row);
+    rememberChatRowState(row);
   }
 
   const main = document.querySelector(SELECTORS.main);
@@ -1129,11 +1883,14 @@ export function refreshAnnouncementReduction() {
 }
 
 export function getRememberedFocus() {
-  return { lastFocusedChatRowNode, lastFocusedMessageNode, lastFocusedMessageId };
+  return { lastFocusedChatRowNode, lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId };
 }
 
 export function clearRememberedChatRow() {
   lastFocusedChatRowNode = null;
+  lastFocusedChatTitle = '';
+  lastFocusedChatRowIndex = -1;
+  clearChatListShortcutArrowAnchor();
 }
 
 export function clearRememberedMessageRow() {

@@ -1,6 +1,10 @@
 import { OWNERS, SELECTORS } from './config.js';
 import { applyOwnedAttribute, ownedAttributes, releaseOwnedAttribute } from './owned-attributes.js';
-import { isPrivacyModeEnabled, maskPhoneNumbers } from './privacy.js';
+import {
+  isPrivacyModeEnabled,
+  maskMessagePhoneContent,
+  maskPhoneNumbers
+} from './privacy.js';
 import { isRenderedElement } from './chat-accessibility.js';
 import {
   LANGUAGES,
@@ -13,10 +17,7 @@ import {
 } from './settings-state.js';
 
 const MAX_EXPANSION_CHECKS = 4;
-const MAX_PAUSE_CHECKS = 4;
-const STATUS_VIDEO_LIMIT_SECONDS = 30;
-const STATUS_VIDEO_LIMIT_GUARD_SECONDS = 0.5;
-const STATUS_VIDEO_END_GUARD_SECONDS = 0.35;
+const MAX_PAUSE_CHECKS = 12;
 const TIME_RE = /\p{N}{1,2}[:.]\p{N}{2}/u;
 const LOCALIZED_CLOCK_RE = /(?:\b(?:today|yesterday|hoy|ayer|hari\s+ini|kemarin|heute|gestern|um|at|oggi|ieri|hier)\b(?:\s+\p{L}[\p{L}'’-]*){0,3}\s+)?\p{N}{1,2}[:.]\p{N}{2}(?:\s*[ap]\.?m\.?)?/iu;
 const GENERIC_CLOCK_RE = /((?:[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}'’.,،-]*\s+){0,12}\p{N}{1,2}[:.]\p{N}{2}(?:\s*[ap]\.?m\.?)?)/u;
@@ -60,38 +61,31 @@ function connected(element) {
   return !!element && element.isConnected !== false;
 }
 
-function isActiveStatusVideo(video) {
-  if (!isStatusReadingCleanupEnabled() || video?.tagName !== 'VIDEO') return false;
-  const root = video.closest?.(SELECTORS.statusPlayerRoot);
-  const statusVideos = uniqueElements([
-    ...queryAll(root, SELECTORS.statusVideo),
-    query(root, SELECTORS.statusVideo)
+function isActiveStatusMedia(media) {
+  if (!isStatusReadingCleanupEnabled() || !['VIDEO', 'AUDIO'].includes(media?.tagName)) return false;
+  if (media.tagName === 'VIDEO' && !isRenderedElement(media)) return false;
+  const root = media.closest?.(SELECTORS.statusPlayerRoot);
+  if (!connected(root) || !isRenderedElement(root)) return false;
+  const marker = root.matches?.(SELECTORS.statusActiveMarker)
+    ? root
+    : root.closest?.(SELECTORS.statusActiveMarker) || query(root, SELECTORS.statusActiveMarker);
+  if (!connected(marker) || !isRenderedElement(marker) ||
+    (marker !== root && !marker.contains?.(root) && !root.contains?.(marker))) return false;
+  const selector = media.tagName === 'VIDEO' ? SELECTORS.statusVideo : SELECTORS.statusAudio;
+  const statusMedia = uniqueElements([
+    ...queryAll(root, selector),
+    query(root, selector)
   ]);
-  return connected(root) && isRenderedElement(root) && isRenderedElement(video) &&
-    statusVideos.some(statusVideo => isRenderedElement(statusVideo) &&
-      (statusVideo === video || !!statusVideo.contains?.(video)));
-}
-
-function shouldSuppressStatusVideoTimeUpdate(video) {
-  if (!isActiveStatusVideo(video)) return false;
-  if (video?.tagName !== 'VIDEO' || video.ended ||
-      !Number.isFinite(video.duration) || video.duration <= STATUS_VIDEO_LIMIT_SECONDS ||
-      !Number.isFinite(video.currentTime) ||
-      video.currentTime < STATUS_VIDEO_LIMIT_SECONDS - STATUS_VIDEO_LIMIT_GUARD_SECONDS) return false;
-  return true;
-}
-
-function shouldPauseStatusVideoBeforeEnd(video) {
-  return isActiveStatusVideo(video) && !video.ended && !video.paused &&
-    Number.isFinite(video.duration) && Number.isFinite(video.currentTime) &&
-    video.duration - video.currentTime <= STATUS_VIDEO_END_GUARD_SECONDS;
+  return statusMedia.some(candidate => candidate === media || !!candidate?.contains?.(media));
 }
 
 function isWhatsAppStatusAutoAdvanceListener(type, listener) {
-  if (type !== 'timeupdate') return false;
   if (typeof listener !== 'function') return false;
   try {
-    return Function.prototype.toString.call(listener).includes('status_video_max_duration');
+    const source = Function.prototype.toString.call(listener);
+    if (type === 'timeupdate') return source.includes('status_video_max_duration');
+    return type === 'ended' && source.includes('WAWebStatusEventHandlersMap') &&
+      source.includes('MediaEvents.OnEnd');
   } catch {
     return false;
   }
@@ -115,13 +109,10 @@ export function startStatusAutoAdvanceGuard() {
     let wrapped = wrappers.get(type);
     if (!wrapped) {
       wrapped = function(event) {
-        if (shouldPauseStatusVideoBeforeEnd(this)) {
-          // Keep WhatsApp's viewer/controller in its normal paused state so its
-          // accessible name, focus, and manual Left/Right navigation remain usable.
-          this.pause();
-          return;
-        }
-        if (!shouldSuppressStatusVideoTimeUpdate(this)) return listener.call(this, event);
+        // Suppress auto-advance callbacks without altering media playback.
+        if (type === 'ended' && isActiveStatusMedia(this)) return;
+        if (type === 'timeupdate' && isActiveStatusMedia(this)) return;
+        return listener.call(this, event);
       };
       wrappers.set(type, wrapped);
     }
@@ -250,7 +241,7 @@ function resolveViewer(root) {
   const videoNode = queryRendered(root, SELECTORS.statusVideo);
   const imageNode = queryRendered(root, SELECTORS.statusImage);
   const voiceNode = videoNode || imageNode || textNode ? null : query(root, SELECTORS.statusVoice);
-  const audioNode = voiceNode ? query(root, SELECTORS.statusAudio) : null;
+  const audioNode = query(root, SELECTORS.statusAudio);
   const mediaNode = videoNode || imageNode || voiceNode || textNode;
   const contentButton = mediaNode?.closest?.('button') || null;
   if (!connected(contentButton) || !isRenderedElement(contentButton)) return null;
@@ -550,7 +541,7 @@ function getMediaIdentity(viewer) {
     ''
   );
   if (stableIdentity) return `id:${stableIdentity}`;
-  if (!viewer.videoNode && !viewer.voiceNode) return '';
+  if (!viewer.videoNode && !viewer.audioNode) return '';
   const source = cleanText(mediaElement?.currentSrc || mediaElement?.getAttribute?.('src') || '');
   return source ? `src:${source}` : '';
 }
@@ -574,10 +565,31 @@ function timesRepresentSameClock(previous, next) {
   return previousText === previousClock || nextText === nextClock;
 }
 
+function sameLogicalStatus(record, viewer, identity, sender, time, progress, mediaIdentity) {
+  if (!record) return false;
+  if (!sender && !time && !progress) return false;
+  const recordStable = record.mediaIdentity?.startsWith('id:') || false;
+  const mediaStable = mediaIdentity?.startsWith('id:') || false;
+  if (recordStable && mediaStable) return record.mediaIdentity === mediaIdentity;
+  const sameContentButton = record.contentButton === viewer.contentButton;
+  const completeUnchangedIdentity = !!(
+    record.sender && sender &&
+    record.time && time &&
+    record.progress && progress &&
+    record.identity === identity
+  );
+  if (!sameContentButton) return completeUnchangedIdentity;
+  if (record.identity === identity) return true;
+  if ((record.sender && !sender) || (record.time && !time) || (record.progress && !progress)) return false;
+  const changed = (previous, next) => !!previous && !!next && previous !== next;
+  const timeChanged = changed(record.time, time) && !timesRepresentSameClock(record.time, time);
+  return !changed(record.sender, sender) && !timeChanged && !changed(record.progress, progress);
+}
+
 function sameIdentity(record, viewer, identity, sender, time, progress, mediaIdentity) {
   if (!record || record.contentButton !== viewer.contentButton) return false;
-  if (!sender && !time && !progress) return false;
-  const mediaKind = viewer.videoNode ? 'video' : viewer.voiceNode ? 'audio' : viewer.textNode ? 'text' : 'other';
+  if (!sameLogicalStatus(record, viewer, identity, sender, time, progress, mediaIdentity)) return false;
+  const mediaKind = viewer.videoNode ? 'video' : viewer.audioNode ? 'audio' : viewer.textNode ? 'text' : 'other';
   if (record.mediaKind && record.mediaKind !== mediaKind) return false;
   if (record.mediaIdentity && mediaIdentity && record.mediaIdentity !== mediaIdentity) {
     const recordStable = record.mediaIdentity.startsWith('id:');
@@ -588,12 +600,7 @@ function sameIdentity(record, viewer, identity, sender, time, progress, mediaIde
   }
   const recordStable = record.mediaIdentity?.startsWith('id:') || false;
   const mediaStable = mediaIdentity?.startsWith('id:') || false;
-  if (recordStable && !mediaStable) return false;
-  if (record.identity === identity) return true;
-  if ((record.sender && !sender) || (record.time && !time) || (record.progress && !progress)) return false;
-  const changed = (previous, next) => !!previous && !!next && previous !== next;
-  const timeChanged = changed(record.time, time) && !timesRepresentSameClock(record.time, time);
-  return !changed(record.sender, sender) && !timeChanged && !changed(record.progress, progress);
+  return !(recordStable && !mediaStable);
 }
 
 function releaseTarget(target) {
@@ -626,7 +633,8 @@ function releaseCurrent() {
 function ensureRecord(viewer, sender, time, title, progress) {
   const identity = createIdentity(sender, time, progress);
   const mediaIdentity = getMediaIdentity(viewer);
-  const mediaKind = viewer.videoNode ? 'video' : viewer.voiceNode ? 'audio' : viewer.textNode ? 'text' : 'other';
+  const mediaKind = viewer.videoNode ? 'video' : viewer.audioNode ? 'audio' : viewer.textNode ? 'text' : 'other';
+  const playableMediaPossible = !!(viewer.videoNode || viewer.audioNode || viewer.voiceNode || title);
   if (sameIdentity(current, viewer, identity, sender, time, progress, mediaIdentity)) {
     current.generation = generation;
     current.identity = identity || current.identity;
@@ -636,9 +644,19 @@ function ensureRecord(viewer, sender, time, title, progress) {
     current.progress = progress || current.progress;
     if (mediaIdentity || !current.mediaIdentity?.startsWith('id:')) current.mediaIdentity = mediaIdentity;
     current.mediaKind = mediaKind;
+    current.playableMediaPossible ||= playableMediaPossible;
     return current;
   }
 
+  const preservePlayableMedia = sameLogicalStatus(
+    current,
+    viewer,
+    identity,
+    sender,
+    time,
+    progress,
+    mediaIdentity
+  ) && !!current?.playableMediaPossible;
   releaseRecordTargets(current);
   generation += 1;
   current = {
@@ -650,6 +668,7 @@ function ensureRecord(viewer, sender, time, title, progress) {
     progress,
     mediaIdentity,
     mediaKind,
+    playableMediaPossible: playableMediaPossible || preservePlayableMedia,
     contentButton: viewer.contentButton,
     summaryTarget: null,
     summaryShell: null,
@@ -672,15 +691,22 @@ function ensureRecord(viewer, sender, time, title, progress) {
   return current;
 }
 
-function applyPrivacy(value, host) {
-  return isPrivacyModeEnabled() ? maskPhoneNumbers(value, host) : value;
+function applyPrivacy(value, host, context = 'message') {
+  if (!isPrivacyModeEnabled()) return value;
+  return context === 'identity'
+    ? maskPhoneNumbers(value, host)
+    : maskMessagePhoneContent(value, host);
 }
 
 function composeLabel(viewer, record) {
   const body = getCaption(viewer, record);
   const media = viewer.textNode ? '' : viewer.voiceNode ? t('voiceMessage') : record.title || getMediaFallback();
-  const fields = [record.sender, media, body, record.time]
-    .map(value => applyPrivacy(cleanText(value), viewer.contentButton))
+  const fields = [
+    applyPrivacy(cleanText(record.sender), viewer.contentButton, 'identity'),
+    applyPrivacy(cleanText(media), viewer.contentButton),
+    applyPrivacy(cleanText(body), viewer.contentButton),
+    applyPrivacy(cleanText(record.time), viewer.contentButton)
+  ]
     .filter(Boolean);
   const isolatedFields = fields.map(isolateBidiText);
   const separator = t('statusSummarySeparator') || '. ';
@@ -716,7 +742,6 @@ function commitLabel(viewer, record) {
     !target.hasAttribute?.('aria-labelledby') && labelState?.owner === OWNERS.statusViewer;
 
   if (!labelIsCurrent) {
-    // Apply the replacement name before removing a competing labelledby reference.
     applyOwnedAttribute(target, 'aria-label', label, OWNERS.statusViewer);
     if (target.hasAttribute?.('aria-labelledby')) {
       applyOwnedAttribute(target, 'aria-labelledby', null, OWNERS.statusViewer);
@@ -753,10 +778,12 @@ function syncStatusAccessibility() {
     record.captionBaselineCaptured = true;
   }
 
-  // Keep the accessible name useful even when an automatic click must wait for focus to move.
   commitLabel(viewer, record);
 
-  if (!viewer.videoNode) {
+  const confirmedStaticStatus = !viewer.videoNode && !viewer.audioNode &&
+    !record.playableMediaPossible &&
+    !!(viewer.textNode || viewer.imageNode);
+  if (confirmedStaticStatus) {
     if (record.pauseAttempted && !record.pauseControlFound) {
       if (findPauseButton(viewer)) {
         record.pauseAttempted = false;
@@ -765,6 +792,11 @@ function syncStatusAccessibility() {
     }
 
     if (!record.pauseAttempted) {
+      record.pauseChecks += 1;
+      if (record.pauseChecks < MAX_PAUSE_CHECKS) {
+        scheduleStatusAccessibilitySync();
+        return;
+      }
       const pause = findPauseButton(viewer);
       if (pause) {
         record.pauseControlFound = true;
@@ -775,11 +807,6 @@ function syncStatusAccessibility() {
           return;
         }
         activateControl(pause);
-        scheduleStatusAccessibilitySync();
-        return;
-      }
-      record.pauseChecks += 1;
-      if (record.pauseChecks < MAX_PAUSE_CHECKS) {
         scheduleStatusAccessibilitySync();
         return;
       }
@@ -871,7 +898,7 @@ export function refreshStatusAccessibility(options = {}) {
     return;
   }
   if (options.retryControls && current) {
-    if (current.mediaKind !== 'video' && !current.pauseControlFound) {
+    if (current.mediaKind !== 'video' && current.mediaKind !== 'audio' && !current.pauseControlFound) {
       current.pauseAttempted = false;
       current.pauseChecks = 0;
     }

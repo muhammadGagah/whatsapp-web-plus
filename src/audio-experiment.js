@@ -243,9 +243,7 @@ function jsonSafe(value) {
     for (const key of Object.keys(value)) {
       try {
         output[key] = jsonSafe(value[key]);
-      } catch {
-        // Ignore browser-owned getters that throw.
-      }
+      } catch {}
     }
     return output;
   }
@@ -796,9 +794,7 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       }
       try {
         outputTrack.addEventListener?.('ended', cleanup, { once: true });
-      } catch {
-        // Optional lifecycle fallback only.
-      }
+      } catch {}
     }
 
     for (const track of inputStream.getAudioTracks?.() || []) {
@@ -806,9 +802,7 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
         track.addEventListener?.('ended', () => {
           try { outputTrack.stop?.(); } catch { cleanup(); }
         }, { once: true });
-      } catch {
-        // Optional lifecycle bridge only.
-      }
+      } catch {}
     }
 
     return {

@@ -5,5 +5,5 @@
 
 # Generated build output: tracked for Greasy Fork/Tampermonkey installs,
 # but marked as generated so GitHub collapses it in pull-request diffs.
-whatsapp_web_plus.user.js linguist-generated=true
-whatsapp_web_plus.debug.js linguist-generated=true
+whatsapp_web_plus.user.js -text -diff linguist-generated=true
+whatsapp_web_plus.debug.js -text -diff linguist-generated=true

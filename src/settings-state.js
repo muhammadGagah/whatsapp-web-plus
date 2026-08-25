@@ -32,6 +32,8 @@ let reduceAnnouncements = readSetting(STORAGE_KEYS.reduceAnnouncements, 'true') 
 let automaticReading = readSetting(STORAGE_KEYS.automaticReading, 'false') === 'true';
 let statusReadingCleanup = readSetting(STORAGE_KEYS.statusReadingCleanup, 'false') === 'true';
 let senderDeviceAnnouncements = readSetting(STORAGE_KEYS.senderDeviceAnnouncements, 'false') === 'true';
+let announceUnreadChatTotal = readSetting(STORAGE_KEYS.announceUnreadChatTotal, 'true') === 'true';
+let voiceMessageKeyboardPlayback = readSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, 'false') === 'true';
 let openChatsAtFirstUnread = readSetting(STORAGE_KEYS.openChatsAtFirstUnread, 'false') === 'true';
 const customTextStorageKeys = Object.freeze({
   'unread-divider': STORAGE_KEYS.customUnreadDivider,
@@ -443,6 +445,28 @@ export function setSenderDeviceAnnouncement(value) {
   const nextValue = !!value;
   if (!writeSetting(STORAGE_KEYS.senderDeviceAnnouncements, String(nextValue))) return false;
   senderDeviceAnnouncements = nextValue;
+  return true;
+}
+
+export function isUnreadChatTotalAnnouncementEnabled() {
+  return announceUnreadChatTotal;
+}
+
+export function setUnreadChatTotalAnnouncement(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.announceUnreadChatTotal, String(nextValue))) return false;
+  announceUnreadChatTotal = nextValue;
+  return true;
+}
+
+export function isVoiceMessageKeyboardPlaybackEnabled() {
+  return voiceMessageKeyboardPlayback;
+}
+
+export function setVoiceMessageKeyboardPlayback(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, String(nextValue))) return false;
+  voiceMessageKeyboardPlayback = nextValue;
   return true;
 }
 

@@ -19,6 +19,7 @@ import {
   toggleOriginalDarkMode
 } from './appearance.js';
 import { announce, focusItem, getActiveModal, refreshAnnouncementReduction } from './chat-accessibility.js';
+import { refreshUnreadChatTotal } from './unread-chat-total.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
 import {
   getCustomText,
@@ -28,6 +29,8 @@ import {
   isAutomaticReadingEnabled,
   isStatusReadingCleanupEnabled,
   isSenderDeviceAnnouncementEnabled,
+  isUnreadChatTotalAnnouncementEnabled,
+  isVoiceMessageKeyboardPlaybackEnabled,
   isShortcutRemapEnabled,
   shouldOpenChatsAtFirstUnread,
   LANGUAGES,
@@ -37,6 +40,8 @@ import {
   setOpenChatsAtFirstUnread,
   setStatusReadingCleanup,
   setSenderDeviceAnnouncement,
+  setUnreadChatTotalAnnouncement,
+  setVoiceMessageKeyboardPlayback,
   setShortcutRemap,
   t
 } from './settings-state.js';
@@ -356,7 +361,9 @@ function createMenu() {
     ['reduceAnnouncements', 'reduce-announcements'],
     ['automaticReading', 'automatic-reading'],
     ['chatActivity', 'chat-activity'],
-    ['senderDeviceAnnouncements', 'sender-device-announcements']
+    ['senderDeviceAnnouncements', 'sender-device-announcements'],
+    ['announceUnreadChatTotal', 'announce-unread-chat-total'],
+    ['voiceMessageKeyboardPlayback', 'voice-message-keyboard-playback']
   ].forEach(([labelKey, action]) => {
     const item = createMenuItem('menuitemcheckbox', action);
     item.dataset.labelKey = labelKey;
@@ -587,6 +594,8 @@ function updateMenu() {
     'automatic-reading': isAutomaticReadingEnabled(),
     'chat-activity': isChatActivityEnabled(),
     'sender-device-announcements': isSenderDeviceAnnouncementEnabled(),
+    'announce-unread-chat-total': isUnreadChatTotalAnnouncementEnabled(),
+    'voice-message-keyboard-playback': isVoiceMessageKeyboardPlaybackEnabled(),
     'open-chats-at-first-unread': shouldOpenChatsAtFirstUnread(),
     'status-reading-cleanup': isStatusReadingCleanupEnabled(),
     'remap-voice-recording': isShortcutRemapEnabled('voice-recording'),
@@ -894,6 +903,11 @@ function activateItem(item, keepOpen) {
       refreshSenderDeviceLabels();
       discardPassiveAnnouncements('pulse');
     }
+  } else if (action === 'announce-unread-chat-total') {
+    saved = setUnreadChatTotalAnnouncement(!isUnreadChatTotalAnnouncementEnabled());
+    if (saved) refreshUnreadChatTotal();
+  } else if (action === 'voice-message-keyboard-playback') {
+    saved = setVoiceMessageKeyboardPlayback(!isVoiceMessageKeyboardPlaybackEnabled());
   } else if (action.startsWith('audio-profile-')) {
     saved = selectAudioExperimentProfile(item.dataset.audioProfile);
   } else if (action.startsWith('call-audio-profile-')) {

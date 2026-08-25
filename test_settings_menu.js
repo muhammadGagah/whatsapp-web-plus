@@ -324,10 +324,20 @@ const accessibilityMenu = document.getElementById('wa-plus-accessibility-menu');
 const keyboardShortcutsMenu = document.getElementById('wa-plus-keyboard-shortcuts-menu');
 const appearanceMenu = document.getElementById('wa-plus-appearance-menu');
 const statusReadingItem = accessibilityMenu.children.find(item => item.dataset.action === 'status-reading-cleanup');
+const unreadTotalItem = accessibilityMenu.children.find(item => item.dataset.action === 'announce-unread-chat-total');
+const voicePlaybackItem = accessibilityMenu.children.find(item => item.dataset.action === 'voice-message-keyboard-playback');
 assert.ok(statusReadingItem);
 assert.equal(statusReadingItem.getAttribute('role'), 'menuitemcheckbox');
 assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
-assert.equal(statusReadingItem.children[1].textContent, 'Clean Status reading');
+assert.equal(statusReadingItem.children[1].textContent, 'Clean Status reading and stop automatic advancement');
+assert.ok(unreadTotalItem);
+assert.equal(unreadTotalItem.getAttribute('role'), 'menuitemcheckbox');
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'true');
+assert.equal(unreadTotalItem.children[1].textContent, 'Announce total unread chats');
+assert.ok(voicePlaybackItem);
+assert.equal(voicePlaybackItem.getAttribute('role'), 'menuitemcheckbox');
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'false');
+assert.equal(voicePlaybackItem.children[1].textContent, 'Play or pause focused voice messages with Enter or Space');
 assert.equal(privacyItem.getAttribute('role'), 'menuitemcheckbox');
 assert.equal(privacyItem.children[1].textContent, 'Privacy mode');
 assert.equal(voiceRecordingItem.children[1].textContent, 'Voice message recording');
@@ -648,6 +658,28 @@ assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
 assert.equal(rootMenu.hidden, false);
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, unreadTotalItem);
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'true');
+const unreadTotalFocus = document.activeElement;
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-announce-unread-chat-total'), 'false');
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'false');
+assert.equal(document.activeElement, unreadTotalFocus);
+assert.equal(rootMenu.hidden, false);
+assert.equal(accessibilityMenu.hidden, false);
+
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, voicePlaybackItem);
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'false');
+const voicePlaybackFocus = document.activeElement;
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(storedValues.get('wa-plus-voice-message-keyboard-playback'), 'true');
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'true');
+assert.equal(document.activeElement, voicePlaybackFocus);
+assert.equal(rootMenu.hidden, false);
+assert.equal(accessibilityMenu.hidden, false);
+
+keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement.dataset.action, 'open-chats-at-first-unread');
 assert.equal(document.activeElement.getAttribute('role'), 'menuitemcheckbox');
 assert.equal(document.activeElement.getAttribute('aria-checked'), 'false');
@@ -712,7 +744,7 @@ assert.equal(rootMenu.hidden, true);
 
 keydown(settingsShortcut());
 assert.equal(keyboardShortcutsItem.children[1].textContent, 'Pemetaan ulang pintasan');
-assert.equal(statusReadingItem.children[1].textContent, 'Bersihkan pembacaan Status');
+assert.equal(statusReadingItem.children[1].textContent, 'Bersihkan pembacaan Status dan hentikan perpindahan otomatis');
 assert.equal(voiceCallsItem.children[1].textContent, 'Panggilan suara');
 assert.equal(audioProfileGroup.getAttribute('aria-label'), 'Profil perekaman pesan suara');
 assert.equal(callAudioProfileGroup.getAttribute('aria-label'), 'Profil mikrofon panggilan');
@@ -827,7 +859,6 @@ function runUpdatePageChecks() {
     assert.match(output, /WhatsApp%20Web%20Plus\.user\.js/);
     assert.doesNotMatch(output, /WhatsApp%20Web%20Plus\.meta\.js|compareVersions/);
 
-    // Switch to English and verify the localized action and popup-blocked result.
     keydown(settingsShortcut());
     keydown(keyboardEvent({ key: 'ArrowRight' }));
     assert.equal(document.activeElement.dataset.language, 'en');
@@ -899,6 +930,14 @@ keydown(keyboardEvent({ key: 'ArrowRight' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement.dataset.language, 'id');
 keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(
+    unreadTotalItem.children[1].textContent,
+    'Umumkan jumlah total chat yang belum dibaca'
+);
+assert.equal(
+    voicePlaybackItem.children[1].textContent,
+    'Putar atau jeda pesan suara yang difokuskan dengan Enter atau Spasi'
+);
 keydown(settingsShortcut());
 const customMenuSubmenuItem = document.getElementById('wa-plus-custom-language-strings-menu-item');
 assert.ok(customMenuSubmenuItem, 'Custom language strings submenu item should exist');

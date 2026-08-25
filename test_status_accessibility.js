@@ -177,6 +177,18 @@ assert.equal(contentButton.getAttribute('aria-label'), 'Participant. Ada beberap
 assert.equal(contentButton.getAttribute('aria-labelledby'), null, 'the competing labelledby reference is removed');
 assert.doesNotMatch(contentButton.getAttribute('aria-label'), /Pause|Play|Status 1 of 2|Message to/);
 
+textNode.textContent = 'Account 123456789012, server 43.160.237.245, call +62 812-3333-4444';
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(
+  contentButton.getAttribute('aria-label'),
+  'Participant. Account 123456789012, server 43.160.237.245, call Participant. Today at 06:55',
+  'status privacy keeps ambiguous body numbers and IPv4 while masking an explicit international phone'
+);
+textNode.textContent = 'Ada beberapa pintu yang lebih baik tidak diketuk.';
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+
 time.textContent = 'Message to +1234567890 Today at 06:55 Media Title';
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
 flushFrames();
@@ -448,17 +460,17 @@ mediaVideo.addEventListener('timeupdate', otherTimeUpdateListener);
 mediaVideo.addEventListener('ended', whatsappStatusEndListener);
 mediaVideo.addEventListener('ended', otherEndListener);
 mediaVideo.dispatchEvent({ type: 'timeupdate' });
-assert.equal(statusDurationUpdates, 1, 'ordinary WhatsApp duration updates remain untouched');
+assert.equal(statusDurationUpdates, 0, 'the identified WhatsApp auto-advance handler is withheld without reading duration');
 assert.equal(otherTimeUpdates, 1, 'other media listeners receive ordinary time updates');
 mediaVideo.currentTime = 29.5;
 mediaVideo.dispatchEvent({ type: 'timeupdate' });
-assert.equal(statusDurationUpdates, 1, 'only the WhatsApp 30-second duration handler is skipped');
+assert.equal(statusDurationUpdates, 0, 'auto-advance remains withheld without a time threshold');
 assert.equal(otherTimeUpdates, 2, 'caption and control listeners continue receiving time updates');
 assert.equal(mediaVideo.pauseCalls, 0, 'the duration guard never pauses the video');
 mediaVideo.duration = 29;
 mediaVideo.currentTime = 20;
 mediaVideo.dispatchEvent({ type: 'timeupdate' });
-assert.equal(statusDurationUpdates, 2, 'short Status videos keep their native duration handler');
+assert.equal(statusDurationUpdates, 0, 'short Status videos also avoid duration-based auto-advance guesses');
 assert.equal(otherTimeUpdates, 3);
 staleVideo.duration = 46;
 staleVideo.currentTime = 45.7;
@@ -475,26 +487,54 @@ staleVideo.addEventListener('timeupdate', staleWhatsAppStatusDurationListener);
 staleVideo.dispatchEvent({ type: 'timeupdate' });
 assert.equal(staleVideo.pauseCalls, 0, 'a hidden stale Status video is never paused');
 assert.equal(staleDurationUpdates, 1, 'hidden stale videos retain their native listener behavior');
+const inactiveRoot = new Element();
+const inactiveVideo = new Element('VIDEO');
+inactiveVideo.statusRoot = inactiveRoot;
+inactiveRoot.queryMap.set('[data-testid="status-video"]', inactiveVideo);
+let inactiveDurationUpdates = 0;
+function inactiveWhatsAppStatusDurationListener() {
+  inactiveDurationUpdates += 1;
+  return 'status_video_max_duration';
+}
+inactiveVideo.addEventListener('timeupdate', inactiveWhatsAppStatusDurationListener);
+inactiveVideo.dispatchEvent({ type: 'timeupdate' });
+assert.equal(inactiveDurationUpdates, 1, 'media without the active Status marker keeps native behavior');
 mediaVideo.duration = 46;
 mediaVideo.currentTime = 45.7;
 mediaVideo.dispatchEvent({ type: 'timeupdate' });
-assert.equal(mediaVideo.pauseCalls, 1, 'the active Status video pauses immediately before natural completion');
-assert.equal(mediaVideo.ended, false, 'the video remains in WhatsApp\'s navigable paused state');
-assert.equal(statusDurationUpdates, 2, 'the completion time update does not trigger WhatsApp auto-advance');
+assert.equal(mediaVideo.pauseCalls, 0, 'the active Status video is never paused before natural completion');
+assert.equal(mediaVideo.ended, false, 'the video remains free to reach its natural ended state');
+assert.equal(statusDurationUpdates, 0, 'the completion time update does not trigger WhatsApp auto-advance');
 assert.equal(otherTimeUpdates, 4, 'other timeupdate listeners still receive earlier playback updates');
+const outsideVideo = new Element('VIDEO');
+let sharedDurationUpdates = 0;
+function sharedWhatsAppDurationListener() {
+  sharedDurationUpdates += 1;
+  return 'status_video_max_duration';
+}
+mediaVideo.addEventListener('timeupdate', sharedWhatsAppDurationListener);
+outsideVideo.addEventListener('timeupdate', sharedWhatsAppDurationListener);
+outsideVideo.dispatchEvent({ type: 'timeupdate' });
+assert.equal(sharedDurationUpdates, 1, 'the same listener still runs on unrelated media');
+mediaVideo.dispatchEvent({ type: 'timeupdate' });
+assert.equal(sharedDurationUpdates, 1, 'the same listener is withheld only on active Status media');
+outsideVideo.removeEventListener('timeupdate', sharedWhatsAppDurationListener);
+outsideVideo.dispatchEvent({ type: 'timeupdate' });
+assert.equal(sharedDurationUpdates, 1, 'listener removal remains target-specific');
+mediaVideo.removeEventListener('timeupdate', sharedWhatsAppDurationListener);
 mediaVideo.duration = 46;
 mediaVideo.currentTime = 10;
 mediaVideo.removeEventListener('timeupdate', whatsappStatusDurationListener);
 mediaVideo.dispatchEvent({ type: 'timeupdate' });
-assert.equal(statusDurationUpdates, 2, 'wrapped WhatsApp listeners can still be removed');
-assert.equal(otherTimeUpdates, 5);
+assert.equal(statusDurationUpdates, 0, 'wrapped WhatsApp listeners can still be removed');
+assert.equal(otherTimeUpdates, 6);
 mediaVideo.ended = true;
 mediaVideo.dispatchEvent({ type: 'ended' });
-assert.equal(statusEnds, 1, 'WhatsApp natural ended handling is not intercepted');
+assert.equal(statusEnds, 0, 'WhatsApp auto-advance is withheld after natural completion');
 assert.equal(otherEnds, 1, 'unrelated ended listeners still receive natural completion');
 mediaVideo.removeEventListener('ended', whatsappStatusEndListener);
 mediaVideo.dispatchEvent({ type: 'ended' });
-assert.equal(statusEnds, 1, 'the native WhatsApp ended listener remains removable');
+assert.equal(statusEnds, 0, 'the wrapped WhatsApp ended listener remains removable');
 assert.equal(otherEnds, 2);
 
 sandbox.StatusAccessibility.releaseStatusAccessibility();
@@ -574,6 +614,10 @@ const voiceNode = new Element('SPAN');
 voiceNode.setAttribute('aria-hidden', 'true');
 const audioNode = new Element('AUDIO');
 audioNode.currentSrc = 'voice-status.ogg';
+audioNode.statusRoot = audioRoot;
+const audioPause = new Element('BUTTON');
+audioPause.setAttribute('aria-label', 'Pause');
+audioPause.clickHandler = () => audioPause.setAttribute('aria-label', 'Play');
 const audioContact = new Element('BUTTON');
 audioContact.textContent = 'Voice Contact';
 const audioTime = new Element();
@@ -587,6 +631,7 @@ audioButton.appendChild(voiceNode);
 audioButton.appendChild(audioNode);
 audioRoot.appendChild(audioHeader);
 audioRoot.appendChild(audioButton);
+audioRoot.appendChild(audioPause);
 audioRoot.appendChild(audioProgress);
 audioRoot.queryMap.set('[data-testid="status-text"]', null);
 audioRoot.queryMap.set('[data-testid="status-video"]', null);
@@ -597,7 +642,7 @@ audioRoot.queryMap.set('[data-testid="status-player-contact-name"]', audioContac
 audioRoot.queryMap.set('[data-testid="music-attribution-song-metadata"]', null);
 audioRoot.queryMap.set('[data-testid="status-subtitle-attribution-content"]', null);
 audioRoot.queryMap.set('[data-testid="status-progress-bar-segment"]', audioProgress);
-audioRoot.queryAllMap.set('button, [role="button"]', []);
+audioRoot.queryAllMap.set('button, [role="button"]', [audioPause]);
 audioMarker.appendChild(audioRoot);
 activeRoot = audioRoot;
 document.statusRoots = [audioRoot];
@@ -607,6 +652,82 @@ flushFrames();
 assert.equal(audioButton.getAttribute('aria-label'),
   'Voice Contact. voice message. Today at 10:15',
   'an audio Status receives a stable voice-message summary when its decorative marker is hidden');
+assert.equal(audioPause.clickCalls, 0, 'audio playback is never paused by Status cleanup');
+let audioAutoAdvances = 0;
+let otherAudioEnds = 0;
+function whatsappAudioEndListener() {
+  audioAutoAdvances += 1;
+  return 'WAWebStatusEventHandlersMap MediaEvents.OnEnd';
+}
+function otherAudioEndListener() { otherAudioEnds += 1; }
+audioNode.addEventListener('ended', whatsappAudioEndListener);
+audioNode.addEventListener('ended', otherAudioEndListener);
+audioNode.dispatchEvent({ type: 'ended' });
+assert.equal(audioAutoAdvances, 0, 'audio completion does not advance to the next Status');
+assert.equal(otherAudioEnds, 1, 'unrelated audio completion listeners still run');
+
+sandbox.StatusAccessibility.releaseStatusAccessibility();
+const musicRoot = new Element();
+const musicMarker = new Element();
+musicMarker.setAttribute('data-animate-status-viewer', 'true');
+const musicButton = new Element('BUTTON');
+musicButton.closestElement = musicButton;
+const musicImage = new Element('IMG');
+musicImage.closestElement = musicButton;
+const musicAudio = new Element('AUDIO');
+musicAudio.currentSrc = 'music-status.ogg';
+musicAudio.statusRoot = musicRoot;
+musicButton.appendChild(musicImage);
+musicButton.appendChild(musicAudio);
+const musicContact = new Element('BUTTON');
+musicContact.textContent = 'Music Contact';
+const musicTime = new Element();
+musicTime.textContent = 'Today at 10:20';
+const musicHeader = new Element();
+musicHeader.appendChild(musicContact);
+musicHeader.appendChild(musicTime);
+const musicTitle = new Element();
+musicTitle.textContent = 'Music Title';
+const musicProgress = new Element();
+musicProgress.setAttribute('aria-label', 'Status 1 of 1');
+const musicPause = new Element('BUTTON');
+musicPause.setAttribute('aria-label', 'Pause');
+musicPause.clickHandler = () => musicPause.setAttribute('aria-label', 'Play');
+musicRoot.appendChild(musicHeader);
+musicRoot.appendChild(musicButton);
+musicRoot.appendChild(musicPause);
+musicRoot.appendChild(musicProgress);
+musicRoot.queryMap.set('[data-testid="status-text"]', null);
+musicRoot.queryMap.set('[data-testid="status-video"]', null);
+musicRoot.queryMap.set('[data-testid="status-image"]', musicImage);
+musicRoot.queryMap.set('[data-testid="ptt-status"]', null);
+musicRoot.queryMap.set('[data-testid="status-player-contact-name"]', musicContact);
+musicRoot.queryMap.set('[data-testid="music-attribution-song-metadata"]', musicTitle);
+musicRoot.queryMap.set('[data-testid="status-subtitle-attribution-content"]', null);
+musicRoot.queryMap.set('[data-testid="status-progress-bar-segment"]', musicProgress);
+musicRoot.queryAllMap.set('button, [role="button"]', [musicPause]);
+musicMarker.appendChild(musicRoot);
+activeRoot = musicRoot;
+document.statusRoots = [musicRoot];
+document.activeElement = document.body;
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(musicPause.clickCalls, 0,
+  'a music indicator permanently excludes an image Status from the static Pause path');
+musicRoot.queryMap.set('audio', musicAudio);
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(musicPause.clickCalls, 0, 'music playback on an image Status is never paused');
+assert.match(musicButton.getAttribute('aria-label'), /^Music Contact\. Music Title\./,
+  'music Status keeps its clean accessible summary');
+let musicAutoAdvances = 0;
+function whatsappMusicEndListener() {
+  musicAutoAdvances += 1;
+  return 'WAWebStatusEventHandlersMap MediaEvents.OnEnd';
+}
+musicAudio.addEventListener('ended', whatsappMusicEndListener);
+musicAudio.dispatchEvent({ type: 'ended' });
+assert.equal(musicAutoAdvances, 0, 'music completion remains on the current Status');
 
 sandbox.StatusAccessibility.releaseStatusAccessibility();
 const plainCaptionRoot = new Element();
@@ -870,7 +991,7 @@ mediaVideo.hidden = true;
 mediaRoot.queryMap.set('[data-testid="status-text"]', reusedText);
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
 flushFrames();
-assert.equal(mediaPause.clickCalls, 1, 'a reused content button switching to text starts a fresh identity');
+assert.equal(mediaPause.clickCalls, 0, 'a reused content button with prior media indicators never enters the static Pause path');
 assert.match(mediaButton.getAttribute('aria-label'), /Reused content button text status/);
 
 sandbox.StatusAccessibility.releaseStatusAccessibility();
@@ -881,9 +1002,82 @@ mediaVideo.hidden = false;
 mediaVideo.currentSrc = 'third-current-status.mp4';
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
 flushFrames();
-assert.equal(mediaPause.clickCalls, 1, 'switching the reused content button back to video does not click Pause');
+assert.equal(mediaPause.clickCalls, 0, 'switching the reused content button back to video still does not click Pause');
 
 sandbox.StatusAccessibility.releaseStatusAccessibility();
+mediaPause.clickCalls = 0;
+mediaPause.setAttribute('aria-label', 'Jeda');
+mediaPause.clickHandler = () => mediaPause.setAttribute('aria-label', 'Play');
+mediaTitle.textContent = '';
+mediaAttribution.textContent = '';
+mediaProgressWrapper.setAttribute('aria-label', 'Status 1 of 4');
+mediaRoot.queryMap.set('[data-testid="status-text"]', null);
+mediaRoot.queryMap.set('[data-testid="status-video"]', mediaVideo);
+mediaVideo.hidden = false;
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(mediaPause.clickCalls, 0, 'an ordinary video establishes a playable-media boundary without touching Pause');
+
+const remountedPlaceholderButton = new Element('BUTTON');
+remountedPlaceholderButton.closestElement = remountedPlaceholderButton;
+remountedPlaceholderButton.cloneFactory = () => new Element('BUTTON');
+const remountedPlaceholderText = new Element();
+remountedPlaceholderText.textContent = 'Long-lived placeholder for the same playable Status';
+remountedPlaceholderText.closestElement = remountedPlaceholderButton;
+remountedPlaceholderButton.appendChild(remountedPlaceholderText);
+mediaStage.removeChild(mediaButton);
+mediaStage.appendChild(remountedPlaceholderButton);
+mediaRoot.queryMap.set('[data-testid="status-video"]', null);
+mediaVideo.hidden = true;
+mediaRoot.queryMap.set('[data-testid="status-text"]', remountedPlaceholderText);
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(mediaPause.clickCalls, 0,
+  'a replacement content button beyond every retry preserves the same Status media exclusion');
+
+const remountedVideoButton = new Element('BUTTON');
+remountedVideoButton.closestElement = remountedVideoButton;
+remountedVideoButton.cloneFactory = () => new Element('BUTTON');
+mediaStage.removeChild(remountedPlaceholderButton);
+mediaStage.appendChild(remountedVideoButton);
+mediaVideo.closestElement = remountedVideoButton;
+remountedVideoButton.appendChild(mediaVideo);
+mediaRoot.queryMap.set('[data-testid="status-text"]', null);
+mediaRoot.queryMap.set('[data-testid="status-video"]', mediaVideo);
+mediaVideo.hidden = false;
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(mediaPause.clickCalls, 0, 'restoring media through another content button never touches Pause');
+
+const newStaticButton = new Element('BUTTON');
+newStaticButton.closestElement = newStaticButton;
+newStaticButton.cloneFactory = () => new Element('BUTTON');
+const newStaticText = new Element();
+newStaticText.textContent = 'Confirmed new static Status';
+newStaticText.closestElement = newStaticButton;
+newStaticButton.appendChild(newStaticText);
+remountedVideoButton.removeChild(mediaVideo);
+mediaStage.removeChild(remountedVideoButton);
+mediaStage.appendChild(newStaticButton);
+mediaPause.setAttribute('aria-label', 'Jeda');
+mediaProgressWrapper.setAttribute('aria-label', 'Status 2 of 4');
+mediaRoot.queryMap.set('[data-testid="status-video"]', null);
+mediaVideo.hidden = true;
+mediaRoot.queryMap.set('[data-testid="status-text"]', newStaticText);
+document.activeElement = null;
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(mediaPause.clickCalls, 1,
+  'a confirmed new static Status resets the playable-media exclusion and pauses its timer once');
+
+sandbox.StatusAccessibility.releaseStatusAccessibility();
+mediaStage.removeChild(newStaticButton);
+mediaStage.appendChild(mediaButton);
+mediaVideo.closestElement = mediaButton;
+mediaVideo.parentElement = mediaButton;
+mediaRoot.queryMap.set('[data-testid="status-text"]', null);
+mediaRoot.queryMap.set('[data-testid="status-video"]', mediaVideo);
+mediaVideo.hidden = false;
 const captionOverlay = new Element();
 const captionToggle = new Element('BUTTON');
 captionToggle.setAttribute('aria-label', 'Baca selengkapnya');
@@ -933,6 +1127,7 @@ mediaProgressWrapper.setAttribute('aria-label', 'Status 5 of 5');
 mediaButton.textContent = '';
 mediaButton._expanded = false;
 captionToggle._expanded = false;
+document.activeElement = document.body;
 activeRoot = mediaRoot;
 document.statusRoots = [mediaRoot];
 sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();

@@ -28,20 +28,33 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         applyChatRowDescendantMasks, collectChatBadgeLabels,
         getChatPreviewIconLabel,
         applyChatRowNativeMask, applyMessageGridExperiment, handleMessageGridKeydown,
-        focusChatRow, getPreferredChatRow, getChatListRows,
+        handleMessageReadMoreKeyup,
+        handleVoiceMessagePlaybackKeydown,
+        getMessageReaderSnapshot, getFocusedMessageReaderSource,
+        handleMessageReaderShortcut, getSafeMessageReaderUrl,
+        handleReaderEscapeKeydown, installReaderEscapeHandler,
+        refreshMessageMentionNames,
+        focusChatRow, getPreferredChatRow, getChatListRows, getRememberedFocus,
+        clearRememberedChatRow,
+        normalizeChatListTabStops,
         getActiveModal,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
+        recoverFocusAfterRemoval,
         getRoleFixRoot, scheduleRoleFix,
         getHeaderInfoButton, getHeaderText, announceChatHeaderShortcut,
         closeMediaPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
         CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getDesktopAppPromoCloseButton,
         getCleanUiHiddenTargets, syncCleanUi,
         setPrivacy(value) { isPrivacyMode = value; },
+        setSenderDeviceAnnouncement, isSenderDeviceAnnouncementEnabled,
         setCleanUi(value) { isCleanUiMode = value; },
         setUnreadTarget(value) { unreadTarget = value; },
         setStatusTracking(value) { isStatusTracking = value; },
         setLanguage, setCustomText, getNavSelector, getScrollToBottomSelector,
         setAnnouncementReduction,
+        isUnreadChatTotalStatus, refreshUnreadChatTotal,
+        isUnreadChatTotalAnnouncementEnabled, setUnreadChatTotalAnnouncement,
+        isVoiceMessageKeyboardPlaybackEnabled, setVoiceMessageKeyboardPlayback,
         setOpenChatsAtFirstUnread, setShortcutRemap,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
         getCompanionBridge() { return globalThis.__whatsappWebPlusCompanionBridge; },
@@ -56,13 +69,16 @@ const source = originalSource.replace('    ensureLiveRegion();', `
 let documentRef;
 
 class Element {
-    constructor() {
+    constructor(tagName = '') {
+        this.tagName = String(tagName || '').toUpperCase();
         this.attributes = new Map();
         this.children = [];
         this.parentElement = null;
         this.nextElementSibling = null;
         this.isConnected = true;
         this.focusSucceeds = true;
+        this.focusHandler = null;
+        this.dispatchHandler = null;
         this.closestHandler = null;
         this.queryHandler = null;
         this.queryAllHandler = null;
@@ -71,6 +87,7 @@ class Element {
         this.clientHeight = 0;
         this.scrollHeight = 0;
         this.scrollIntoViewCalls = 0;
+        this.lastFocusOptions = undefined;
         this.clickCalls = 0;
         this.clickHandler = null;
         this.classList = { contains() { return false; } };
@@ -85,6 +102,7 @@ class Element {
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     removeAttribute(name) { this.attributes.delete(name); }
     matches(selector) {
+        if (selector === 'button') return this.getAttribute('type') === 'button';
         if (selector.includes('[tabindex]') && selector.includes('button')) return this.hasAttribute('tabindex');
         if (selector === 'a[href]') return this.hasAttribute('href');
         if (selector === 'a[href], [role="link"]') return this.hasAttribute('href') || this.getAttribute('role') === 'link';
@@ -101,11 +119,22 @@ class Element {
     querySelector(selector) { return this.queryHandler ? this.queryHandler(selector) : null; }
     querySelectorAll(selector) { return this.queryAllHandler ? this.queryAllHandler(selector) : []; }
     contains(node) { return node === this || this.children.some(child => child.contains ? child.contains(node) : child === node); }
-    focus() { if (this.focusSucceeds) documentRef.activeElement = this; }
-    click() { this.clickCalls++; if (this.clickHandler) this.clickHandler(); }
+    focus(options) {
+        this.lastFocusOptions = options;
+        if (this.focusSucceeds) {
+            documentRef.activeElement = this;
+            this.focusHandler?.();
+        }
+    }
+    click() {
+        this.clickCalls++;
+        if (this.clickHandler) this.clickHandler();
+        if (typeof this.onclick === 'function') this.onclick();
+    }
     dispatchEvent(event) {
         this.dispatchedEvents = this.dispatchedEvents || [];
         this.dispatchedEvents.push(event);
+        if (this.dispatchHandler) return this.dispatchHandler(event);
         return true;
     }
     appendChild(child) { this.children.push(child); child.parentElement = this; return child; }
@@ -120,7 +149,15 @@ class Element {
 }
 
 class MutationObserver {
+    static instances = [];
+    constructor(callback) {
+        this.callback = callback;
+        this.disconnected = false;
+        MutationObserver.instances.push(this);
+    }
     observe() {}
+    disconnect() { this.disconnected = true; }
+    trigger(records = []) { if (!this.disconnected) this.callback(records, this); }
 }
 
 const selectorResults = new Map();
@@ -129,13 +166,44 @@ const selectorQueries = new Map();
 const idResults = new Map();
 const liveRegion = new Element();
 const messageLog = new Element();
+messageLog.setAttribute('aria-live', 'polite');
+function createReaderTestDocument() {
+    const documentElement = new Element('html');
+    const head = new Element('head');
+    const body = new Element('body');
+    const eventListeners = new Map();
+    documentElement.appendChild(head);
+    documentElement.appendChild(body);
+    return {
+        documentElement,
+        head,
+        body,
+        title: '',
+        eventListeners,
+        addEventListener(type, callback) {
+            const callbacks = eventListeners.get(type) || [];
+            callbacks.push(callback);
+            eventListeners.set(type, callbacks);
+        },
+        dispatchEvent(event) {
+            for (const callback of eventListeners.get(event.type) || []) callback(event);
+        },
+        createElement(tagName) { return new Element(tagName); },
+        createTextNode(value) {
+            return { nodeType: 3, nodeValue: String(value), parentElement: null };
+        }
+    };
+}
 const document = {
     readyState: 'complete',
     activeElement: null,
     body: new Element(),
     documentElement: { clientWidth: 1024, clientHeight: 768, lang: 'en' },
     addEventListener() {},
-    createElement() { return new Element(); },
+    createElement(tagName) { return new Element(tagName); },
+    createTextNode(value) {
+        return { nodeType: 3, nodeValue: String(value), parentElement: null };
+    },
     getElementById(id) {
         if (id === 'wa-plus-live-region') return liveRegion;
         if (id === 'wa-plus-message-log') return messageLog;
@@ -160,6 +228,11 @@ const localStorage = {
 };
 
 const scheduledFrames = [];
+function drainScheduledFrames(limit = 20) {
+    let count = 0;
+    while (scheduledFrames.length && count++ < limit) scheduledFrames.shift()();
+    assert.ok(count < limit, 'scheduled focus work must settle');
+}
 let nextTimeoutId = 1;
 const scheduledTimeouts = new Map();
 function scheduleTimeout(callback) {
@@ -169,8 +242,12 @@ function scheduleTimeout(callback) {
 }
 function cancelTimeout(id) { scheduledTimeouts.delete(id); }
 
+class SandboxURL extends URL {}
+
 const sandbox = {
     Element, HTMLElement: Element, MutationObserver, document, localStorage, console, crypto: webcrypto,
+    URL: SandboxURL,
+    location: { origin: 'https://web.whatsapp.com', href: 'https://web.whatsapp.com/' },
     __whatsappWebPlusBundleHash: 'a'.repeat(64),
     CSS: { escape(value) { return String(value).replace(/["\\]/g, '\\$&'); } },
     navigator: {}, setTimeout: scheduleTimeout, clearTimeout: cancelTimeout,
@@ -187,6 +264,117 @@ vm.runInNewContext(source, sandbox);
 const runtime = sandbox.__runtime;
 assert.equal(runtime.getChatPulseEnabled(), true);
 assert.equal(runtime.getStatusTracking(), true);
+assert.equal(runtime.isUnreadChatTotalAnnouncementEnabled(), true);
+
+const chatsTile = new Element();
+const chatsButton = new Element();
+chatsButton.setAttribute('aria-label', 'Chats');
+const unreadTotalWrapper = new Element();
+const unreadTotalStatus = new Element();
+const unreadTotalText = new Element();
+unreadTotalStatus.setAttribute('role', 'status');
+unreadTotalStatus.textContent = '12';
+unreadTotalText.textContent = '12';
+unreadTotalStatus.appendChild(unreadTotalText);
+unreadTotalWrapper.appendChild(unreadTotalStatus);
+chatsTile.appendChild(chatsButton);
+chatsTile.appendChild(unreadTotalWrapper);
+chatsTile.queryAllHandler = selector =>
+    selector === '[role="status"], [aria-live]' ? [unreadTotalStatus] : [];
+selectorResults.set(runtime.getNavSelector('navChats'), chatsButton);
+
+const conversationFocus = new Element();
+document.activeElement = conversationFocus;
+assert.equal(runtime.isUnreadChatTotalStatus(unreadTotalStatus), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(unreadTotalStatus.getAttribute('aria-live'), null);
+assert.equal(unreadTotalStatus.getAttribute('aria-hidden'), null);
+assert.equal(unreadTotalStatus.textContent, '12');
+assert.equal(document.activeElement, conversationFocus);
+
+unreadTotalStatus.textContent = '11';
+runtime.refreshUnreadChatTotal();
+assert.equal(unreadTotalStatus.getAttribute('aria-live'), null);
+assert.equal(document.activeElement, conversationFocus);
+
+const replacementUnreadTotalStatus = new Element();
+replacementUnreadTotalStatus.setAttribute('role', 'status');
+replacementUnreadTotalStatus.setAttribute('aria-live', 'assertive');
+replacementUnreadTotalStatus.textContent = '10';
+unreadTotalWrapper.appendChild(replacementUnreadTotalStatus);
+chatsTile.queryAllHandler = selector =>
+    selector === '[role="status"], [aria-live]' ? [replacementUnreadTotalStatus] : [];
+runtime.refreshUnreadChatTotal();
+assert.equal(unreadTotalStatus.getAttribute('aria-live'), null);
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-live'), 'assertive');
+assert.equal(document.activeElement, conversationFocus);
+
+assert.equal(runtime.setUnreadChatTotalAnnouncement(false), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-live'), 'off');
+assert.equal(replacementUnreadTotalStatus.getAttribute('role'), null);
+assert.equal(replacementUnreadTotalStatus.textContent, '10');
+assert.equal(document.activeElement, conversationFocus);
+
+assert.equal(runtime.setUnreadChatTotalAnnouncement(true), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-live'), 'assertive');
+assert.equal(replacementUnreadTotalStatus.getAttribute('role'), 'status');
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-hidden'), null);
+assert.equal(document.activeElement, conversationFocus);
+
+const nestedUnreadTotalStatus = new Element();
+nestedUnreadTotalStatus.setAttribute('role', 'status');
+nestedUnreadTotalStatus.textContent = '9';
+chatsButton.appendChild(nestedUnreadTotalStatus);
+chatsTile.queryAllHandler = selector =>
+    selector === '[role="status"], [aria-live]'
+        ? [replacementUnreadTotalStatus, nestedUnreadTotalStatus]
+        : [];
+assert.equal(runtime.setUnreadChatTotalAnnouncement(false), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(nestedUnreadTotalStatus.getAttribute('aria-live'), 'off');
+assert.equal(nestedUnreadTotalStatus.getAttribute('role'), null);
+assert.equal(nestedUnreadTotalStatus.textContent, '9');
+assert.equal(runtime.setUnreadChatTotalAnnouncement(true), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(nestedUnreadTotalStatus.getAttribute('aria-live'), null);
+assert.equal(nestedUnreadTotalStatus.getAttribute('role'), 'status');
+
+const unrelatedStatus = new Element();
+unrelatedStatus.setAttribute('role', 'status');
+unrelatedStatus.textContent = '7';
+const nonNumericTileStatus = new Element();
+nonNumericTileStatus.setAttribute('role', 'status');
+nonNumericTileStatus.textContent = 'Online';
+chatsTile.queryAllHandler = selector =>
+    selector === '[role="status"], [aria-live]'
+        ? [replacementUnreadTotalStatus, nonNumericTileStatus]
+        : [];
+assert.equal(runtime.setUnreadChatTotalAnnouncement(false), true);
+runtime.refreshUnreadChatTotal();
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-live'), 'off');
+assert.equal(replacementUnreadTotalStatus.getAttribute('role'), null);
+assert.equal(nonNumericTileStatus.getAttribute('aria-live'), null);
+assert.equal(nonNumericTileStatus.getAttribute('role'), 'status');
+assert.equal(unrelatedStatus.getAttribute('aria-live'), null);
+assert.equal(unrelatedStatus.getAttribute('role'), 'status');
+
+const latestUnreadTotalStatus = new Element();
+latestUnreadTotalStatus.setAttribute('role', 'status');
+latestUnreadTotalStatus.setAttribute('aria-live', 'polite');
+latestUnreadTotalStatus.textContent = '6';
+chatsTile.queryAllHandler = selector =>
+    selector === '[role="status"], [aria-live]'
+        ? [latestUnreadTotalStatus, nonNumericTileStatus]
+        : [];
+runtime.refreshUnreadChatTotal();
+assert.equal(replacementUnreadTotalStatus.getAttribute('aria-live'), 'assertive');
+assert.equal(replacementUnreadTotalStatus.getAttribute('role'), 'status');
+assert.equal(latestUnreadTotalStatus.getAttribute('aria-live'), 'off');
+assert.equal(latestUnreadTotalStatus.getAttribute('role'), null);
+assert.equal(messageLog.getAttribute('aria-live'), 'polite');
+assert.equal(document.activeElement, conversationFocus);
 
 const messageMain = new Element();
 const messageContainerForGrid = new Element();
@@ -195,6 +383,11 @@ messageViewport.setAttribute('data-tab', '1');
 const messageRow = new Element();
 messageRow.setAttribute('role', 'row');
 const messageCell = new Element();
+messageCell.nodeType = 1;
+const messageIdentity = new Element();
+messageIdentity.setAttribute('data-testid', 'conv-msg-out');
+messageIdentity.setAttribute('data-id', 'true_chat_0123456789ABCDEF0123456789ABCDEF');
+messageIdentity.contains = node => node === messageCell;
 messageCell.setAttribute('data-focusable-list-item', 'true');
 messageCell.setAttribute('aria-label', 'Member One Hello 10:00');
 const secondMessageRow = new Element();
@@ -212,6 +405,7 @@ secondMessageRow.appendChild(secondMessageCell);
 messageViewport.appendChild(messageRow);
 messageViewport.appendChild(secondMessageRow);
 messageContainerForGrid.appendChild(messageViewport);
+messageMain.appendChild(messageContainerForGrid);
 messageMain.queryHandler = selector =>
     selector.includes(runtime.SELECTORS.conversationMessages) ? messageContainerForGrid : null;
 messageViewport.queryHandler = selector =>
@@ -230,6 +424,8 @@ messageCell.closestHandler = selector => {
     if (selector === '[role="gridcell"]') return messageCell;
     if (selector === '[role="grid"]') return messageViewport;
     if (selector === runtime.SELECTORS.conversationMessages) return messageContainerForGrid;
+    if (selector === runtime.SELECTORS.main) return messageMain;
+    if (selector === '[data-testid^="conv-msg-"][data-id]') return messageIdentity;
     return null;
 };
 secondMessageCell.closestHandler = selector => {
@@ -237,6 +433,7 @@ secondMessageCell.closestHandler = selector => {
     if (selector === '[role="gridcell"]') return secondMessageCell;
     if (selector === '[role="grid"]') return messageViewport;
     if (selector === runtime.SELECTORS.conversationMessages) return messageContainerForGrid;
+    if (selector === runtime.SELECTORS.main) return messageMain;
     return null;
 };
 selectorResults.set(runtime.SELECTORS.main, messageMain);
@@ -259,6 +456,7 @@ function gridKey(target, key, overrides = {}) {
         prevented: false, stopped: false,
         preventDefault() { this.prevented = true; },
         stopPropagation() { this.stopped = true; },
+        stopImmediatePropagation() { this.stopped = true; this.immediateStopped = true; },
         ...overrides
     };
 }
@@ -281,6 +479,739 @@ const nestedMessageControl = new Element();
 nestedMessageControl.closestHandler = selector => selector === '[role="gridcell"]' ? secondMessageCell : null;
 assert.equal(runtime.handleMessageGridKeydown(gridKey(nestedMessageControl, 'ArrowUp')), false);
 assert.equal(runtime.handleMessageGridKeydown(gridKey(secondMessageCell, 'ArrowUp', { ctrlKey: true })), false);
+
+document.activeElement = messageCell;
+const releasedMessageShiftEnter = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(releasedMessageShiftEnter), false);
+assert.equal(releasedMessageShiftEnter.prevented, false);
+assert.equal(releasedMessageShiftEnter.stopped, false);
+assert.equal(document.activeElement, messageCell,
+    'Shift+Enter is unassigned and does not move message focus');
+for (const nativeContextKey of [
+    gridKey(messageCell, 'F10', { shiftKey: true }),
+    gridKey(messageCell, 'ContextMenu')
+]) {
+    assert.equal(runtime.handleMessageGridKeydown(nativeContextKey), false);
+    assert.equal(nativeContextKey.prevented, false);
+    assert.equal(nativeContextKey.stopped, false);
+}
+document.activeElement = nestedMessageControl;
+const nestedReleasedShiftEnter = gridKey(nestedMessageControl, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(nestedReleasedShiftEnter), false);
+assert.equal(nestedReleasedShiftEnter.prevented, false);
+assert.equal(nestedReleasedShiftEnter.stopped, false);
+document.activeElement = messageCell;
+
+const readMoreContainer = new Element();
+readMoreContainer.setAttribute('data-testid', 'msg-container');
+const readMoreButton = new Element();
+readMoreButton.setAttribute('role', 'button');
+readMoreButton.setAttribute('tabindex', '0');
+readMoreButton.setAttribute('data-testid', 'caption-read-more-button');
+readMoreButton.textContent = 'Tampilkan selengkapnya';
+const readMoreBody = new Element();
+const collapsedReadMoreText = 'Ringkasan pesan yang masih terpotong…';
+const expandedReadMoreText = 'Ringkasan pesan yang sekarang terbaca lengkap sampai selesai.';
+readMoreBody.textContent = collapsedReadMoreText;
+readMoreContainer.appendChild(readMoreBody);
+readMoreContainer.appendChild(readMoreButton);
+messageCell.appendChild(readMoreContainer);
+const readMoreClosest = selector => {
+    if (selector === runtime.SELECTORS.voiceMessageContainer) return readMoreContainer;
+    if (selector === '.focusable-list-item') return messageCell;
+    return null;
+};
+readMoreButton.closestHandler = readMoreClosest;
+readMoreBody.closestHandler = readMoreClosest;
+let readMorePresent = true;
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messageReadMoreButton) {
+        return readMorePresent ? [readMoreButton] : [];
+    }
+    if (selector === runtime.SELECTORS.messagePrimaryText) return [readMoreBody];
+    return [];
+};
+messageCell.setAttribute(
+    'aria-label',
+    `Member One ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`
+);
+readMoreButton.clickHandler = () => {
+    readMorePresent = false;
+    readMoreBody.textContent = expandedReadMoreText;
+};
+const readMoreLiveTextBefore = liveRegion.textContent;
+const readMoreLogCountBefore = messageLog.children.length;
+
+let readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+assert.equal(readMoreKey.prevented, true);
+assert.equal(readMoreKey.immediateStopped, true);
+assert.equal(readMoreButton.clickCalls, 1);
+assert.equal(document.activeElement, messageCell,
+    'Shift+Enter expands the focused message without moving focus');
+assert.equal(
+    messageCell.getAttribute('aria-label'),
+    `Member One ${expandedReadMoreText} 10:00`,
+    'the focused message name uses the complete expanded text and drops the native control name'
+);
+assert.equal(liveRegion.textContent, readMoreLiveTextBefore,
+    'expansion does not duplicate the focused name through the status region');
+assert.equal(messageLog.children.length, readMoreLogCountBefore,
+    'expansion does not become a passive message-log announcement');
+
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true, repeat: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+assert.equal(readMoreKey.prevented, true);
+assert.equal(readMoreButton.clickCalls, 1,
+    'a held Shift+Enter remains consumed after the expander disappears');
+runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true, repeat: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false,
+    'a repeat without a matching held activation remains native');
+readMorePresent = true;
+
+for (const rejectedReadMoreKey of [
+    gridKey(messageCell, 'Enter', { shiftKey: true, altKey: true }),
+    gridKey(messageCell, 'Enter', { shiftKey: true, ctrlKey: true }),
+    gridKey(messageCell, 'Enter', { shiftKey: true, metaKey: true }),
+    gridKey(messageCell, 'Enter', { shiftKey: true, isComposing: true }),
+    gridKey(messageCell, 'Enter', { shiftKey: true, defaultPrevented: true }),
+    gridKey(messageCell, 'Enter', {
+        shiftKey: true,
+        getModifierState(name) { return name === 'AltGraph'; }
+    })
+]) {
+    assert.equal(runtime.handleMessageGridKeydown(rejectedReadMoreKey), false);
+    assert.equal(rejectedReadMoreKey.prevented, false);
+    assert.equal(readMoreButton.clickCalls, 1);
+}
+
+document.activeElement = nestedMessageControl;
+readMoreKey = gridKey(nestedMessageControl, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+assert.equal(readMoreButton.clickCalls, 1,
+    'a nested focused control cannot expand its containing message');
+document.activeElement = messageCell;
+
+const secondReadMoreButton = new Element();
+secondReadMoreButton.setAttribute('role', 'button');
+secondReadMoreButton.setAttribute('tabindex', '0');
+secondReadMoreButton.setAttribute('data-testid', 'caption-read-more-button');
+secondReadMoreButton.closestHandler = readMoreClosest;
+readMoreContainer.appendChild(secondReadMoreButton);
+messageCell.queryAllHandler = selector =>
+    selector === runtime.SELECTORS.messageReadMoreButton
+        ? [readMoreButton, secondReadMoreButton]
+        : selector === runtime.SELECTORS.messagePrimaryText ? [readMoreBody] : [];
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+assert.equal(readMoreButton.clickCalls, 1,
+    'multiple expansion candidates fail closed');
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messageReadMoreButton) {
+        return readMorePresent ? [readMoreButton] : [];
+    }
+    if (selector === runtime.SELECTORS.messagePrimaryText) return [readMoreBody];
+    return [];
+};
+
+for (const [attribute, value] of [
+    ['aria-disabled', 'true'],
+    ['aria-hidden', 'true'],
+    ['tabindex', '-1']
+]) {
+    const previous = readMoreButton.getAttribute(attribute);
+    readMoreButton.setAttribute(attribute, value);
+    readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+    assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+    assert.equal(readMoreKey.prevented, false);
+    if (previous === null) readMoreButton.removeAttribute(attribute);
+    else readMoreButton.setAttribute(attribute, previous);
+}
+readMoreButton.hidden = true;
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+readMoreButton.hidden = false;
+readMoreButton.disabled = true;
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+readMoreButton.disabled = false;
+readMoreButton.setAttribute('role', 'link');
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+readMoreButton.setAttribute('role', 'button');
+readMoreButton.setAttribute('aria-haspopup', 'menu');
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+readMoreButton.removeAttribute('aria-haspopup');
+
+const quotedReadMoreRoot = new Element();
+quotedReadMoreRoot.setAttribute('data-testid', 'quoted-message');
+readMoreButton.closestHandler = selector =>
+    selector === '[data-testid="quoted-message"]' ? quotedReadMoreRoot : readMoreClosest(selector);
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+assert.equal(readMoreButton.clickCalls, 1,
+    'a quoted-message expander is never activated');
+readMoreButton.closestHandler = readMoreClosest;
+
+const readMoreMenu = new Element();
+readMoreMenu.setAttribute('role', 'menu');
+selectorAllResults.set('[role="menu"], [role="listbox"]', [readMoreMenu]);
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), false);
+assert.equal(readMoreKey.prevented, false);
+selectorAllResults.delete('[role="menu"], [role="listbox"]');
+
+runtime.releaseOwnedAttribute(
+    messageCell,
+    'aria-label',
+    runtime.OWNERS.messageExpandedName
+);
+readMoreBody.textContent = collapsedReadMoreText;
+readMorePresent = true;
+messageCell.setAttribute(
+    'aria-label',
+    `Member One ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`
+);
+readMoreButton.clickHandler = () => {
+    readMorePresent = false;
+};
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+assert.equal(
+    messageCell.getAttribute('aria-label'),
+    `Member One ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`,
+    'the old label remains until asynchronous body hydration completes'
+);
+const asyncReadMoreObserver = MutationObserver.instances.at(-1);
+document.activeElement = secondMessageCell;
+readMoreBody.textContent = expandedReadMoreText;
+asyncReadMoreObserver.trigger([{ type: 'characterData', target: readMoreBody }]);
+assert.equal(
+    messageCell.getAttribute('aria-label'),
+    `Member One ${expandedReadMoreText} 10:00`,
+    'asynchronous expansion synchronizes the complete accessible name'
+);
+assert.equal(document.activeElement, secondMessageCell,
+    'asynchronous hydration updates the original message without stealing focus back');
+document.activeElement = messageCell;
+runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
+runtime.releaseOwnedAttribute(
+    messageCell,
+    'aria-label',
+    runtime.OWNERS.messageExpandedName
+);
+
+readMoreBody.textContent = collapsedReadMoreText;
+readMorePresent = true;
+messageCell.setAttribute(
+    'aria-label',
+    `Member One ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`
+);
+readMoreButton.clickHandler = () => {
+    readMorePresent = false;
+};
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+const hostTakeoverObserver = MutationObserver.instances.at(-1);
+const hostExpandedLabel = `Member One ${expandedReadMoreText} 10:00 host`;
+messageCell.setAttribute('aria-label', hostExpandedLabel);
+readMoreBody.textContent = expandedReadMoreText;
+hostTakeoverObserver.trigger([{ type: 'characterData', target: readMoreBody }]);
+assert.equal(messageCell.getAttribute('aria-label'), hostExpandedLabel,
+    'a WhatsApp-provided replacement name wins over the pending script refresh');
+runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
+
+readMoreBody.textContent = collapsedReadMoreText;
+readMorePresent = true;
+runtime.setPrivacy(true);
+assert.equal(runtime.setSenderDeviceAnnouncement(true), true);
+const privatePhone = '+62 812-3456-7890';
+messageCell.setAttribute(
+    'aria-label',
+    `${privatePhone} ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`
+);
+readMoreButton.clickHandler = () => {
+    readMorePresent = false;
+    readMoreBody.textContent = expandedReadMoreText;
+};
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+assert.match(messageCell.getAttribute('aria-label'), new RegExp(expandedReadMoreText));
+assert.equal(messageCell.getAttribute('aria-label').includes(privatePhone), false,
+    'the expanded accessible name remains masked while privacy mode is enabled');
+assert.equal(
+    (messageCell.getAttribute('aria-label').match(/Sent from Android/g) || []).length,
+    1,
+    'sender-device decoration is added exactly once after expansion'
+);
+runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
+assert.equal(runtime.setSenderDeviceAnnouncement(false), true);
+assert.equal(runtime.isSenderDeviceAnnouncementEnabled(), false);
+runtime.cleanElementAttributes(messageCell);
+assert.equal(messageCell.getAttribute('aria-label').includes('Sent from Android'), false,
+    'disabling sender-device announcements removes the suffix after expansion');
+assert.equal(messageCell.getAttribute('aria-label').includes(privatePhone), false,
+    'privacy masking remains reversible independently of the device suffix');
+runtime.setPrivacy(false);
+runtime.restorePrivacyAttributes();
+assert.equal(messageCell.getAttribute('aria-label').includes(privatePhone), true,
+    'disabling privacy restores the raw identity in the complete expanded name');
+assert.match(messageCell.getAttribute('aria-label'), new RegExp(expandedReadMoreText));
+runtime.releaseOwnedAttribute(
+    messageCell,
+    'aria-label',
+    runtime.OWNERS.messageExpandedName
+);
+
+const nestedReadMoreLink = new Element();
+nestedReadMoreLink.setAttribute('role', 'link');
+nestedReadMoreLink.closestHandler = readMoreClosest;
+const makeTextNode = value => ({ nodeType: 3, nodeValue: value, parentElement: null });
+const nestedPrefix = makeTextNode('Visit ');
+const nestedLinkText = makeTextNode('infiartt.com');
+nestedReadMoreLink.appendChild(nestedLinkText);
+const nestedEmojiSpace = makeTextNode(' ');
+const nestedEmoji = new Element();
+nestedEmoji.tagName = 'IMG';
+const nestedEmojiText = '\u{1F680}';
+nestedEmoji.setAttribute('alt', nestedEmojiText);
+const nestedTail = makeTextNode(' for detailsâ€¦ ');
+readMoreContainer.removeChild(readMoreButton);
+readMoreBody.textContent = '';
+readMoreBody.children = [];
+readMoreBody.appendChild(nestedPrefix);
+readMoreBody.appendChild(nestedReadMoreLink);
+readMoreBody.appendChild(nestedEmojiSpace);
+readMoreBody.appendChild(nestedEmoji);
+readMoreBody.appendChild(nestedTail);
+readMoreBody.appendChild(readMoreButton);
+const nestedCollapsedText = `Visit infiartt.com ${nestedEmojiText} for detailsâ€¦`;
+const nestedExpandedText =
+    `Visit infiartt.com ${nestedEmojiText} for details and the complete release notes.`;
+readMorePresent = true;
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messageReadMoreButton) {
+        return readMorePresent ? [readMoreButton] : [];
+    }
+    if (selector === runtime.SELECTORS.messagePrimaryText) {
+        return [readMoreBody, nestedReadMoreLink];
+    }
+    return [];
+};
+messageCell.setAttribute(
+    'aria-label',
+    `Member One ${nestedCollapsedText} Tampilkan selengkapnya 10:00`
+);
+readMoreButton.clickHandler = () => {
+    readMorePresent = false;
+    readMoreBody.removeChild(readMoreButton);
+    readMoreBody.children = [];
+    readMoreBody.appendChild(makeTextNode(nestedExpandedText));
+};
+readMoreKey = gridKey(messageCell, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(readMoreKey), true);
+assert.equal(
+    messageCell.getAttribute('aria-label'),
+    `Member One ${nestedExpandedText} 10:00`,
+    'nested links and image alternatives remain while a nested Read more control is excluded'
+);
+runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
+runtime.releaseOwnedAttribute(
+    messageCell,
+    'aria-label',
+    runtime.OWNERS.messageExpandedName
+);
+readMoreBody.children = [];
+readMoreBody.textContent = collapsedReadMoreText;
+readMoreContainer.appendChild(readMoreButton);
+readMoreButton.closestHandler = readMoreClosest;
+readMorePresent = true;
+messageCell.setAttribute('aria-label', 'Member One Hello 10:00');
+
+const mentionControl = new Element();
+mentionControl.setAttribute('role', 'button');
+mentionControl.setAttribute('tabindex', '0');
+const mentionText = new Element();
+mentionText.setAttribute('data-testid', 'select-all selectable-text');
+mentionText.setAttribute('data-plain-text', '@~Member Seven');
+mentionText.setAttribute('data-app-text-template', 'opaque@lid');
+mentionText.textContent = '@~Member Seven';
+mentionText.closestHandler = selector => {
+    if (selector === '[role="button"][tabindex]') return mentionControl;
+    if (selector.includes('.focusable-list-item')) return messageCell;
+    return null;
+};
+mentionControl.appendChild(mentionText);
+messageCell.appendChild(mentionControl);
+const previousMessageCellQueryAll = messageCell.queryAllHandler;
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messageMention) return [mentionText];
+    return previousMessageCellQueryAll ? previousMessageCellQueryAll(selector) : [];
+};
+runtime.setPrivacy(false);
+runtime.refreshMessageMentionNames(messageCell);
+assert.equal(
+    mentionControl.getAttribute('aria-label'),
+    '@~Member Seven',
+    'the focusable mention control name contains its exact visible @ label'
+);
+mentionText.textContent = '@~Member Updated';
+mentionText.setAttribute('data-plain-text', '@~Member Updated');
+runtime.handleAttributeMutation({ target: mentionText, attributeName: 'data-plain-text' });
+assert.equal(
+    mentionControl.getAttribute('aria-label'),
+    '@~Member Updated',
+    'an observed mention attribute mutation refreshes the focusable control name immediately'
+);
+mentionText.textContent = '@~+62 815-5555-6666';
+mentionText.setAttribute('data-plain-text', '@~+62 815-5555-6666');
+runtime.setPrivacy(true);
+runtime.refreshMessageMentionNames(messageCell);
+assert.equal(
+    mentionControl.getAttribute('aria-label'),
+    '@Participant',
+    'privacy masks a phone-only focusable mention without losing the @ marker'
+);
+runtime.setPrivacy(false);
+runtime.refreshMessageMentionNames(messageCell);
+assert.equal(mentionControl.getAttribute('aria-label'), '@~+62 815-5555-6666');
+runtime.setPrivacy(true);
+
+const voiceMessageContainer = new Element();
+voiceMessageContainer.setAttribute('data-testid', 'msg-container');
+const voiceIdentity = new Element();
+voiceIdentity.setAttribute('data-testid', 'ptt-status');
+const voicePlayerRoot = new Element();
+const voicePlayButton = new Element();
+voicePlayButton.setAttribute('type', 'button');
+voicePlayButton.setAttribute('tabindex', '0');
+voicePlayButton.setAttribute('aria-disabled', 'false');
+voicePlayButton.setAttribute('aria-label', 'Play voice message');
+const voiceProgress = new Element();
+voiceProgress.setAttribute('role', 'slider');
+voiceProgress.setAttribute('aria-valuemin', '0');
+voiceProgress.setAttribute('aria-valuemax', '58');
+voiceProgress.setAttribute('aria-valuenow', '0');
+const voiceSpeedButton = new Element();
+voiceSpeedButton.setAttribute('type', 'button');
+voiceSpeedButton.setAttribute('tabindex', '-1');
+voiceSpeedButton.setAttribute('aria-hidden', 'true');
+voicePlayerRoot.appendChild(voicePlayButton);
+voicePlayerRoot.appendChild(voiceProgress);
+voiceMessageContainer.appendChild(voicePlayerRoot);
+voiceMessageContainer.appendChild(voiceSpeedButton);
+voiceMessageContainer.appendChild(voiceIdentity);
+messageCell.appendChild(voiceMessageContainer);
+messageCell.queryHandler = selector =>
+    selector === runtime.SELECTORS.voiceMessageContainer ? voiceMessageContainer : null;
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [voiceIdentity];
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackProgress) return [voiceProgress];
+    if (selector === 'button') return [voicePlayButton, voiceSpeedButton];
+    return [];
+};
+voicePlayerRoot.queryAllHandler = selector => selector === 'button' ? [voicePlayButton] : [];
+for (const element of [voiceMessageContainer, voiceIdentity, voiceProgress, voicePlayButton, voiceSpeedButton]) {
+    element.closestHandler = () => null;
+}
+document.activeElement = messageCell;
+let playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.isVoiceMessageKeyboardPlaybackEnabled(), false);
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(voicePlayButton.clickCalls, 0);
+assert.equal(playbackKey.prevented, false);
+
+assert.equal(runtime.setVoiceMessageKeyboardPlayback(true), true);
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), true);
+assert.equal(voicePlayButton.clickCalls, 1);
+assert.equal(playbackKey.prevented, true);
+assert.equal(playbackKey.immediateStopped, true);
+assert.equal(document.activeElement, messageCell);
+
+playbackKey = gridKey(messageCell, ' ');
+voicePlayButton.setAttribute('aria-label', 'Jeda pesan suara');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), true);
+assert.equal(voicePlayButton.clickCalls, 2);
+assert.equal(voiceSpeedButton.clickCalls, 0);
+assert.equal(document.activeElement, messageCell);
+
+playbackKey = gridKey(messageCell, ' ', { repeat: true });
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), true);
+assert.equal(playbackKey.prevented, true);
+assert.equal(voicePlayButton.clickCalls, 2);
+
+for (const rejected of [
+    gridKey(messageCell, 'Enter', { ctrlKey: true }),
+    gridKey(messageCell, ' ', { isComposing: true }),
+    gridKey(messageCell, 'Enter', { defaultPrevented: true }),
+    gridKey(messageCell, 'Enter', { getModifierState(name) { return name === 'AltGraph'; } })
+]) {
+    assert.equal(runtime.handleMessageGridKeydown(rejected), false);
+    assert.equal(rejected.prevented, false);
+}
+
+document.activeElement = nestedMessageControl;
+assert.equal(runtime.handleMessageGridKeydown(gridKey(nestedMessageControl, 'Enter')), false);
+assert.equal(voicePlayButton.clickCalls, 2);
+document.activeElement = messageCell;
+
+const secondVoiceButton = new Element();
+secondVoiceButton.setAttribute('type', 'button');
+secondVoiceButton.setAttribute('tabindex', '0');
+secondVoiceButton.closestHandler = () => null;
+voicePlayerRoot.appendChild(secondVoiceButton);
+voicePlayerRoot.queryAllHandler = selector =>
+    selector === 'button' ? [voicePlayButton, secondVoiceButton] : [];
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+assert.equal(voicePlayButton.clickCalls, 2);
+voicePlayerRoot.queryAllHandler = selector => selector === 'button' ? [voicePlayButton] : [];
+
+voicePlayButton.setAttribute('aria-disabled', 'true');
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voicePlayButton.removeAttribute('aria-disabled');
+
+voicePlayButton.disabled = true;
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voicePlayButton.disabled = false;
+
+voicePlayButton.hidden = true;
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voicePlayButton.hidden = false;
+
+voicePlayButton.setAttribute('aria-hidden', 'true');
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voicePlayButton.removeAttribute('aria-hidden');
+
+messageCell.setAttribute('role', 'button');
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+messageCell.setAttribute('role', 'link');
+playbackKey = gridKey(messageCell, ' ');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+messageCell.setAttribute('role', 'gridcell');
+messageCell.setAttribute('aria-haspopup', 'menu');
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+messageCell.removeAttribute('aria-haspopup');
+
+voicePlayerRoot.queryAllHandler = selector => selector === 'button' ? [messageCell] : [];
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [voiceIdentity];
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackProgress) return [voiceProgress];
+    if (selector === 'button') return [messageCell];
+    return [];
+};
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voicePlayerRoot.queryAllHandler = selector => selector === 'button' ? [voicePlayButton] : [];
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [voiceIdentity];
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackProgress) return [voiceProgress];
+    if (selector === 'button') return [voicePlayButton, voiceSpeedButton];
+    return [];
+};
+
+const quotedVoiceRoot = new Element();
+quotedVoiceRoot.setAttribute('data-testid', 'quoted-message');
+voiceIdentity.closestHandler = selector => selector === '[data-testid="quoted-message"]'
+    ? new Element()
+    : null;
+const unrelatedPlayButton = new Element();
+unrelatedPlayButton.setAttribute('type', 'button');
+unrelatedPlayButton.setAttribute('tabindex', '0');
+unrelatedPlayButton.closestHandler = () => null;
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+assert.equal(unrelatedPlayButton.clickCalls, 0);
+voiceIdentity.closestHandler = () => null;
+
+voiceProgress.closestHandler = selector => selector === '[data-testid="quoted-message"]'
+    ? quotedVoiceRoot
+    : null;
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voiceProgress.closestHandler = () => null;
+
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [voiceIdentity];
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackProgress) return [];
+    if (selector === 'button') return [voicePlayButton, voiceSpeedButton];
+    return [];
+};
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [voiceIdentity];
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackProgress) return [voiceProgress];
+    if (selector === 'button') return [voicePlayButton, voiceSpeedButton];
+    return [];
+};
+
+const renderedMenu = new Element();
+renderedMenu.setAttribute('role', 'menu');
+selectorAllResults.set('[role="menu"], [role="listbox"]', [renderedMenu]);
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), false);
+assert.equal(playbackKey.prevented, false);
+selectorAllResults.delete('[role="menu"], [role="listbox"]');
+
+runtime.setAnnouncementReduction(false);
+runtime.applyMessageGridExperiment();
+document.activeElement = messageCell;
+playbackKey = gridKey(messageCell, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(playbackKey), true);
+assert.equal(voicePlayButton.clickCalls, 3);
+runtime.setAnnouncementReduction(true);
+runtime.applyMessageGridExperiment();
+
+const voiceControlClosest = selector =>
+    selector === '.focusable-list-item' ? messageCell : null;
+voicePlayButton.closestHandler = voiceControlClosest;
+voiceSpeedButton.closestHandler = voiceControlClosest;
+document.activeElement = voicePlayButton;
+let focusedPlaybackKey = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(focusedPlaybackKey), true);
+assert.equal(focusedPlaybackKey.prevented, true);
+assert.equal(focusedPlaybackKey.immediateStopped, true);
+assert.equal(voicePlayButton.clickCalls, 4);
+assert.equal(document.activeElement, voicePlayButton,
+    'Enter on the verified Play or Pause button preserves button focus');
+
+focusedPlaybackKey = gridKey(voicePlayButton, ' ');
+assert.equal(runtime.handleMessageGridKeydown(focusedPlaybackKey), false);
+assert.equal(focusedPlaybackKey.prevented, false);
+assert.equal(focusedPlaybackKey.stopped, false);
+assert.equal(voicePlayButton.clickCalls, 4,
+    'Space on the focused playback button remains native to WhatsApp');
+
+focusedPlaybackKey = gridKey(voicePlayButton, 'Enter', { repeat: true });
+assert.equal(runtime.handleMessageGridKeydown(focusedPlaybackKey), true);
+assert.equal(focusedPlaybackKey.prevented, true);
+assert.equal(voicePlayButton.clickCalls, 4,
+    'repeated Enter is consumed without repeatedly clicking playback');
+
+for (const rejectedFocusedPlaybackKey of [
+    gridKey(voicePlayButton, 'Enter', { altKey: true }),
+    gridKey(voicePlayButton, 'Enter', { ctrlKey: true }),
+    gridKey(voicePlayButton, 'Enter', { metaKey: true }),
+    gridKey(voicePlayButton, 'Enter', { shiftKey: true }),
+    gridKey(voicePlayButton, 'Enter', { isComposing: true }),
+    gridKey(voicePlayButton, 'Enter', { defaultPrevented: true }),
+    gridKey(voicePlayButton, 'Enter', {
+        getModifierState(name) { return name === 'AltGraph'; }
+    })
+]) {
+    assert.equal(runtime.handleMessageGridKeydown(rejectedFocusedPlaybackKey), false);
+    assert.equal(rejectedFocusedPlaybackKey.prevented, false);
+    assert.equal(voicePlayButton.clickCalls, 4);
+}
+
+document.activeElement = voiceSpeedButton;
+const mismatchedFocusedPlaybackKey = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(mismatchedFocusedPlaybackKey), false);
+assert.equal(mismatchedFocusedPlaybackKey.prevented, false,
+    'the event target cannot substitute for the actually focused control');
+assert.equal(voicePlayButton.clickCalls, 4);
+
+voicePlayerRoot.queryAllHandler = selector =>
+    selector === 'button' ? [voicePlayButton, secondVoiceButton] : [];
+document.activeElement = voicePlayButton;
+const ambiguousFocusedPlaybackKey = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(ambiguousFocusedPlaybackKey), false);
+assert.equal(ambiguousFocusedPlaybackKey.prevented, false);
+assert.equal(voicePlayButton.clickCalls, 4,
+    'an ambiguous player root never guesses which button controls playback');
+voicePlayerRoot.queryAllHandler = selector => selector === 'button' ? [voicePlayButton] : [];
+
+document.activeElement = voiceSpeedButton;
+const speedButtonEnter = gridKey(voiceSpeedButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(speedButtonEnter), false);
+assert.equal(speedButtonEnter.prevented, false);
+assert.equal(voiceSpeedButton.clickCalls, 0,
+    'Enter never substitutes the speed control for Play or Pause');
+assert.equal(voicePlayButton.clickCalls, 4);
+
+const otherVoiceControl = new Element();
+otherVoiceControl.setAttribute('type', 'button');
+otherVoiceControl.setAttribute('tabindex', '0');
+otherVoiceControl.closestHandler = voiceControlClosest;
+messageCell.appendChild(otherVoiceControl);
+document.activeElement = otherVoiceControl;
+const otherVoiceControlEnter = gridKey(otherVoiceControl, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(otherVoiceControlEnter), false);
+assert.equal(otherVoiceControlEnter.prevented, false);
+assert.equal(otherVoiceControl.clickCalls, 0,
+    'Enter leaves every other button inside a voice message untouched');
+assert.equal(voicePlayButton.clickCalls, 4);
+
+const quotedPlaybackButton = new Element();
+quotedPlaybackButton.setAttribute('type', 'button');
+quotedPlaybackButton.setAttribute('tabindex', '0');
+quotedPlaybackButton.closestHandler = selector => {
+    if (selector === '.focusable-list-item') return messageCell;
+    if (selector === '[data-testid="quoted-message"]') return quotedVoiceRoot;
+    return null;
+};
+quotedVoiceRoot.appendChild(quotedPlaybackButton);
+messageCell.appendChild(quotedVoiceRoot);
+document.activeElement = quotedPlaybackButton;
+const quotedPlaybackEnter = gridKey(quotedPlaybackButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(quotedPlaybackEnter), false);
+assert.equal(quotedPlaybackEnter.prevented, false);
+assert.equal(quotedPlaybackButton.clickCalls, 0,
+    'Enter never treats a quoted-message control as primary playback');
+assert.equal(voicePlayButton.clickCalls, 4);
+
+voicePlayButton.setAttribute('aria-disabled', 'true');
+document.activeElement = voicePlayButton;
+const disabledPlaybackEnter = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(disabledPlaybackEnter), false);
+assert.equal(disabledPlaybackEnter.prevented, false);
+assert.equal(voicePlayButton.clickCalls, 4);
+voicePlayButton.removeAttribute('aria-disabled');
+
+selectorAllResults.set('[role="menu"], [role="listbox"]', [renderedMenu]);
+const popupPlaybackEnter = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(popupPlaybackEnter), false);
+assert.equal(popupPlaybackEnter.prevented, false);
+assert.equal(voicePlayButton.clickCalls, 4);
+selectorAllResults.delete('[role="menu"], [role="listbox"]');
+
+runtime.setVoiceMessageKeyboardPlayback(false);
+const disabledSettingPlaybackEnter = gridKey(voicePlayButton, 'Enter');
+assert.equal(runtime.handleMessageGridKeydown(disabledSettingPlaybackEnter), false);
+assert.equal(disabledSettingPlaybackEnter.prevented, false);
+assert.equal(voicePlayButton.clickCalls, 4);
+document.activeElement = messageCell;
+
 const incompleteRow = new Element();
 incompleteRow.setAttribute('role', 'row');
 const mixedMetaSender = new Element();
@@ -1056,6 +1987,7 @@ runtime.setPrivacy(false);
 runtime.setPrivacy(true);
 const ariaLink = new Element();
 ariaLink.setAttribute('role', 'link');
+ariaLink.setAttribute('href', 'tel:+6281234567890');
 ariaLink.closestHandler = selector => {
     if (selector === 'div#main') return main;
     if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
@@ -1112,6 +2044,692 @@ const makeEvent = overrides => ({
     getModifierState() { return false; },
     ...overrides
 });
+
+function collectReaderElements(root, tagName, result = []) {
+    if (!root) return result;
+    if (root.tagName === tagName.toUpperCase()) result.push(root);
+    for (const child of root.children || []) collectReaderElements(child, tagName, result);
+    return result;
+}
+
+function collectReaderText(root) {
+    if (!root) return '';
+    if (root.nodeType === 3) return root.nodeValue || '';
+    return (root.children || []).length
+        ? root.children.map(collectReaderText).join('')
+        : root.textContent || '';
+}
+
+function createReaderWindow() {
+    const readerDocument = createReaderTestDocument();
+    const readerWindow = {
+        document: readerDocument,
+        initialDocument: readerDocument,
+        opener: {},
+        closed: false,
+        closeCalls: 0,
+        close() {
+            this.closeCalls++;
+            this.closed = true;
+        },
+        location: {
+            replacements: [],
+            replace(value) { this.replacements.push(value); }
+        }
+    };
+    return readerWindow;
+}
+
+const previousReaderQueryAll = messageCell.queryAllHandler;
+const readerMetadata = new Element('span');
+readerMetadata.setAttribute('class', 'copyable-text');
+readerMetadata.setAttribute('data-pre-plain-text', '[10:42, 8/24/2026] Member One: ');
+const readerBody = new Element('span');
+readerBody.setAttribute('data-testid', 'selectable-text');
+const readerLink = new Element('a');
+readerLink.setAttribute('href', 'https://example.com/docs');
+readerLink.appendChild(document.createTextNode('documentation'));
+readerBody.appendChild(document.createTextNode('Read the '));
+readerBody.appendChild(readerLink);
+readerBody.appendChild(document.createElement('br'));
+const readerEmoji = new Element('img');
+readerEmoji.setAttribute('alt', '\u{1F680}');
+readerBody.appendChild(readerEmoji);
+readerBody.appendChild(document.createTextNode('Complete message.'));
+readerMetadata.appendChild(readerBody);
+messageCell.appendChild(readerMetadata);
+for (const readerNode of [readerMetadata, readerBody, readerLink, readerEmoji]) {
+    readerNode.closestHandler = selector => {
+        if (selector === '.focusable-list-item') return messageCell;
+        if (selector === '[data-testid="quoted-message"]') return null;
+        return null;
+    };
+}
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messagePrimaryText) return [readerBody, readerLink];
+    if (selector === runtime.SELECTORS.messageTextMetadata) return [readerMetadata];
+    if (selector === runtime.SELECTORS.messageReadMoreButton ||
+        selector === runtime.SELECTORS.messageSentTime) return [];
+    return previousReaderQueryAll ? previousReaderQueryAll(selector) : [];
+};
+
+const openedReaderWindows = [];
+sandbox.window.open = (url, target) => {
+    const readerWindow = createReaderWindow();
+    readerWindow.openArgs = [url, target];
+    openedReaderWindows.push(readerWindow);
+    return readerWindow;
+};
+selectorResults.set(runtime.SELECTORS.main, messageMain);
+runtime.applyMessageGridExperiment();
+document.activeElement = messageCell;
+let cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+assert.ok(runtime.getFocusedMessageReaderSource(cleanReaderEvent),
+    'the clean reader recognizes the DOM-focused primary message');
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(cleanReaderEvent.immediateStopped, true);
+assert.equal(openedReaderWindows.length, 1);
+assert.deepEqual(openedReaderWindows[0].openArgs, ['about:blank', '_blank']);
+assert.equal(openedReaderWindows[0].opener, null, 'the clean reader immediately clears opener');
+assert.equal(openedReaderWindows[0].location.replacements.length, 0,
+    'the clean reader keeps its initial script-owned document');
+let finalReaderDocument = openedReaderWindows[0].document;
+assert.equal(finalReaderDocument, openedReaderWindows[0].initialDocument,
+    'the final content retains the document that owns the Escape handler');
+assert.equal(finalReaderDocument.documentElement.getAttribute('lang'), 'en');
+assert.equal(finalReaderDocument.title, 'Message - WhatsApp Web Plus');
+assert.equal(collectReaderElements(finalReaderDocument.body, 'main').length, 1);
+assert.equal(collectReaderElements(finalReaderDocument.body, 'h1').length, 1);
+assert.equal(collectReaderElements(finalReaderDocument.body, 'h1')[0].textContent, 'Message');
+assert.equal(collectReaderElements(finalReaderDocument.body, 'article').length, 1);
+const cleanReaderLinks = collectReaderElements(finalReaderDocument.body, 'a');
+assert.equal(cleanReaderLinks.length, 1);
+assert.equal(cleanReaderLinks[0].getAttribute('href'), 'https://example.com/docs');
+assert.equal(cleanReaderLinks[0].getAttribute('target'), null,
+    'message links navigate in the existing clean-reader tab');
+assert.equal(cleanReaderLinks[0].getAttribute('referrerpolicy'), 'no-referrer');
+assert.equal(collectReaderElements(finalReaderDocument.body, 'time').length, 0,
+    'localized WhatsApp timestamps are not mislabeled as machine-readable time values');
+const cleanReaderArticle = collectReaderElements(finalReaderDocument.body, 'article')[0];
+assert.equal(cleanReaderArticle.getAttribute('aria-labelledby'), 'message-reader-heading');
+const cleanReaderBody = collectReaderElements(finalReaderDocument.body, 'div')
+    .find(element => element.getAttribute('class') === 'message-reader-body');
+assert.equal(cleanReaderBody.getAttribute('dir'), 'auto');
+assert.equal(cleanReaderArticle.getAttribute('dir'), null,
+    'message direction does not leak into the localized sent-time label');
+assert.match(collectReaderText(finalReaderDocument.body), /Read the documentation/);
+assert.match(collectReaderText(finalReaderDocument.body), /10:42, 8\/24\/2026/);
+assert.match(collectReaderText(finalReaderDocument.body), /\u{1F680}/u);
+const cleanReaderCloseButtons = collectReaderElements(finalReaderDocument.body, 'button');
+assert.equal(cleanReaderCloseButtons.length, 1);
+assert.equal(cleanReaderCloseButtons[0].getAttribute('type'), 'button');
+assert.equal(cleanReaderCloseButtons[0].textContent, 'Close reader');
+const cleanReaderMain = collectReaderElements(finalReaderDocument.body, 'main')[0];
+assert.deepEqual(cleanReaderMain.children.map(element => element.tagName),
+    ['H1', 'DIV', 'BUTTON'],
+    'the Close reader button is the last item after the message content');
+assert.equal(cleanReaderMain.children.at(-1), cleanReaderCloseButtons[0]);
+cleanReaderCloseButtons[0].click();
+assert.equal(openedReaderWindows[0].closeCalls, 1,
+    'the native close button closes the script-opened reader');
+assert.equal(runtime.getSafeMessageReaderUrl('javascript:alert(1)'), null);
+assert.equal(runtime.getSafeMessageReaderUrl('data:text/html,test'), null);
+assert.equal(runtime.getSafeMessageReaderUrl('https://safe.example/path').protocol, 'https:');
+
+const imageMetadata = new Element('span');
+imageMetadata.setAttribute('class', 'copyable-text');
+imageMetadata.setAttribute('data-pre-plain-text', '[21:25, 8/24/2026] Member Two: ');
+const duplicateMediaImage = new Element('img');
+duplicateMediaImage.setAttribute('alt', 'DUPLICATE FULL IMAGE CAPTION');
+const imageThumbButton = new Element('button');
+imageThumbButton.setAttribute('type', 'button');
+imageThumbButton.setAttribute('role', 'button');
+imageThumbButton.textContent = 'Open image';
+const imageCaption = new Element('span');
+imageCaption.setAttribute('data-testid', 'image-caption selectable-text');
+const captionEmoji = new Element('img');
+captionEmoji.setAttribute('alt', '\u{1F4F7}');
+const captionLink = new Element('a');
+captionLink.setAttribute('href', 'https://example.com/image-offer');
+captionLink.appendChild(document.createTextNode('offer details'));
+const captionList = new Element('ul');
+const captionListItemOne = new Element('li');
+captionListItemOne.appendChild(document.createTextNode('First package'));
+const captionListItemTwo = new Element('li');
+const captionNestedText = new Element('strong');
+captionNestedText.setAttribute('data-testid', 'selectable-text');
+captionNestedText.appendChild(document.createTextNode('Second package'));
+captionListItemTwo.appendChild(captionNestedText);
+captionList.appendChild(captionListItemOne);
+captionList.appendChild(captionListItemTwo);
+const hiddenCaptionDuplicate = new Element('span');
+hiddenCaptionDuplicate.hidden = true;
+hiddenCaptionDuplicate.appendChild(document.createTextNode('HIDDEN CAPTION DUPLICATE'));
+imageCaption.appendChild(document.createTextNode('Image offer '));
+imageCaption.appendChild(captionEmoji);
+imageCaption.appendChild(document.createTextNode(' - '));
+imageCaption.appendChild(captionLink);
+imageCaption.appendChild(captionList);
+imageCaption.appendChild(hiddenCaptionDuplicate);
+const siblingFileName = new Element('span');
+siblingFileName.setAttribute('data-testid', 'selectable-text');
+siblingFileName.appendChild(document.createTextNode('MEDIA-FILE-NAME.jpg'));
+const quotedCaption = new Element('span');
+quotedCaption.setAttribute('data-testid', 'selectable-text');
+quotedCaption.appendChild(document.createTextNode('QUOTED MESSAGE TEXT'));
+const quotedCaptionWrapper = new Element('div');
+quotedCaptionWrapper.setAttribute('data-testid', 'quoted-message');
+quotedCaptionWrapper.appendChild(quotedCaption);
+imageMetadata.appendChild(duplicateMediaImage);
+imageMetadata.appendChild(imageThumbButton);
+imageMetadata.appendChild(imageCaption);
+imageMetadata.appendChild(siblingFileName);
+imageMetadata.appendChild(quotedCaptionWrapper);
+messageCell.appendChild(imageMetadata);
+
+for (const imageNode of [
+    imageMetadata, duplicateMediaImage, imageThumbButton, imageCaption, captionEmoji,
+    captionLink, captionList, captionListItemOne, captionListItemTwo,
+    captionNestedText, hiddenCaptionDuplicate, siblingFileName, quotedCaptionWrapper
+]) {
+    imageNode.closestHandler = selector => {
+        if (selector === '.focusable-list-item') return messageCell;
+        if (selector === '[data-testid="quoted-message"]') return null;
+        return null;
+    };
+}
+quotedCaption.closestHandler = selector => {
+    if (selector === '.focusable-list-item') return messageCell;
+    if (selector === '[data-testid="quoted-message"]') return quotedCaptionWrapper;
+    return null;
+};
+
+const normalReaderQueryAll = messageCell.queryAllHandler;
+let mediaCaptionCandidates = [imageCaption];
+let messageTextMetadataCandidates = [imageMetadata];
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messageMediaCaption) return mediaCaptionCandidates;
+    if (selector === runtime.SELECTORS.messagePrimaryText) {
+        return [captionNestedText, siblingFileName, quotedCaption];
+    }
+    if (selector === runtime.SELECTORS.messageTextMetadata) return messageTextMetadataCandidates;
+    if (selector === runtime.SELECTORS.messageReadMoreButton ||
+        selector === runtime.SELECTORS.messageSentTime) return [];
+    return [];
+};
+
+assert.match(runtime.SELECTORS.messageMediaCaption,
+    /\[data-testid~="image-caption"\]/,
+    'image captions are matched as a tokenized WhatsApp data-testid value');
+assert.match(runtime.SELECTORS.messageMediaCaption,
+    /\[data-testid~="video-caption"\]/,
+    'video captions are matched as a tokenized WhatsApp data-testid value');
+assert.match(runtime.SELECTORS.messageMediaCaption,
+    /,\s*\[data-testid="msg-container"\]\s+\[data-testid~="document-caption"\]\s*$/,
+    'document captions are matched without a data-pre-plain-text ancestor');
+const imageSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+assert.ok(imageSnapshot, 'a WhatsApp image-caption token produces a readable snapshot');
+assert.equal(imageSnapshot.sentAt, '21:25, 8/24/2026');
+const imageSnapshotText = imageSnapshot.runs.map(run => run.text || '').join('');
+assert.match(imageSnapshotText, /Image offer/);
+assert.match(imageSnapshotText, /\u{1F4F7}/u);
+assert.match(imageSnapshotText, /offer details/);
+assert.match(imageSnapshotText, /First package/);
+assert.match(imageSnapshotText, /Second package/);
+assert.doesNotMatch(imageSnapshotText, /DUPLICATE FULL IMAGE CAPTION/);
+assert.doesNotMatch(imageSnapshotText, /Open image/);
+assert.doesNotMatch(imageSnapshotText, /MEDIA-FILE-NAME/);
+assert.doesNotMatch(imageSnapshotText, /QUOTED MESSAGE/);
+assert.doesNotMatch(imageSnapshotText, /HIDDEN CAPTION DUPLICATE/);
+assert.equal(imageSnapshot.runs.filter(run => run.type === 'listStart').length, 1);
+assert.equal(imageSnapshot.runs.filter(run => run.type === 'listItemStart').length, 2);
+
+const ambiguousImageCaption = new Element('span');
+ambiguousImageCaption.setAttribute('data-testid', 'image-caption selectable-text');
+ambiguousImageCaption.appendChild(document.createTextNode('A different caption'));
+ambiguousImageCaption.closestHandler = selector =>
+    selector === '.focusable-list-item' ? messageCell : null;
+imageMetadata.appendChild(ambiguousImageCaption);
+mediaCaptionCandidates = [imageCaption, ambiguousImageCaption];
+assert.equal(runtime.getMessageReaderSnapshot(messageCell), null,
+    'multiple primary image-caption roots fail closed instead of mixing messages');
+mediaCaptionCandidates = [imageCaption];
+
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+const imageReaderWindow = openedReaderWindows.at(-1);
+const imageReaderDocument = imageReaderWindow.document;
+assert.equal(imageReaderDocument, imageReaderWindow.initialDocument,
+    'image captions use the same reader document from opening through completion');
+assert.equal(collectReaderElements(imageReaderDocument.body, 'ul').length, 1,
+    'image-caption lists retain native list semantics');
+assert.equal(collectReaderElements(imageReaderDocument.body, 'li').length, 2);
+assert.equal(collectReaderElements(imageReaderDocument.body, 'a').length, 1);
+assert.equal((collectReaderText(imageReaderDocument.body).match(/Image offer/g) || []).length, 1,
+    'the media alternative does not duplicate the authored image caption');
+assert.equal(imageReaderDocument.eventListeners.get('keydown').length, 1,
+    'Escape remains installed on the retained clean-reader document');
+
+const videoCaption = new Element('span');
+videoCaption.setAttribute('data-testid', 'video-caption selectable-text');
+const videoCaptionEmoji = new Element('img');
+videoCaptionEmoji.setAttribute('alt', '\u{1F3A5}');
+videoCaptionEmoji.setAttribute('data-testid', 'selectable-text');
+videoCaption.appendChild(document.createTextNode('Video offer '));
+videoCaption.appendChild(videoCaptionEmoji);
+videoCaption.appendChild(document.createTextNode(' with a readable caption.'));
+videoCaption.closestHandler = selector =>
+    selector === '.focusable-list-item' ? messageCell : null;
+videoCaptionEmoji.closestHandler = videoCaption.closestHandler;
+imageMetadata.appendChild(videoCaption);
+mediaCaptionCandidates = [videoCaption];
+const videoSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+assert.ok(videoSnapshot,
+    'a WhatsApp video-caption token produces a readable snapshot');
+assert.match(videoSnapshot.runs.map(run => run.text || '').join(''), /Video offer/);
+assert.match(videoSnapshot.runs.map(run => run.text || '').join(''), /\u{1F3A5}/u);
+const videoReaderOpenCount = openedReaderWindows.length;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(openedReaderWindows.length, videoReaderOpenCount + 1,
+    'Alt+Shift+C opens the reader for a video caption');
+assert.match(collectReaderText(openedReaderWindows.at(-1).document.body), /Video offer/);
+mediaCaptionCandidates = [imageCaption];
+
+const documentThumbButton = new Element('div');
+documentThumbButton.setAttribute('role', 'button');
+documentThumbButton.setAttribute('data-testid', 'document-thumb');
+documentThumbButton.textContent = 'Download private-file.nvda-addon NVDA-ADDON 380 kB';
+const documentCaption = new Element('span');
+documentCaption.setAttribute('data-testid', 'document-caption selectable-text');
+documentCaption.appendChild(document.createTextNode(
+    'Temporary instructions supplied with the attached add-on.'
+));
+for (const documentNode of [documentThumbButton, documentCaption]) {
+    documentNode.closestHandler = selector =>
+        selector === '.focusable-list-item' ? messageCell : null;
+    messageCell.appendChild(documentNode);
+}
+mediaCaptionCandidates = [documentCaption];
+messageTextMetadataCandidates = [];
+const documentSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+assert.ok(documentSnapshot,
+    'a WhatsApp document-caption token produces a readable snapshot');
+assert.equal(documentSnapshot.sentAt, '',
+    'a document caption does not require a data-pre-plain-text wrapper');
+const documentSnapshotText = documentSnapshot.runs.map(run => run.text || '').join('');
+assert.match(documentSnapshotText, /Temporary instructions/);
+assert.doesNotMatch(documentSnapshotText, /private-file|NVDA-ADDON|380 kB/);
+const documentReaderOpenCount = openedReaderWindows.length;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(openedReaderWindows.length, documentReaderOpenCount + 1,
+    'Alt+Shift+C opens the reader for a document caption');
+assert.match(collectReaderText(openedReaderWindows.at(-1).document.body),
+    /Temporary instructions/);
+
+const documentThumbReaderOpenCount = openedReaderWindows.length;
+document.activeElement = documentThumbButton;
+cleanReaderEvent = makeEvent({
+    target: documentThumbButton,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, false,
+    'Alt+Shift+C remains untouched on the attachment download control');
+assert.equal(openedReaderWindows.length, documentThumbReaderOpenCount);
+document.activeElement = messageCell;
+mediaCaptionCandidates = [imageCaption];
+messageTextMetadataCandidates = [imageMetadata];
+
+const readerEscapeEvent = makeEvent({
+    type: 'keydown',
+    key: 'Escape',
+    code: 'Escape',
+    target: imageReaderDocument.body
+});
+imageReaderDocument.dispatchEvent(readerEscapeEvent);
+assert.equal(readerEscapeEvent.prevented, true);
+assert.equal(imageReaderWindow.closeCalls, 1,
+    'plain Escape closes the script-opened clean-reader tab');
+
+for (const rejectedReaderKey of [
+    { key: 'Escape', code: 'Escape', ctrlKey: true },
+    { key: 'Escape', code: 'Escape', shiftKey: true },
+    { key: 'Escape', code: 'Escape', altKey: true },
+    { key: 'Escape', code: 'Escape', metaKey: true },
+    { key: 'Escape', code: 'Escape', repeat: true },
+    { key: 'Escape', code: 'Escape', isComposing: true },
+    { key: 'Escape', code: 'Escape', defaultPrevented: true },
+    { key: 'Enter', code: 'Enter' }
+]) {
+    const guardedWindow = { closeCalls: 0, close() { this.closeCalls++; } };
+    const guardedEvent = makeEvent({ type: 'keydown', ...rejectedReaderKey });
+    assert.equal(runtime.handleReaderEscapeKeydown(guardedEvent, guardedWindow), false);
+    assert.equal(guardedEvent.prevented, false);
+    assert.equal(guardedWindow.closeCalls, 0);
+}
+
+messageCell.queryAllHandler = normalReaderQueryAll;
+
+const hiddenReaderLink = new Element('a');
+hiddenReaderLink.setAttribute('href', 'https://example.com/hidden');
+hiddenReaderLink.appendChild(document.createTextNode('CSS-hidden duplicate text'));
+hiddenReaderLink.closestHandler = selector => {
+    if (selector === '.focusable-list-item') return messageCell;
+    if (selector === '[data-testid="quoted-message"]') return null;
+    return null;
+};
+readerBody.appendChild(hiddenReaderLink);
+const hiddenReaderElements = new Set([hiddenReaderLink]);
+sandbox.window.getComputedStyle = element => ({
+    display: hiddenReaderElements.has(element) ? 'none' : 'block',
+    visibility: 'visible'
+});
+let filteredReaderSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+assert.ok(filteredReaderSnapshot);
+assert.doesNotMatch(
+    filteredReaderSnapshot.runs.map(run => run.text || '').join(''),
+    /CSS-hidden duplicate text/,
+    'CSS-hidden message branches are omitted from the clean reader'
+);
+hiddenReaderElements.clear();
+hiddenReaderElements.add(readerBody);
+assert.equal(runtime.getMessageReaderSnapshot(messageCell), null,
+    'a CSS-hidden primary text root is never copied into the clean reader');
+const hiddenRootOpenCount = openedReaderWindows.length;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(openedReaderWindows.length, hiddenRootOpenCount,
+    'Alt+Shift+C does not open a reader for CSS-hidden message text');
+scheduledTimeouts.clear();
+hiddenReaderElements.clear();
+hiddenReaderElements.add(readerMetadata);
+assert.equal(runtime.getMessageReaderSnapshot(messageCell), null,
+    'a primary text root inside a CSS-hidden ancestor is never copied');
+delete sandbox.window.getComputedStyle;
+readerBody.removeChild(hiddenReaderLink);
+
+const readerOpenCount = openedReaderWindows.length;
+document.activeElement = nestedMessageControl;
+cleanReaderEvent = makeEvent({
+    target: nestedMessageControl,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, false);
+assert.equal(openedReaderWindows.length, readerOpenCount,
+    'Alt+Shift+C remains untouched on nested controls and outside the primary message focus');
+
+document.activeElement = messageCell;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true,
+    repeat: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, false);
+assert.equal(openedReaderWindows.length, readerOpenCount,
+    'a held Alt+Shift+C never opens repeated reader tabs');
+
+const successfulOpen = sandbox.window.open;
+sandbox.window.open = () => null;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(document.activeElement, messageCell,
+    'a blocked reader tab preserves the focused WhatsApp message');
+const [readerPopupTimerId, announceReaderPopupFailure] =
+    Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(readerPopupTimerId);
+announceReaderPopupFailure();
+assert.equal(liveRegion.textContent,
+    'The message reader tab could not be opened. Allow pop-ups for WhatsApp Web, then try again.');
+scheduledTimeouts.clear();
+sandbox.window.open = successfulOpen;
+
+const collapsedReaderButton = new Element('button');
+collapsedReaderButton.setAttribute('type', 'button');
+collapsedReaderButton.setAttribute('role', 'button');
+collapsedReaderButton.setAttribute('tabindex', '0');
+collapsedReaderButton.setAttribute('data-testid', 'caption-read-more-button');
+collapsedReaderButton.textContent = 'Read more';
+const collapsedReaderContainer = new Element('div');
+collapsedReaderContainer.setAttribute('data-testid', 'msg-container');
+collapsedReaderContainer.appendChild(collapsedReaderButton);
+messageCell.appendChild(collapsedReaderContainer);
+let readMoreLinkWrapper = null;
+const collapsedReaderClosest = selector => {
+    if (selector === runtime.SELECTORS.voiceMessageContainer) return collapsedReaderContainer;
+    if (selector === '.focusable-list-item') return messageCell;
+    if (readMoreLinkWrapper && selector.includes('a[href]')) return readMoreLinkWrapper;
+    if (selector === '[data-testid="quoted-message"]' ||
+        selector.includes('[role="menu"]')) return null;
+    return null;
+};
+collapsedReaderButton.closestHandler = collapsedReaderClosest;
+let collapsedReaderPresent = true;
+let collapsedReaderControls = [collapsedReaderButton];
+readerBody.children = [];
+readerBody.textContent = 'A message that is still shortened…';
+messageCell.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.messagePrimaryText) return [readerBody];
+    if (selector === runtime.SELECTORS.messageTextMetadata) return [readerMetadata];
+    if (selector === runtime.SELECTORS.messageReadMoreButton) {
+        return collapsedReaderPresent ? collapsedReaderControls : [];
+    }
+    if (selector === runtime.SELECTORS.messageSentTime) return [];
+    return [];
+};
+
+function resetCollapsedReaderButton() {
+    collapsedReaderButton.disabled = false;
+    collapsedReaderButton.hidden = false;
+    collapsedReaderButton.inert = false;
+    collapsedReaderButton.removeAttribute('aria-disabled');
+    collapsedReaderButton.removeAttribute('aria-hidden');
+    collapsedReaderButton.removeAttribute('aria-haspopup');
+    collapsedReaderButton.setAttribute('tabindex', '0');
+    collapsedReaderButton.closestHandler = collapsedReaderClosest;
+    collapsedReaderControls = [collapsedReaderButton];
+    collapsedReaderPresent = true;
+    readMoreLinkWrapper = null;
+    delete sandbox.window.getComputedStyle;
+}
+
+function assertUnavailableCollapsedReader(configure, description) {
+    resetCollapsedReaderButton();
+    configure();
+    const openCount = openedReaderWindows.length;
+    const clickCount = collapsedReaderButton.clickCalls;
+    const event = makeEvent({
+        target: messageCell,
+        code: 'KeyC',
+        altKey: true,
+        shiftKey: true
+    });
+    runtime.handleShortcuts(event);
+    assert.equal(event.prevented, true, `${description}: shortcut is consumed safely`);
+    assert.equal(openedReaderWindows.length, openCount,
+        `${description}: no incomplete reader tab is opened`);
+    assert.equal(collapsedReaderButton.clickCalls, clickCount,
+        `${description}: the unsafe control is not activated`);
+    scheduledTimeouts.clear();
+}
+
+assertUnavailableCollapsedReader(() => {
+    collapsedReaderButton.disabled = true;
+}, 'disabled Read more marker');
+assertUnavailableCollapsedReader(() => {
+    collapsedReaderButton.setAttribute('aria-hidden', 'true');
+}, 'ARIA-hidden Read more marker');
+assertUnavailableCollapsedReader(() => {
+    collapsedReaderButton.setAttribute('tabindex', '-1');
+}, 'removed-from-tab-order Read more marker');
+assertUnavailableCollapsedReader(() => {
+    collapsedReaderButton.hidden = true;
+}, 'HTML-hidden Read more marker');
+assertUnavailableCollapsedReader(() => {
+    sandbox.window.getComputedStyle = element => ({
+        display: element === collapsedReaderButton ? 'none' : 'block',
+        visibility: 'visible'
+    });
+}, 'CSS-hidden Read more marker');
+assertUnavailableCollapsedReader(() => {
+    readMoreLinkWrapper = new Element('a');
+    readMoreLinkWrapper.setAttribute('href', 'https://example.com/');
+}, 'link-wrapped Read more marker');
+assertUnavailableCollapsedReader(() => {
+    const secondReadMore = new Element('button');
+    secondReadMore.setAttribute('type', 'button');
+    secondReadMore.setAttribute('role', 'button');
+    secondReadMore.setAttribute('tabindex', '0');
+    secondReadMore.closestHandler = collapsedReaderClosest;
+    collapsedReaderContainer.appendChild(secondReadMore);
+    collapsedReaderControls = [collapsedReaderButton, secondReadMore];
+}, 'ambiguous multiple Read more markers');
+
+resetCollapsedReaderButton();
+const originalMessageCellClosest = messageCell.closestHandler;
+messageCell.closestHandler = selector =>
+    selector === '[data-testid^="conv-msg-"][data-id]'
+        ? null
+        : originalMessageCellClosest(selector);
+assertUnavailableCollapsedReader(() => {}, 'collapsed message without stable identity');
+messageCell.closestHandler = originalMessageCellClosest;
+resetCollapsedReaderButton();
+collapsedReaderButton.clickHandler = () => {
+    collapsedReaderPresent = false;
+    readerBody.textContent = 'A message that is now completely expanded and readable.';
+};
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(collapsedReaderButton.clickCalls, 1,
+    'Alt+Shift+C activates the same unambiguous Read more control');
+const expandedReaderWindow = openedReaderWindows.at(-1);
+finalReaderDocument = expandedReaderWindow.document;
+assert.equal(finalReaderDocument, expandedReaderWindow.initialDocument,
+    'expanded text replaces the loading view without replacing its Document');
+assert.match(
+    collectReaderText(finalReaderDocument.body),
+    /completely expanded and readable/,
+    'the navigation document contains only the confirmed expanded text'
+);
+assert.doesNotMatch(collectReaderText(finalReaderDocument.body), /still shortened/);
+
+readerBody.textContent = 'A shortened message waiting for an asynchronous expansion...';
+collapsedReaderPresent = true;
+messageCell.setAttribute('aria-labelledby', 'reader-race-source');
+collapsedReaderButton.clickHandler = () => {
+    collapsedReaderPresent = false;
+};
+scheduledFrames.length = 0;
+const observerCountBeforeReaderRace = MutationObserver.instances.length;
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+assert.equal(MutationObserver.instances.length, observerCountBeforeReaderRace + 1,
+    'the asynchronous reader owns one expansion observer');
+assert.equal(scheduledFrames.length, 1,
+    'the asynchronous reader schedules one fallback frame');
+readerBody.textContent = 'The asynchronous message is now completely expanded with substantially more text than its shortened source.';
+const readerRaceObserver = MutationObserver.instances.at(-1);
+readerRaceObserver.trigger();
+const readerRaceWindow = openedReaderWindows.at(-1);
+const readerRaceText = collectReaderText(readerRaceWindow.document.body);
+assert.match(readerRaceText, /asynchronous message is now completely expanded/,
+    'the observer settles the reader with the expanded text');
+scheduledFrames.shift()();
+assert.equal(collectReaderText(readerRaceWindow.document.body), readerRaceText,
+    'a queued fallback frame cannot replace an already-settled reader again');
+messageCell.removeAttribute('aria-labelledby');
+
+const sourceAnnouncementBeforeReaderFailure = liveRegion.textContent;
+readerBody.textContent = 'A shortened message whose source row will be recycled…';
+collapsedReaderPresent = true;
+collapsedReaderButton.clickHandler = () => {
+    collapsedReaderPresent = false;
+    messageIdentity.isConnected = false;
+};
+cleanReaderEvent = makeEvent({
+    target: messageCell,
+    code: 'KeyC',
+    altKey: true,
+    shiftKey: true
+});
+runtime.handleShortcuts(cleanReaderEvent);
+assert.equal(cleanReaderEvent.prevented, true);
+const failedReaderWindow = openedReaderWindows.at(-1);
+const failedReaderDocument = failedReaderWindow.document;
+assert.equal(failedReaderDocument, failedReaderWindow.initialDocument,
+    'a failed expansion also retains the script-owned reader Document');
+assert.equal(
+    failedReaderDocument.title,
+    'Message could not be loaded - WhatsApp Web Plus'
+);
+assert.match(collectReaderText(failedReaderDocument.body), /complete message could not be loaded/i);
+assert.equal(liveRegion.textContent, sourceAnnouncementBeforeReaderFailure,
+    'failure after the reader tab opens is not announced from the background WhatsApp tab');
+assert.equal(failedReaderDocument.eventListeners.get('keydown').length, 1,
+    'Escape stays installed after the clean-reader failure view is rendered');
+messageIdentity.isConnected = true;
+
+messageCell.queryAllHandler = previousReaderQueryAll;
+document.activeElement = messageCell;
+scheduledFrames.length = 0;
+scheduledTimeouts.clear();
 
 const callContainer = new Element();
 const callSurface = new Element();
@@ -1505,6 +3123,8 @@ const indonesianUnread = new Element();
 const indonesianMuted = new Element();
 indonesianUnread.setAttribute('aria-label', '2 pesan belum dibaca');
 indonesianMuted.setAttribute('aria-label', 'chat dibisukan');
+assert.equal(runtime.isUnreadChatTotalAnnouncementEnabled(), false,
+    'the navbar total setting remains disabled during per-chat badge collection');
 indonesianBadgeRow.queryHandler = selector =>
     selector === runtime.SELECTORS.cellFrame ? indonesianCellFrame : null;
 indonesianBadgeRow.queryAllHandler = selector =>
@@ -1728,8 +3348,25 @@ assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
 assert.equal(document.activeElement, activator);
 assert.equal(outerGridcell.getAttribute('role'), 'presentation');
 assert.equal(activator.getAttribute('role'), 'gridcell');
-assert.equal(activator.getAttribute('aria-selected'), 'false');
+assert.equal(activator.getAttribute('aria-selected'), 'undefined',
+    'transferring the gridcell role neutralizes the row selectable state');
 assert.equal(activator.getAttribute('aria-labelledby'), null);
+
+document.activeElement = activator;
+const releasedChatShiftEnter = gridKey(activator, 'Enter', { shiftKey: true });
+assert.equal(runtime.handleMessageGridKeydown(releasedChatShiftEnter), false);
+assert.equal(releasedChatShiftEnter.prevented, false);
+assert.equal(releasedChatShiftEnter.stopped, false);
+assert.equal(document.activeElement, activator,
+    'Shift+Enter is unassigned and does not move chat-list focus');
+for (const nativeContextKey of [
+    gridKey(activator, 'F10', { shiftKey: true }),
+    gridKey(activator, 'ContextMenu')
+]) {
+    assert.equal(runtime.handleMessageGridKeydown(nativeContextKey), false);
+    assert.equal(nativeContextKey.prevented, false);
+    assert.equal(nativeContextKey.stopped, false);
+}
 
 outerGridcell.setAttribute('role', 'rowheader');
 assert.equal(runtime.applyChatRowNativeMask(focusRow), false);
@@ -1754,41 +3391,76 @@ assert.equal(document.activeElement, activator);
 runtime.setAnnouncementReduction(false);
 const nativeShortcutSide = new Element();
 const nativeShortcutList = new Element();
-const nativeShortcutRow = new Element();
-const nativeShortcutGridcell = new Element();
-const nativeShortcutActivator = new Element();
-const nativeShortcutCellFrame = new Element();
 nativeShortcutList.rect = { top: 0, bottom: 400, left: 0, right: 400, width: 400, height: 400 };
-nativeShortcutRow.rect = { top: 0, bottom: 76, left: 0, right: 400, width: 400, height: 76 };
-nativeShortcutRow.setAttribute('role', 'row');
-nativeShortcutRow.setAttribute('aria-selected', 'true');
-nativeShortcutGridcell.setAttribute('role', 'gridcell');
-nativeShortcutActivator.setAttribute('tabindex', '0');
-nativeShortcutActivator.setAttribute('aria-selected', 'true');
+nativeShortcutList.scrollTop = 217;
+function createShortcutChatRow(title, selected, top = 0) {
+    const row = new Element();
+    const gridcell = new Element();
+    const rowActivator = new Element();
+    const cellFrame = new Element();
+    const rowTitleContainer = new Element();
+    const titleElement = new Element();
+    row.rect = { top, bottom: top + 76, left: 0, right: 400, width: 400, height: 76 };
+    row.setAttribute('role', 'row');
+    row.setAttribute('aria-selected', String(selected));
+    gridcell.setAttribute('role', 'gridcell');
+    rowActivator.setAttribute('tabindex', selected ? '0' : '-1');
+    rowActivator.setAttribute('aria-selected', String(selected));
+    titleElement.setAttribute('title', title);
+    row.appendChild(gridcell);
+    gridcell.appendChild(rowActivator);
+    gridcell.appendChild(cellFrame);
+    row.queryAllHandler = () => [];
+    row.queryHandler = selector => {
+        if (selector === ':scope > [role="gridcell"]') return gridcell;
+        if (selector === runtime.SELECTORS.cellFrame) return cellFrame;
+        if (selector === '[data-testid="cell-frame-title"]') return rowTitleContainer;
+        return null;
+    };
+    gridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]')
+        ? rowActivator
+        : null;
+    rowActivator.queryAllHandler = () => [];
+    rowActivator.closestHandler = selector => selector === 'div[role="row"]' ? row : null;
+    rowTitleContainer.queryHandler = selector => selector === '[title]' ? titleElement : null;
+    row.closestHandler = selector =>
+        selector === runtime.SELECTORS.chatListInSide || selector === runtime.SELECTORS.chatList
+            ? nativeShortcutList
+            : null;
+    return { row, gridcell, rowActivator, cellFrame, titleElement };
+}
+const firstShortcutChat = createShortcutChatRow('First chat', true, 0);
+const secondShortcutChat = createShortcutChatRow('Second chat', false, 80);
 nativeShortcutSide.queryHandler = selector => selector === runtime.SELECTORS.chatList
     ? nativeShortcutList
     : null;
-nativeShortcutList.queryAllHandler = () => [nativeShortcutRow];
+nativeShortcutList.appendChild(firstShortcutChat.row);
+nativeShortcutList.appendChild(secondShortcutChat.row);
+nativeShortcutSide.appendChild(nativeShortcutList);
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, secondShortcutChat.row];
 nativeShortcutList.closestHandler = selector => selector === runtime.SELECTORS.chatListScroller
     ? nativeShortcutList
     : null;
-nativeShortcutRow.closestHandler = selector => selector === runtime.SELECTORS.chatListInSide
-    ? nativeShortcutList
-    : null;
-nativeShortcutRow.queryAllHandler = () => [];
-nativeShortcutRow.queryHandler = selector => {
-    if (selector === ':scope > [role="gridcell"]') return nativeShortcutGridcell;
-    if (selector === runtime.SELECTORS.cellFrame) return nativeShortcutCellFrame;
-    return null;
-};
-nativeShortcutGridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]')
-    ? nativeShortcutActivator
-    : null;
-nativeShortcutActivator.queryAllHandler = () => [];
 selectorResults.set(runtime.SELECTORS.side, nativeShortcutSide);
+
+secondShortcutChat.rowActivator.setAttribute('role', 'section');
+runtime.setAnnouncementReduction(true);
+assert.equal(runtime.applyChatRowNativeMask(secondShortcutChat.row), true);
+assert.equal(secondShortcutChat.rowActivator.getAttribute('role'), 'gridcell',
+    'a structurally verified chat-row section becomes the focused gridcell');
+assert.equal(secondShortcutChat.gridcell.getAttribute('role'), 'presentation');
+runtime.setAnnouncementReduction(false);
+assert.equal(runtime.applyChatRowNativeMask(secondShortcutChat.row), false);
+assert.equal(secondShortcutChat.rowActivator.getAttribute('role'), 'section',
+    'disabling announcement reduction restores WhatsApp\'s native section role');
+assert.equal(secondShortcutChat.gridcell.getAttribute('role'), 'gridcell');
+
 const nativeShortcutRows = runtime.getChatListRows();
-assert.equal(nativeShortcutRows.length, 1);
-assert.equal(nativeShortcutRows[0], nativeShortcutRow);
+assert.equal(nativeShortcutRows.length, 2);
+assert.equal(nativeShortcutRows[1], secondShortcutChat.row);
+document.activeElement = secondShortcutChat.rowActivator;
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+assert.equal(runtime.getRememberedFocus().lastFocusedChatTitle, 'Second chat');
 scheduledFrames.length = 0;
 document.activeElement = new Element();
 event = makeEvent({ altKey: true, code: 'Digit1', target: document.activeElement });
@@ -1797,9 +3469,609 @@ assert.equal(event.prevented, true);
 assert.equal(event.immediateStopped, true);
 assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
-assert.equal(document.activeElement, nativeShortcutActivator);
-assert.equal(nativeShortcutActivator.getAttribute('aria-label'), null);
-selectorResults.delete(runtime.SELECTORS.side);
+assert.equal(document.activeElement, secondShortcutChat.rowActivator);
+assert.equal(nativeShortcutList.scrollTop, 217, 'Alt+1 must not scroll the chat list to the top');
+assert.equal(secondShortcutChat.rowActivator.getAttribute('aria-label'), null);
+const arrowAfterAltOne = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(arrowAfterAltOne), true);
+assert.equal(arrowAfterAltOne.prevented, true);
+assert.equal(arrowAfterAltOne.immediateStopped, true);
+const rapidArrowAfterAltOne = gridKey(secondShortcutChat.rowActivator, 'ArrowUp', { repeat: true });
+assert.equal(runtime.handleMessageGridKeydown(rapidArrowAfterAltOne), false);
+assert.equal(rapidArrowAfterAltOne.prevented, false,
+    'only one Alt+1 recovery arrow is consumed before the focus frame runs');
+drainScheduledFrames();
+assert.equal(document.activeElement, firstShortcutChat.rowActivator,
+    'ArrowUp after Alt+1 starts from the remembered chat instead of the first row');
+assert.equal(firstShortcutChat.rowActivator.getAttribute('aria-selected'), 'true');
+assert.equal(secondShortcutChat.rowActivator.getAttribute('aria-selected'), 'false');
+const arrowAcrossSelectedChat = gridKey(firstShortcutChat.rowActivator, 'ArrowDown');
+assert.equal(runtime.handleMessageGridKeydown(arrowAcrossSelectedChat), false);
+assert.equal(arrowAcrossSelectedChat.prevented, false,
+    'the second arrow returns to WhatsApp so native selected state can update');
+assert.equal(document.activeElement, firstShortcutChat.rowActivator);
+assert.equal(firstShortcutChat.rowActivator.getAttribute('aria-selected'), 'true');
+assert.equal(secondShortcutChat.rowActivator.getAttribute('aria-selected'), 'false',
+    'the one managed recovery arrow never changes WhatsApp selection state');
+
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(secondShortcutChat.row), true);
+scheduledFrames.shift()();
+const cancelledManagedArrow = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(cancelledManagedArrow), true);
+const rapidOutsideControl = new Element();
+document.activeElement = rapidOutsideControl;
+runtime.rememberFocusedRow(rapidOutsideControl);
+drainScheduledFrames();
+assert.equal(document.activeElement, rapidOutsideControl,
+    'a native focus change before the recovery frame cancels stale managed focus');
+
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(secondShortcutChat.row), true);
+scheduledFrames.shift()();
+firstShortcutChat.rowActivator.focusSucceeds = false;
+const failedManagedArrow = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(failedManagedArrow), true);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator);
+assert.equal(secondShortcutChat.rowActivator.getAttribute('tabindex'), '0',
+    'failed managed focus restores the original roving tab stop');
+assert.equal(firstShortcutChat.rowActivator.getAttribute('tabindex'), '-1');
+const arrowAfterManagedFailure = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(arrowAfterManagedFailure), false,
+    'failed managed focus releases arrow ownership');
+firstShortcutChat.rowActivator.focusSucceeds = true;
+
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(secondShortcutChat.row), true);
+scheduledFrames.shift()();
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator, 'pointer');
+const arrowAfterPointer = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(arrowAfterPointer), false);
+assert.equal(arrowAfterPointer.prevented, false,
+    'pointer interaction releases programmatic chat-list arrow ownership');
+
+scheduledFrames.length = 0;
+document.activeElement = firstShortcutChat.rowActivator;
+event = makeEvent({ altKey: true, code: 'Digit1', target: document.activeElement });
+runtime.handleShortcuts(event);
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    firstShortcutChat.rowActivator,
+    'Alt+1 preserves the exact row when focus is already inside the chat list'
+);
+
+const removedCommunityDrawer = new Element();
+removedCommunityDrawer.nodeType = 1;
+removedCommunityDrawer.setAttribute('data-testid', 'community-tab-drawer');
+const chatsAfterCommunitiesClose = new Element();
+const communitiesBeforeClose = new Element();
+selectorResults.set(runtime.SELECTORS.navChats, chatsAfterCommunitiesClose);
+selectorResults.set(runtime.SELECTORS.navCommunities, communitiesBeforeClose);
+const communityDrawerFocus = new Element();
+communityDrawerFocus.nodeType = 1;
+removedCommunityDrawer.appendChild(communityDrawerFocus);
+communityDrawerFocus.closestHandler = selector =>
+    selector === runtime.SELECTORS.communityDrawer ? removedCommunityDrawer : null;
+function armCommunityEscapeClose(focusTarget = communityDrawerFocus, postCloseFocus = document.body) {
+    communitiesBeforeClose.setAttribute('aria-pressed', 'true');
+    chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'false');
+    document.activeElement = focusTarget;
+    const escape = makeEvent({ key: 'Escape', code: 'Escape', target: focusTarget });
+    runtime.handleShortcuts(escape);
+    assert.equal(escape.prevented, false, 'WhatsApp still receives Escape to close Communities');
+    assert.equal(escape.immediateStopped, false);
+    communitiesBeforeClose.setAttribute('aria-pressed', 'false');
+    chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'true');
+    document.activeElement = postCloseFocus;
+}
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+scheduledFrames.length = 0;
+const communityRecoveryFocusSequence = [];
+nativeShortcutList.focusHandler = () => communityRecoveryFocusSequence.push('chat-list');
+secondShortcutChat.rowActivator.focusHandler = () => communityRecoveryFocusSequence.push('chat-row');
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+assert.equal(scheduledFrames.length, 1,
+    'removing the Communities drawer schedules focus recovery');
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'closing Communities restores the remembered chat-list row');
+assert.deepEqual(communityRecoveryFocusSequence.slice(-2), ['chat-list', 'chat-row'],
+    'Communities recovery produces a distinct final accessibility focus event for the row');
+assert.equal(nativeShortcutList.scrollTop, 217,
+    'closing Communities must not scroll the chat list to the top');
+
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+armCommunityEscapeClose(communityDrawerFocus, secondShortcutChat.rowActivator);
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator);
+assert.deepEqual(communityRecoveryFocusSequence, ['chat-list', 'chat-row'],
+    'an already-active row is bridged through the chat list so NVDA receives fresh focus');
+
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+armCommunityEscapeClose(communityDrawerFocus, secondShortcutChat.rowActivator);
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+scheduledFrames.shift()();
+scheduledFrames.shift()();
+assert.equal(document.activeElement, nativeShortcutList,
+    'the stable chat list is the intermediate accessibility focus target');
+runtime.cancelPendingFocusRequests();
+const focusAfterCommunityBridgeCancellation = new Element();
+document.activeElement = focusAfterCommunityBridgeCancellation;
+drainScheduledFrames();
+assert.equal(document.activeElement, focusAfterCommunityBridgeCancellation,
+    'new user interaction between focus hops cancels the final row focus');
+
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+armCommunityEscapeClose(communityDrawerFocus, secondShortcutChat.rowActivator);
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+scheduledFrames.shift()();
+scheduledFrames.shift()();
+assert.equal(document.activeElement, nativeShortcutList);
+const meaningfulNativeFocusBetweenCommunityHops = new Element();
+document.activeElement = meaningfulNativeFocusBetweenCommunityHops;
+drainScheduledFrames();
+assert.equal(document.activeElement, meaningfulNativeFocusBetweenCommunityHops,
+    'a meaningful native focus move between hops is preserved without relying on key cancellation');
+assert.deepEqual(communityRecoveryFocusSequence, ['chat-list']);
+
+const recycledCommunityChat = createShortcutChatRow('Second chat', false, 80);
+let recycleFocusedCommunityRow = true;
+secondShortcutChat.rowActivator.focusHandler = () => {
+    communityRecoveryFocusSequence.push('chat-row');
+    if (!recycleFocusedCommunityRow) return;
+    recycleFocusedCommunityRow = false;
+    secondShortcutChat.row.isConnected = false;
+    recycledCommunityChat.row.parentElement = nativeShortcutList;
+    nativeShortcutList.children = [firstShortcutChat.row, recycledCommunityChat.row];
+    nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, recycledCommunityChat.row];
+    document.activeElement = document.body;
+};
+recycledCommunityChat.rowActivator.focusHandler = () =>
+    communityRecoveryFocusSequence.push('replacement-chat-row');
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+drainScheduledFrames();
+assert.equal(document.activeElement, recycledCommunityChat.rowActivator,
+    'a row recycled during the accessibility commit is resolved and focused once');
+assert.deepEqual(
+    communityRecoveryFocusSequence.slice(-3),
+    ['chat-list', 'chat-row', 'replacement-chat-row']
+);
+secondShortcutChat.row.isConnected = true;
+secondShortcutChat.row.parentElement = nativeShortcutList;
+nativeShortcutList.children = [firstShortcutChat.row, secondShortcutChat.row];
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, secondShortcutChat.row];
+secondShortcutChat.rowActivator.focusHandler = () => communityRecoveryFocusSequence.push('chat-row');
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+
+const selectedCommunityContentFocus = new Element();
+selectedCommunityContentFocus.nodeType = 1;
+selectorResults.set(runtime.SELECTORS.communityDrawer, removedCommunityDrawer);
+scheduledFrames.length = 0;
+armCommunityEscapeClose(selectedCommunityContentFocus);
+selectorResults.delete(runtime.SELECTORS.communityDrawer);
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'Escape from selected community content restores the remembered chat row');
+
+scheduledFrames.length = 0;
+selectorResults.set(runtime.SELECTORS.communityDrawer, removedCommunityDrawer);
+armCommunityEscapeClose(selectedCommunityContentFocus, selectedCommunityContentFocus);
+selectorResults.delete(runtime.SELECTORS.communityDrawer);
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'a connected pre-close Communities focus object is treated as stranded');
+
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'false');
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+scheduledFrames.shift()();
+assert.equal(scheduledFrames.length, 1,
+    'Communities recovery waits for the Chats route state to commit');
+chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'true');
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'delayed Chats activation still restores the remembered chat row');
+
+const removedCommunityWrapper = new Element();
+removedCommunityWrapper.nodeType = 1;
+removedCommunityWrapper.appendChild(removedCommunityDrawer);
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityWrapper);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'removing an ancestor that contains the Communities drawer recovers once');
+
+const replacementCommunityDrawer = new Element();
+selectorResults.set(runtime.SELECTORS.communityDrawer, replacementCommunityDrawer);
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, document.body,
+    'a Communities drawer rerender does not steal focus');
+selectorResults.delete(runtime.SELECTORS.communityDrawer);
+
+const focusAfterCommunitiesClose = new Element();
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+document.activeElement = focusAfterCommunitiesClose;
+scheduledFrames.shift()();
+assert.equal(document.activeElement, focusAfterCommunitiesClose,
+    'a valid focus move after Communities closes is preserved');
+
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+selectorAllResults.set(modalSelector, [vendorDialog]);
+vendorDialog.hidden = false;
+scheduledFrames.shift()();
+assert.equal(document.activeElement, document.body,
+    'a modal appearing after Communities closes cancels focus recovery');
+vendorDialog.hidden = true;
+selectorAllResults.delete(modalSelector);
+
+const statusAfterCommunitiesClose = new Element();
+statusAfterCommunitiesClose.setAttribute('aria-pressed', 'true');
+selectorResults.set(runtime.SELECTORS.navStatus, statusAfterCommunitiesClose);
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'false');
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, document.body,
+    'closing Communities does not steal focus after navigation to another tab');
+
+scheduledFrames.length = 0;
+armCommunityEscapeClose();
+runtime.cancelPendingFocusRequests();
+runtime.recoverFocusAfterRemoval(removedCommunityDrawer);
+assert.equal(scheduledFrames.length, 0,
+    'new user input cancels a pending Communities close recovery');
+selectorResults.delete(runtime.SELECTORS.navStatus);
+
+const communityGroupMain = new Element();
+const communityGroupConversation = new Element();
+const communityGroupMessageFocus = new Element();
+let communityGroupChatOpen = true;
+communityGroupMain.appendChild(communityGroupConversation);
+communityGroupConversation.appendChild(communityGroupMessageFocus);
+communityGroupMain.queryHandler = selector => {
+    if (selector === runtime.SELECTORS.conversationMessages ||
+        selector.startsWith(`${runtime.SELECTORS.conversationMessages},`)) {
+        return communityGroupChatOpen ? communityGroupConversation : null;
+    }
+    return null;
+};
+selectorResults.set(runtime.SELECTORS.main, communityGroupMain);
+
+const communityGroupMiddle = new Element();
+communityGroupMiddle.setAttribute('data-testid', 'drawer-middle');
+const communityGroupFocusShell = new Element();
+communityGroupFocusShell.setAttribute('tabindex', '-1');
+const communityGroupEmptyState = new Element();
+const communityGroupIconTitle = new Element();
+communityGroupIconTitle.textContent = 'wds-ic-communities-filled';
+communityGroupMiddle.appendChild(communityGroupFocusShell);
+communityGroupFocusShell.appendChild(communityGroupEmptyState);
+communityGroupEmptyState.queryAllHandler = selector =>
+    selector === 'svg title' ? [communityGroupIconTitle] : [];
+communityGroupEmptyState.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? communityGroupMiddle : null;
+communityGroupFocusShell.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? communityGroupMiddle : null;
+
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+let communityShellReclaimedFocus = false;
+nativeShortcutList.focusHandler = () => communityRecoveryFocusSequence.push('chat-list');
+secondShortcutChat.rowActivator.focusHandler = () => {
+    communityRecoveryFocusSequence.push('chat-row');
+    if (communityShellReclaimedFocus) return;
+    communityShellReclaimedFocus = true;
+    scheduledFrames.push(() => {
+        document.activeElement = communityGroupFocusShell;
+        communityRecoveryFocusSequence.push('community-section');
+    });
+};
+communityGroupChatOpen = true;
+document.activeElement = communityGroupMessageFocus;
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+const closeCommunityGroupEscape = makeEvent({
+    key: 'Escape', code: 'Escape', target: communityGroupMessageFocus
+});
+runtime.handleShortcuts(closeCommunityGroupEscape);
+assert.equal(closeCommunityGroupEscape.prevented, false,
+    'the first Escape still reaches WhatsApp to close the community group');
+assert.equal(closeCommunityGroupEscape.immediateStopped, false);
+assert.equal(scheduledFrames.length, 1,
+    'closing an active community chat arms recovery before its empty state exists');
+
+communityGroupChatOpen = false;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [communityGroupEmptyState]);
+document.activeElement = communityGroupFocusShell;
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'one Escape leaves final focus on the remembered chat row, not the Community section');
+assert.deepEqual(
+    communityRecoveryFocusSequence,
+    ['chat-list', 'chat-row', 'community-section', 'chat-row'],
+    'a verified Community shell reclaim is repaired with one bounded row refocus'
+);
+assert.equal(nativeShortcutList.scrollTop, 217);
+
+const arrowAfterCommunityGroupClose = gridKey(secondShortcutChat.rowActivator, 'ArrowUp');
+assert.equal(runtime.handleMessageGridKeydown(arrowAfterCommunityGroupClose), true,
+    'the recovered row owns the first arrow after a community group closes');
+drainScheduledFrames();
+assert.equal(document.activeElement, firstShortcutChat.rowActivator);
+
+communityRecoveryFocusSequence.length = 0;
+scheduledFrames.length = 0;
+communityGroupChatOpen = true;
+document.activeElement = communityGroupMessageFocus;
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.handleShortcuts(makeEvent({
+    key: 'Escape', code: 'Escape', target: communityGroupMessageFocus
+}));
+const unrelatedFocusAfterCommunityClose = new Element();
+communityGroupChatOpen = false;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [communityGroupEmptyState]);
+document.activeElement = unrelatedFocusAfterCommunityClose;
+drainScheduledFrames();
+assert.equal(document.activeElement, unrelatedFocusAfterCommunityClose,
+    'a real focus move outside the verified Community shell is never stolen');
+assert.deepEqual(communityRecoveryFocusSequence, []);
+
+secondShortcutChat.rowActivator.focusHandler = () =>
+    communityRecoveryFocusSequence.push('chat-row');
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+selectorResults.delete(runtime.SELECTORS.main);
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+
+const closedCommunitiesMiddle = new Element();
+closedCommunitiesMiddle.setAttribute('data-testid', 'drawer-middle');
+const strandedCommunitiesSection = new Element();
+const closedCommunityEmptyState = new Element();
+const closedCommunityIconTitle = new Element();
+closedCommunityIconTitle.textContent = 'wds-ic-communities-filled';
+strandedCommunitiesSection.setAttribute('tabindex', '-1');
+closedCommunitiesMiddle.appendChild(strandedCommunitiesSection);
+strandedCommunitiesSection.appendChild(closedCommunityEmptyState);
+closedCommunityEmptyState.queryAllHandler = selector =>
+    selector === 'svg title' ? [closedCommunityIconTitle] : [];
+closedCommunityEmptyState.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? closedCommunitiesMiddle : null;
+strandedCommunitiesSection.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? closedCommunitiesMiddle : null;
+communitiesBeforeClose.setAttribute('aria-pressed', 'false');
+chatsAfterCommunitiesClose.setAttribute('aria-pressed', 'true');
+
+scheduledFrames.length = 0;
+document.activeElement = strandedCommunitiesSection;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+const closedSectionEscape = makeEvent({
+    key: 'Escape', code: 'Escape', target: strandedCommunitiesSection
+});
+runtime.handleShortcuts(closedSectionEscape);
+assert.equal(closedSectionEscape.prevented, false,
+    'WhatsApp still receives Escape to remove its stale Communities section');
+assert.equal(closedSectionEscape.immediateStopped, false);
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+assert.equal(scheduledFrames.length, 1);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'Escape from the closed Communities section restores the remembered chat row');
+assert.deepEqual(communityRecoveryFocusSequence.slice(-2), ['chat-list', 'chat-row']);
+assert.equal(nativeShortcutList.scrollTop, 217);
+
+scheduledFrames.length = 0;
+document.activeElement = document.body;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+const documentEscape = makeEvent({ key: 'Escape', code: 'Escape', target: document.body });
+runtime.handleShortcuts(documentEscape);
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+    'Escape from the stranded document root restores the remembered chat row');
+
+const meaningfulFocusAfterDocumentEscape = new Element();
+scheduledFrames.length = 0;
+document.activeElement = document.body;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+runtime.handleShortcuts(makeEvent({ key: 'Escape', code: 'Escape', target: document.body }));
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+document.activeElement = meaningfulFocusAfterDocumentEscape;
+drainScheduledFrames();
+assert.equal(document.activeElement, meaningfulFocusAfterDocumentEscape,
+    'a meaningful native focus move after Escape is preserved');
+
+scheduledFrames.length = 0;
+document.activeElement = document.body;
+runtime.handleShortcuts(makeEvent({
+    key: 'Escape', code: 'Escape', target: document.body
+}));
+assert.equal(scheduledFrames.length, 0,
+    'Escape at the document root without the stale Communities panel does not arm');
+
+const unrelatedEmptyState = new Element();
+const unrelatedIconTitle = new Element();
+unrelatedIconTitle.textContent = 'wds-ic-newsletter';
+unrelatedEmptyState.queryAllHandler = selector =>
+    selector === 'svg title' ? [unrelatedIconTitle] : [];
+unrelatedEmptyState.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? closedCommunitiesMiddle : null;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [unrelatedEmptyState]);
+document.activeElement = document.body;
+runtime.handleShortcuts(makeEvent({ key: 'Escape', code: 'Escape', target: document.body }));
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(unrelatedEmptyState);
+assert.equal(scheduledFrames.length, 0,
+    'a generic empty-state drawer without the Communities icon does not arm');
+
+const replacementCommunityEmptyState = new Element();
+replacementCommunityEmptyState.queryAllHandler = selector =>
+    selector === 'svg title' ? [closedCommunityIconTitle] : [];
+replacementCommunityEmptyState.closestHandler = selector =>
+    selector === runtime.SELECTORS.drawerMiddle ? closedCommunitiesMiddle : null;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+document.activeElement = document.body;
+runtime.handleShortcuts(makeEvent({ key: 'Escape', code: 'Escape', target: document.body }));
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [replacementCommunityEmptyState]);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, document.body,
+    'a replacement Communities empty state is treated as a rerender');
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+
+scheduledFrames.length = 0;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+document.activeElement = document.body;
+runtime.handleShortcuts(makeEvent({ key: 'Escape', code: 'Escape', target: document.body }));
+runtime.cancelPendingFocusRequests();
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+assert.equal(scheduledFrames.length, 0,
+    'later user input cancels stale Communities-section recovery');
+
+const unrelatedConnectedChatsControl = new Element();
+scheduledFrames.length = 0;
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [closedCommunityEmptyState]);
+document.activeElement = unrelatedConnectedChatsControl;
+runtime.handleShortcuts(makeEvent({
+    key: 'Escape', code: 'Escape', target: unrelatedConnectedChatsControl
+}));
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
+runtime.recoverFocusAfterRemoval(closedCommunityEmptyState);
+assert.equal(scheduledFrames.length, 0);
+assert.equal(document.activeElement, unrelatedConnectedChatsControl,
+    'an unrelated connected Chats control is never treated as stranded');
+selectorResults.delete(runtime.SELECTORS.navStatus);
+selectorResults.delete(runtime.SELECTORS.navChats);
+selectorResults.delete(runtime.SELECTORS.navCommunities);
+nativeShortcutList.focusHandler = null;
+secondShortcutChat.rowActivator.focusHandler = null;
+
+const delayedOriginalChat = createShortcutChatRow('Delayed chat', false, 160);
+nativeShortcutList.appendChild(delayedOriginalChat.row);
+nativeShortcutList.queryAllHandler = () => [
+    firstShortcutChat.row,
+    secondShortcutChat.row,
+    delayedOriginalChat.row
+];
+document.activeElement = delayedOriginalChat.rowActivator;
+runtime.rememberFocusedRow(delayedOriginalChat.rowActivator);
+delayedOriginalChat.row.isConnected = false;
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row];
+scheduledFrames.length = 0;
+const delayedOutsideControl = new Element();
+document.activeElement = delayedOutsideControl;
+event = makeEvent({ altKey: true, code: 'Digit1', target: delayedOutsideControl });
+runtime.handleShortcuts(event);
+scheduledFrames.shift()();
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    delayedOutsideControl,
+    'a selected chat must not bypass retries for a temporarily missing remembered chat'
+);
+const delayedReplacementChat = createShortcutChatRow('Delayed chat', false, 160);
+nativeShortcutList.appendChild(delayedReplacementChat.row);
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, delayedReplacementChat.row];
+scheduledFrames.shift()();
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    delayedReplacementChat.rowActivator,
+    'Alt+1 restores a remembered chat that appears after multiple animation frames'
+);
+
+runtime.clearRememberedChatRow();
+const coldStartFirstChat = createShortcutChatRow('Cold start first', false, 0);
+const coldStartSecondChat = createShortcutChatRow('Cold start second', false, 80);
+coldStartFirstChat.rowActivator.setAttribute('tabindex', '-1');
+coldStartSecondChat.rowActivator.setAttribute('tabindex', '-1');
+nativeShortcutList.appendChild(coldStartFirstChat.row);
+nativeShortcutList.appendChild(coldStartSecondChat.row);
+nativeShortcutList.queryAllHandler = () => [coldStartFirstChat.row, coldStartSecondChat.row];
+document.activeElement = delayedOutsideControl;
+runtime.normalizeChatListTabStops(nativeShortcutList);
+assert.equal(coldStartFirstChat.rowActivator.getAttribute('tabindex'), '0');
+assert.equal(
+    runtime.getPreferredChatRow(
+        [coldStartFirstChat.row, coldStartSecondChat.row],
+        delayedOutsideControl
+    ),
+    coldStartFirstChat.row,
+    'fresh reload may use the one managed initial tab stop when no focus history exists'
+);
+scheduledFrames.length = 0;
+event = makeEvent({ altKey: true, code: 'Digit1', target: delayedOutsideControl });
+runtime.handleShortcuts(event);
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    coldStartFirstChat.rowActivator,
+    'Alt+1 enters the ready chat list after a fresh reload instead of announcing not ready'
+);
+
+document.activeElement = coldStartSecondChat.rowActivator;
+runtime.rememberFocusedRow(coldStartSecondChat.rowActivator);
+coldStartSecondChat.row.isConnected = false;
+const exhaustionSelectedChat = createShortcutChatRow('Selected fallback must wait', true, 0);
+exhaustionSelectedChat.rowActivator.setAttribute('tabindex', '-1');
+nativeShortcutList.appendChild(exhaustionSelectedChat.row);
+nativeShortcutList.queryAllHandler = () => [exhaustionSelectedChat.row];
+selectorResults.set(runtime.SELECTORS.chatListInSide, nativeShortcutList);
+assert.equal(
+    runtime.getPreferredChatRow([exhaustionSelectedChat.row], delayedOutsideControl),
+    null,
+    'selected and managed fallbacks are not reused after real focus history exists'
+);
+assert.equal(
+    runtime.getPreferredChatRow([exhaustionSelectedChat.row], delayedOutsideControl, true),
+    exhaustionSelectedChat.row,
+    'a semantic selected fallback is available only after bounded restoration attempts'
+);
+scheduledFrames.length = 0;
+document.activeElement = delayedOutsideControl;
+event = makeEvent({ altKey: true, code: 'Digit1', target: delayedOutsideControl });
+runtime.handleShortcuts(event);
+let exhaustionFrames = 0;
+while (scheduledFrames.length > 0 && exhaustionFrames < 30) {
+    scheduledFrames.shift()();
+    exhaustionFrames++;
+}
+assert.equal(exhaustionFrames, 12, 'the unresolved remembered chat exhausts all 12 attempts before focus');
+assert.equal(
+    document.activeElement,
+    exhaustionSelectedChat.rowActivator,
+    'retry exhaustion recovers to the selected semantic chat instead of an arbitrary first row'
+);
+assert.equal(
+    exhaustionSelectedChat.rowActivator.getAttribute('tabindex'),
+    '0',
+    'semantic recovery leaves exactly one operable roving tab stop'
+);
+selectorResults.delete(runtime.SELECTORS.chatListInSide);
 runtime.setAnnouncementReduction(true);
 assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
 document.activeElement = null;
@@ -1809,16 +4081,275 @@ assert.equal(scheduledFrames.length, 1);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, activator);
 
+const selectionRepairList = new Element();
+function createSelectionRepairRow(title, top, selected = 'false') {
+    const row = new Element();
+    const gridcell = new Element();
+    const rowActivator = new Element();
+    const cellFrame = new Element();
+    const rowTitleContainer = new Element();
+    const titleElement = new Element();
+    row.setAttribute('role', 'row');
+    row.style.transform = `translateY(${top}px)`;
+    gridcell.setAttribute('role', 'gridcell');
+    rowActivator.setAttribute('tabindex', '-1');
+    if (selected !== null) rowActivator.setAttribute('aria-selected', selected);
+    titleElement.setAttribute('title', title);
+    row.appendChild(gridcell);
+    gridcell.appendChild(rowActivator);
+    gridcell.appendChild(cellFrame);
+    row.queryAllHandler = () => [];
+    row.queryHandler = selector => {
+        if (selector === ':scope > [role="gridcell"]') return gridcell;
+        if (selector === runtime.SELECTORS.cellFrame) return cellFrame;
+        if (selector === '[data-testid="cell-frame-title"]') return rowTitleContainer;
+        return null;
+    };
+    row.closestHandler = selector =>
+        selector === runtime.SELECTORS.chatListInSide ? selectionRepairList : null;
+    gridcell.queryHandler = selector =>
+        selector.startsWith(':scope > [tabindex]') ? rowActivator : null;
+    rowActivator.queryAllHandler = () => [];
+    rowActivator.closestHandler = selector => selector === 'div[role="row"]' ? row : null;
+    rowTitleContainer.queryHandler = selector => selector === '[title]' ? titleElement : null;
+    selectionRepairList.appendChild(row);
+    return { row, gridcell, rowActivator };
+}
+const unselectedChat = createSelectionRepairRow('Unselected chat', 0);
+const openChat = createSelectionRepairRow('Open chat', 76, 'true');
+const noStateChat = createSelectionRepairRow('No selection state', 152, null);
+selectionRepairList.queryAllHandler = () => [unselectedChat.row, openChat.row, noStateChat.row];
+
+document.activeElement = null;
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(unselectedChat.row), true);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, unselectedChat.rowActivator);
+assert.equal(unselectedChat.rowActivator.getAttribute('role'), 'gridcell');
+assert.equal(unselectedChat.rowActivator.getAttribute('aria-selected'), 'undefined',
+    'an unselected row exposes no selectable state, so NVDA cannot say "not selected"');
+assert.equal(unselectedChat.rowActivator.hasAttribute('aria-selected'), true,
+    'the attribute stays present because the activator is resolved through it');
+assert.equal(openChat.rowActivator.getAttribute('aria-selected'), 'true',
+    'neutralizing one row never touches another row');
+
+document.activeElement = null;
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(openChat.row), true);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, openChat.rowActivator);
+assert.equal(openChat.rowActivator.getAttribute('aria-selected'), 'true',
+    'the open chat keeps WhatsApp selection, which NVDA drops as a single selection');
+assert.equal(unselectedChat.rowActivator.getAttribute('aria-selected'), 'undefined',
+    'the neutral token is not exclusive, so no handover is needed');
+
+document.activeElement = null;
+scheduledFrames.length = 0;
+assert.equal(runtime.focusChatRow(noStateChat.row), true);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, noStateChat.rowActivator);
+assert.equal(noStateChat.rowActivator.hasAttribute('aria-selected'), false,
+    'a row without aria-selected is left untouched; Chromium already reports no selectable state');
+
+openChat.rowActivator.setAttribute('aria-selected', 'false');
+unselectedChat.rowActivator.setAttribute('aria-selected', 'true');
+runtime.handleAttributeMutation({
+    target: unselectedChat.rowActivator,
+    attributeName: 'aria-selected'
+});
+assert.equal(unselectedChat.rowActivator.getAttribute('aria-selected'), 'true',
+    'a host write to the neutralized attribute stays authoritative');
+assert.equal(runtime.applyChatRowNativeMask(unselectedChat.row), true);
+assert.equal(unselectedChat.rowActivator.getAttribute('aria-selected'), 'true',
+    'the next mask pass keeps the newly selected row selected');
+assert.equal(runtime.applyChatRowNativeMask(openChat.row), true);
+assert.equal(openChat.rowActivator.getAttribute('aria-selected'), 'undefined',
+    'the row WhatsApp deselected is neutralized on the next mask pass');
+
+runtime.setAnnouncementReduction(false);
+assert.equal(runtime.applyChatRowNativeMask(openChat.row), false);
+assert.equal(openChat.rowActivator.getAttribute('aria-selected'), 'false',
+    'disabling announcement reduction restores WhatsApp own unselected value');
+assert.equal(openChat.rowActivator.getAttribute('role'), null,
+    'disabling announcement reduction also restores the native row structure');
+runtime.setAnnouncementReduction(true);
+runtime.clearRememberedChatRow();
+document.activeElement = activator;
+
 const firstVisibleRow = new Element();
 const secondVisibleRow = new Element();
-assert.equal(runtime.getPreferredChatRow([firstVisibleRow, secondVisibleRow]), firstVisibleRow);
-assert.equal(runtime.getPreferredChatRow([firstVisibleRow, focusRow]), focusRow);
+document.activeElement = firstShortcutChat.rowActivator;
+runtime.rememberFocusedRow(firstShortcutChat.rowActivator);
+assert.equal(runtime.getPreferredChatRow([firstVisibleRow, secondVisibleRow]), null);
+assert.equal(
+    runtime.getPreferredChatRow([firstVisibleRow, firstShortcutChat.row]),
+    firstShortcutChat.row
+);
 const bottomControl = new Element();
 bottomControl.closestHandler = () => null;
-assert.equal(runtime.getPreferredChatRow([firstVisibleRow, focusRow], bottomControl), null);
+assert.equal(
+    runtime.getPreferredChatRow([firstVisibleRow, firstShortcutChat.row], bottomControl),
+    firstShortcutChat.row
+);
 const chatListOrigin = new Element();
 chatListOrigin.closestHandler = selector => selector.includes('#side') ? new Element() : null;
-assert.equal(runtime.getPreferredChatRow([firstVisibleRow, focusRow], chatListOrigin), focusRow);
+assert.equal(
+    runtime.getPreferredChatRow([firstVisibleRow, firstShortcutChat.row], chatListOrigin),
+    firstShortcutChat.row
+);
+const exactOriginControl = new Element();
+exactOriginControl.closestHandler = selector => {
+    if (selector === 'div[role="row"]') return firstVisibleRow;
+    if (selector === runtime.SELECTORS.chatListInSide) return new Element();
+    return null;
+};
+firstVisibleRow.closestHandler = selector =>
+    selector === runtime.SELECTORS.chatListInSide ? new Element() : null;
+assert.equal(
+    runtime.getPreferredChatRow([firstVisibleRow, firstShortcutChat.row], exactOriginControl),
+    firstVisibleRow,
+    'Alt+1 keeps the exact row when focus is already inside the chat list'
+);
+
+runtime.setAnnouncementReduction(false);
+const staleNormalizationChat = createShortcutChatRow('Normalization target', false, 160);
+nativeShortcutList.appendChild(staleNormalizationChat.row);
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, staleNormalizationChat.row];
+document.activeElement = staleNormalizationChat.rowActivator;
+runtime.rememberFocusedRow(staleNormalizationChat.rowActivator);
+staleNormalizationChat.row.isConnected = false;
+const normalizationTopChat = createShortcutChatRow('Normalization top', false, 0);
+const normalizationOtherChat = createShortcutChatRow('Normalization other', false, 80);
+normalizationTopChat.rowActivator.setAttribute('tabindex', '-1');
+normalizationOtherChat.rowActivator.setAttribute('tabindex', '-1');
+nativeShortcutList.queryAllHandler = () => [normalizationTopChat.row, normalizationOtherChat.row];
+document.activeElement = bottomControl;
+runtime.normalizeChatListTabStops(nativeShortcutList);
+assert.equal(
+    normalizationTopChat.rowActivator.getAttribute('tabindex'),
+    '-1',
+    'positional recovery must not synthesize an arbitrary first-row tab stop'
+);
+assert.equal(
+    normalizationOtherChat.rowActivator.getAttribute('tabindex'),
+    '0',
+    'normalization preserves one operable tab stop at the remembered relative position'
+);
+assert.equal(
+    runtime.getPreferredChatRow(
+        [normalizationTopChat.row, normalizationOtherChat.row],
+        bottomControl,
+        true
+    ),
+    normalizationOtherChat.row,
+    'bounded recovery uses the remembered relative position when no semantic selection exists'
+);
+scheduledFrames.length = 0;
+document.activeElement = bottomControl;
+event = makeEvent({ altKey: true, code: 'Digit1', target: bottomControl });
+runtime.handleShortcuts(event);
+let positionalRecoveryFrames = 0;
+while (scheduledFrames.length > 0 && positionalRecoveryFrames < 30) {
+    scheduledFrames.shift()();
+    positionalRecoveryFrames++;
+}
+assert.equal(positionalRecoveryFrames, 12);
+assert.equal(
+    document.activeElement,
+    normalizationOtherChat.rowActivator,
+    'Alt+1 falls back to the remembered relative position after bounded title recovery'
+);
+
+document.activeElement = secondShortcutChat.rowActivator;
+runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+scheduledFrames.length = 0;
+document.activeElement = bottomControl;
+assert.equal(runtime.focusChatRow(secondShortcutChat.row), true);
+secondShortcutChat.titleElement.setAttribute('title', 'Recycled chat');
+const recreatedSecondChat = createShortcutChatRow('Second chat', false, 160);
+nativeShortcutList.appendChild(recreatedSecondChat.row);
+nativeShortcutList.queryAllHandler = () => [
+    firstShortcutChat.row,
+    secondShortcutChat.row,
+    recreatedSecondChat.row
+];
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    recreatedSecondChat.rowActivator,
+    'a connected row recycled by virtualization is resolved by its original unique title'
+);
+
+document.activeElement = recreatedSecondChat.rowActivator;
+runtime.rememberFocusedRow(recreatedSecondChat.rowActivator);
+recreatedSecondChat.row.isConnected = false;
+const duplicateSecondA = createShortcutChatRow('Second chat', false, 160);
+const duplicateSecondB = createShortcutChatRow('Second chat', false, 240);
+nativeShortcutList.queryAllHandler = () => [duplicateSecondA.row, duplicateSecondB.row];
+assert.equal(
+    runtime.getPreferredChatRow([duplicateSecondA.row, duplicateSecondB.row], bottomControl),
+    null,
+    'duplicate chat titles fail safely instead of choosing the first row'
+);
+scheduledFrames.length = 0;
+document.activeElement = bottomControl;
+assert.equal(runtime.focusChatRow(recreatedSecondChat.row), true);
+scheduledFrames.shift()();
+scheduledFrames.shift()();
+assert.equal(document.activeElement, bottomControl, 'ambiguous detached chats are not focused');
+
+const titlelessChat = createShortcutChatRow('', false, 80);
+nativeShortcutList.appendChild(titlelessChat.row);
+nativeShortcutList.queryAllHandler = () => [titlelessChat.row];
+document.activeElement = titlelessChat.rowActivator;
+runtime.rememberFocusedRow(titlelessChat.rowActivator);
+assert.equal(
+    runtime.getRememberedFocus().lastFocusedChatTitle,
+    '',
+    'a titleless new row must not inherit the previously remembered chat title'
+);
+assert.equal(
+    runtime.getPreferredChatRow([duplicateSecondA.row], bottomControl),
+    null,
+    'cleared identity must not resolve the previous chat title'
+);
+assert.equal(
+    runtime.getPreferredChatRow([titlelessChat.row], bottomControl),
+    null,
+    'a titleless row is not stable memory when Alt+1 starts outside the chat list'
+);
+
+const nestedLinkChat = createShortcutChatRow('Link safety', false, 80);
+nestedLinkChat.rowActivator.localName = 'a';
+nestedLinkChat.rowActivator.setAttribute('href', '/nested-action');
+nativeShortcutList.queryAllHandler = () => [nestedLinkChat.row];
+scheduledFrames.length = 0;
+document.activeElement = bottomControl;
+assert.equal(runtime.focusChatRow(nestedLinkChat.row), true);
+scheduledFrames.shift()();
+assert.equal(document.activeElement, nestedLinkChat.gridcell, 'Alt+1 must not focus a nested link action');
+assert.equal(
+    nestedLinkChat.gridcell.getAttribute('tabindex'),
+    '0',
+    'the safe gridcell fallback must be programmatically focusable in a real browser'
+);
+
+const nestedButtonChat = createShortcutChatRow('Button safety', false, 80);
+nestedButtonChat.rowActivator.setAttribute('role', 'button');
+nestedButtonChat.rowActivator.removeAttribute('aria-selected');
+nativeShortcutList.queryAllHandler = () => [nestedButtonChat.row];
+scheduledFrames.length = 0;
+document.activeElement = bottomControl;
+assert.equal(runtime.focusChatRow(nestedButtonChat.row), true);
+scheduledFrames.shift()();
+assert.equal(
+    document.activeElement,
+    nestedButtonChat.gridcell,
+    'an unverified nested button must not replace the chat row activator'
+);
+assert.equal(nestedButtonChat.gridcell.getAttribute('tabindex'), '0');
+selectorResults.delete(runtime.SELECTORS.side);
+runtime.setAnnouncementReduction(true);
 activator.setAttribute('aria-selected', 'true');
 assert.equal(runtime.applyChatRowNativeMask(focusRow), true);
 assert.equal(activator.getAttribute('aria-selected'), 'true');
@@ -2305,10 +4836,13 @@ const actionButtons = ['Send document', 'Add contact', 'Ask Meta AI'].map(text =
 const encryptionNotice = new Element();
 const encryptionButton = new Element();
 const chatListFallback = new Element();
+const communityEmptyState = new Element();
+const communityEmptyStateIconTitle = new Element();
 titleSpan.textContent = 'Download WhatsApp for Windows';
 copySpan.textContent = 'Get extra features like voice and video calling, screen sharing and more.';
 downloadButton.textContent = 'Download';
 encryptionButton.textContent = 'end-to-end encrypted';
+communityEmptyStateIconTitle.textContent = 'wds-ic-communities-filled';
 actionGroup.setAttribute('data-testid', 'intro-panel-empty-state-action-tile-group');
 encryptionNotice.setAttribute('data-testid', 'chatlist-e2e-message');
 promo.children.push(titleSpan, copySpan, downloadButton);
@@ -2329,22 +4863,26 @@ introPanel.queryHandler = selector => {
     if (selector === ':scope > [data-testid="intro-panel-empty-state-action-tile-group"]') return introPanel.children[1];
     return null;
 };
+communityEmptyState.queryAllHandler = selector =>
+    selector === 'svg title' ? [communityEmptyStateIconTitle] : [];
 selectorResults.set('section[data-testid="intro-panel"]', introPanel);
 selectorResults.set('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]', actionGroup);
 selectorResults.set('#side [data-testid="chatlist-e2e-message"]', encryptionNotice);
 selectorResults.set(runtime.SELECTORS.chatList, chatListFallback);
+selectorAllResults.set(runtime.SELECTORS.communityEmptyState, [communityEmptyState]);
 
 runtime.setCleanUi(true);
 assert.equal(runtime.getDesktopAppPromo(), promo);
 const initialCleanUiTargets = runtime.getCleanUiHiddenTargets();
-assert.equal(initialCleanUiTargets.length, 3);
+assert.equal(initialCleanUiTargets.length, 4);
 assert.equal(initialCleanUiTargets[0], promo);
-assert.equal(initialCleanUiTargets[1], actionGroup);
-assert.equal(initialCleanUiTargets[2], encryptionNotice);
+assert.equal(initialCleanUiTargets[1], communityEmptyState);
+assert.equal(initialCleanUiTargets[2], actionGroup);
+assert.equal(initialCleanUiTargets[3], encryptionNotice);
 document.activeElement = downloadButton;
 assert.equal(runtime.syncCleanUi(), true);
 assert.equal(document.activeElement, navButton);
-for (const target of [promo, actionGroup, encryptionNotice]) {
+for (const target of [promo, communityEmptyState, actionGroup, encryptionNotice]) {
     assert.equal(target.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
 }
 for (const control of [downloadButton, ...actionButtons, encryptionButton]) {
@@ -2377,7 +4915,7 @@ chatListFallback.focusSucceeds = false;
 document.activeElement = actionButtons[0];
 assert.equal(runtime.syncCleanUi(), false);
 assert.equal(document.activeElement, actionButtons[0]);
-for (const target of [promo, actionGroup, encryptionNotice]) {
+for (const target of [promo, communityEmptyState, actionGroup, encryptionNotice]) {
     assert.equal(target.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 }
 navButton.focusSucceeds = true;
@@ -2388,7 +4926,7 @@ document.activeElement = unrelatedFocus;
 runtime.setCleanUi(false);
 assert.equal(runtime.syncCleanUi(), false);
 assert.equal(document.activeElement, unrelatedFocus);
-for (const target of [promo, actionGroup, encryptionNotice]) {
+for (const target of [promo, communityEmptyState, actionGroup, encryptionNotice]) {
     assert.equal(target.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 }
 
@@ -2402,6 +4940,7 @@ runtime.setCustomText('desktop-promo', '');
 titleSpan.textContent = 'Download WhatsApp for Windows';
 assert.equal(runtime.syncCleanUi(), true);
 assert.equal(promo.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+assert.equal(communityEmptyState.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
 assert.equal(actionGroup.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
 assert.equal(encryptionNotice.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
 actionButtons[0].textContent = 'Kirim dokumen';
@@ -2448,6 +4987,8 @@ assert.equal(encryptionNotice.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), f
 
 runtime.setCleanUi(false);
 runtime.syncCleanUi();
+assert.equal(communityEmptyState.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+selectorAllResults.delete(runtime.SELECTORS.communityEmptyState);
 selectorResults.delete('section[data-testid="intro-panel"]');
 selectorResults.delete('section[data-testid="intro-panel"] > [data-testid="intro-panel-empty-state-action-tile-group"]');
 const sidebarPromo = new Element();
@@ -2593,11 +5134,21 @@ assert.doesNotMatch(originalSource, /copyDebugHtmlShortcut|Debug HTML copied/);
 assert.match(originalSource, /getAudioExperimentDiagnosticText/);
 assert.match(originalSource, /navigator\.clipboard\?\.writeText/);
 assert.match(originalSource, /stopImmediatePropagation\(\)/);
-assert.match(originalSource, /applyChatRowNativeMask\(row\);\s+lastFocusedChatRowNode = row;/);
+assert.match(
+    originalSource,
+    /window\.addEventListener\(["']keydown["'], handleMessageGridKeydown, true\)/,
+    'message-grid navigation and Alt+1 one-arrow recovery must run before WhatsApp capture handlers'
+);
+assert.doesNotMatch(
+    originalSource,
+    /document\.addEventListener\(["']keydown["'], handleMessageGridKeydown, true\)/,
+    'document capture is too late when WhatsApp has already applied its stale chat-row index'
+);
+assert.match(originalSource, /applyChatRowNativeMask\(row\);\s+rememberChatRowState\(row\);/);
 assert.match(originalSource, /attrName === ["']aria-hidden["'] \|\| attrName === ["']tabindex["']/);
 assert.doesNotMatch(originalSource, /fixGenericSectionBug|focusChatRowActivator|unreadMessageId|toggleMessageInputShortcut/);
 assert.match(originalSource, /function getChatRowActivator/);
-assert.equal((originalSource.match(/normalizeChatListTabStops\(/g) || []).length, 5);
+assert.match(originalSource, /function normalizeChatListTabStops/);
 assert.doesNotMatch(originalSource, /scheduleRoleFix\(document\.body\)/);
 assert.doesNotMatch(originalSource, /attempt < 20|setTimeout\(\(\) => tryFocus/);
 assert.doesNotMatch(originalSource, /setTimeout\(confirmDestination, 100\)|innerText \|\| row\.textContent/);
@@ -2673,5 +5224,25 @@ assert.doesNotMatch(originalSource, /function startStatusTransitionDiagnostic/);
 assert.doesNotMatch(originalSource, /wa-plus-status-change-diagnostic/);
 assert.doesNotMatch(originalSource, /event\.code === ["']Digit7["']/,
     'Alt+Shift+7 must exist only in the debug userscript');
+assert.match(
+    originalSource,
+    /startStatusAutoAdvanceGuard\(\);\s*onDomReady\(function/,
+    'the Status auto-advance guard must be installed before DOM-ready startup'
+);
+assert.match(
+    originalSource,
+    /if \(statusRelevant\) scheduleStatusAccessibilitySync\(\)/,
+    'unrelated body mutations must not trigger Status accessibility rescans'
+);
+assert.match(
+    originalSource,
+    /progressStyleOnly/,
+    'Status progress style churn must be excluded from accessibility rescans'
+);
+assert.match(
+    originalSource,
+    /markerAttributeMutation[\s\S]*target\?\.matches\?\.\(SELECTORS\.statusActiveMarker\)[\s\S]*target\?\.querySelector\?\.\(SELECTORS\.statusPlayerRoot\)/,
+    'active-marker activation and deactivation must resynchronize a reused Status viewer'
+);
 
 console.log('accessibility runtime checks passed');

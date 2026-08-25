@@ -3,3 +3,5 @@ whatsapp_web_plus.debug.js
 scriptLama.js
 node_modules/
 docs/
+*.private.pem
+release-private-key.pem

@@ -1,8 +1,24 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.76 reflect the corresponding source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.80 reflect the corresponding source in `src/`.
 
 ## Unreleased
+
+## 2.6.80 - 2026-08-25
+
+### Changed
+
+- Added `Alt+Shift+C` to open the focused text message or authored image, video, or document caption in a clean screen-reader document with its sent time, native lists, and safe clickable links. File names, attachment controls, media thumbnails, player controls, quoted content, and message metadata are excluded from the caption body. Long messages are expanded before the complete reader document is loaded. The reader retains one script-owned document so its Escape handler survives content changes, and it includes a native Close reader button for NVDA focus mode, where NVDA may consume the first Escape press.
+- Let `Shift+Enter` activate WhatsApp's Read more button for the focused primary message and replace WhatsApp's stale truncated accessible name with the complete expanded text, while leaving the shortcut untouched everywhere else.
+- Let `Enter` activate the actual focused Play or Pause button of a primary voice message while leaving `Space` and every other focused button to WhatsApp's native behavior.
+- Redesigned Clean Status reading so video, voice audio, and music play to natural completion without script-driven pause, seek, or duration guessing, while automatic advancement remains stopped on the completed Status. Static text and image Status timers are still paused, and media protection now survives delayed hydration and full content-button remounts.
+
+### Fixed
+
+- Restored focus to the last chat-list position when Communities content closes, including when focus is in the selected community, the hidden Create communities section, or the document root after a second Escape. Clean UI now also recognizes and hides WhatsApp's current Create communities empty-state panel instead of leaving NVDA's cursor stranded on it.
+- Changed `Alt + 1` to enter the ready chat list after a fresh reload, return to the last keyboard-focused row afterward, or preserve the current row when already in the list, without scrolling back to the first chat.
+- Stopped NVDA from announcing *not selected* for chat-list rows. WhatsApp marks every row other than the open chat with `aria-selected="false"`; once the grid-cell role moves onto the row activator, that value makes the browser report the row as selectable but unselected, which NVDA reads on every focus change. Unselected rows now use `undefined`, the value of that state meaning the row is not selectable, so the unwanted state is silent. The open chat keeps WhatsApp's own selected state. This speech cleanup is separate from focus and row-index recovery.
+- Replaced WhatsApp's opaque mention identities in focused message labels with their visible `@Name` values, including when Privacy Mode is enabled, without exposing phone numbers.
 
 ## 2.6.76 - 2026-08-16
 
