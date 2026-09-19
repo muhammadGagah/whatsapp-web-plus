@@ -2,8 +2,6 @@
 
 This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.82 reflect the corresponding source in `src/`.
 
-## Unreleased
-
 ## 2.6.82 - 2026-09-19
 
 ### Added
