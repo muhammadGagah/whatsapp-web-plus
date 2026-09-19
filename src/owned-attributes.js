@@ -67,6 +67,12 @@ export function applyOwnedAttribute(el, name, value, owner) {
     };
     attributes.set(name, state);
   } else {
+    // A host deletion while we mask this attribute becomes the restore baseline,
+    // even if a later refresh changes the value applied by the script.
+    if (state.hostRemoved && state.appliedValue === null) {
+      state.originalPresent = false;
+      state.originalValue = null;
+    }
     state.appliedValue = value;
     state.hostRemoved = false;
   }

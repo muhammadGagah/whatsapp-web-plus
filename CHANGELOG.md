@@ -1,8 +1,38 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.80 reflect the corresponding source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.82 reflect the corresponding source in `src/`.
 
 ## Unreleased
+
+## 2.6.82 - 2026-09-19
+
+### Added
+
+- Added keyboard access to WhatsApp's text-formatting toolbar. Select text in the message editor, then press `Alt+F10` to enter the toolbar. Use Left and Right Arrow, Home, or End to choose an option, Enter or Space to apply it, and Escape to return to the editor with the selection preserved. English and Indonesian guidance explains how to open and use the toolbar.
+- Added script-side support for sending the `Alt+Shift+C` message reader to a compatible WhatsApp Companion reader instead of opening a browser window in the desktop runtime. This requires a compatible Companion update.
+
+### Changed
+
+- Adjusted the Clear and Clear Plus voice-recording profiles, including their equalizer, output gain, and Clear Plus compression settings.
+- Improved message-reader text layout to preserve paragraph boundaries, authored line breaks, lists, and link labels without adding blank lines from HTML layout.
+- Let automatic reading keep newly arriving messages in view when the previous last message is visible and WhatsApp has focus.
+
+### Fixed
+
+- Restored keyboard focus when WhatsApp removes a focused control inside a message, replaces a message, or moves its row. Recovery stays within the original conversation and respects newer navigation requests.
+- Preserved chat-list navigation across row updates and reordering.
+- Restored sender information after Privacy Mode is disabled, even when the same author was masked repeatedly.
+- Prevented unrelated page updates from indefinitely delaying the text-formatting toolbar availability announcement.
+- Applied the selected voice-recording profile when recording starts with WhatsApp's native `Ctrl+Alt+Shift+R` shortcut.
+- Changed `Alt+0` to announce a failure when the media player remains open instead of incorrectly reporting that it closed.
+- Prevented repeated accessibility updates from restoring an old label reference that WhatsApp had removed.
+- Forwarded microphone disconnection to consumers of processed audio as a single track-ended event, while keeping an explicit recording stop silent.
+- Removed script-generated Meta AI message labels and restored native attributes immediately when announcement reduction is disabled.
+- Improved long-message reader expansion when WhatsApp replaces the message or hides its Read more control, while rejecting results from a different conversation.
+- Prevented continuous page updates from indefinitely delaying automatic message reading.
+- Added a timeout and cleanup for audio processing that cannot start, and prevented video-only capture from consuming a pending voice-recording request.
+- Preserved complete emoji when truncating Companion announcements and rejected stale Companion reader results after the context changes.
+- Kept the settings keyboard handler from processing already-handled events or keys used during text composition.
 
 ## 2.6.80 - 2026-08-25
 

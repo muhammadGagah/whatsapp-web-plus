@@ -21,34 +21,34 @@ const AUDIO_PROFILES = Object.freeze({
   clear: Object.freeze({
     id: 'clear',
     processing: true,
-    highPassHz: 70,
+    highPassHz: 45,
     highPassQ: 0.707,
-    lowMidHz: 220,
-    lowMidQ: 0.9,
-    lowMidGainDb: -1.2,
-    presenceHz: 3000,
-    presenceQ: 0.8,
-    presenceGainDb: 1.1,
-    outputGainDb: -1.0
+    lowMidHz: 250,
+    lowMidQ: 0.7,
+    lowMidGainDb: -0.5,
+    presenceHz: 3400,
+    presenceQ: 0.7,
+    presenceGainDb: 1.2,
+    outputGainDb: -1.5
   }),
   'clear-plus': Object.freeze({
     id: 'clear-plus',
     processing: true,
-    highPassHz: 85,
+    highPassHz: 20,
     highPassQ: 0.707,
-    lowMidHz: 240,
-    lowMidQ: 0.9,
-    lowMidGainDb: -2.5,
-    presenceHz: 3000,
-    presenceQ: 0.8,
-    presenceGainDb: 2.5,
-    outputGainDb: -2.0,
+    lowMidHz: 250,
+    lowMidQ: 0.7,
+    lowMidGainDb: 0.0,
+    presenceHz: 8000,
+    presenceQ: 0.7,
+    presenceGainDb: 1.2,
+    outputGainDb: 0.0,
     compressor: Object.freeze({
-      threshold: -18,
-      knee: 12,
-      ratio: 2,
-      attack: 0.01,
-      release: 0.15
+      threshold: -12,
+      knee: 24,
+      ratio: 1.5,
+      attack: 0.025,
+      release: 0.20
     })
   }),
   'noise-filter': Object.freeze({
@@ -221,7 +221,9 @@ function isVoiceMessageButton(target) {
 }
 
 function handleVoiceCaptureActivation(event) {
-  if (event.type === 'click' && isVoiceMessageButton(event.target)) {
+  const nativeRecordingShortcut = event.type === 'keydown' && event.code === 'KeyR' &&
+    event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey;
+  if (nativeRecordingShortcut || (event.type === 'click' && isVoiceMessageButton(event.target))) {
     armNextVoiceMessageCapture();
   }
 }
@@ -229,8 +231,9 @@ function handleVoiceCaptureActivation(event) {
 function installVoiceCaptureArming() {
   const hostWindow = globalThis.window;
   if (armingListenersInstalled || typeof hostWindow?.addEventListener !== 'function') return;
-  // Microphone clicks arm here; Alt+M arms synchronously before its synthetic shortcut is dispatched.
+  // Capture native activation before WhatsApp requests the stream. Alt+M also arms before dispatch.
   hostWindow.addEventListener('click', handleVoiceCaptureActivation, true);
+  hostWindow.addEventListener('keydown', handleVoiceCaptureActivation, true);
   armingListenersInstalled = true;
 }
 
@@ -749,8 +752,19 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     output.connect(destination);
 
     if (context.state === 'suspended' && typeof context.resume === 'function') {
-      await context.resume();
+      let resumeTimer;
+      try {
+        await Promise.race([
+          context.resume(),
+          new Promise((resolve, reject) => {
+            resumeTimer = setTimeout(() => reject(new Error('AudioContext resume timed out')), 1500);
+          })
+        ]);
+      } finally {
+        clearTimeout(resumeTimer);
+      }
     }
+    if (context.state !== 'running') throw new Error('AudioContext is not running');
 
     const outputAudioTracks = destination.stream?.getAudioTracks?.() || [];
     if (!outputAudioTracks.length) throw new Error('Processed stream has no audio track');
@@ -767,14 +781,14 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       if (cleaned) return;
       cleaned = true;
       for (const node of nodes) {
-        try { node.disconnect?.(); } catch { /* Ignore cleanup failures. */ }
+        try { node.disconnect?.(); } catch {}
       }
       if (stopInput) {
         for (const track of inputStream.getAudioTracks?.() || []) {
-          try { track.stop?.(); } catch { /* Ignore cleanup failures. */ }
+          try { track.stop?.(); } catch {}
         }
       }
-      try { context.close?.(); } catch { /* Ignore cleanup failures. */ }
+      try { context.close?.(); } catch {}
     };
 
     if (outputTrack && typeof outputTrack.stop === 'function') {
@@ -800,7 +814,10 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     for (const track of inputStream.getAudioTracks?.() || []) {
       try {
         track.addEventListener?.('ended', () => {
+          if (cleaned || outputTrack.readyState === 'ended') return;
           try { outputTrack.stop?.(); } catch { cleanup(); }
+          // stop() is deliberately silent; forward external microphone loss to the consumer.
+          outputTrack.dispatchEvent(new Event('ended'));
         }, { once: true });
       } catch {}
     }
@@ -825,9 +842,12 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     };
   } catch (error) {
     for (const node of nodes) {
-      try { node.disconnect?.(); } catch { /* Ignore cleanup failures. */ }
+      for (const track of node.stream?.getTracks?.() || []) {
+        try { track.stop(); } catch {}
+      }
+      try { node.disconnect?.(); } catch {}
     }
-    try { context?.close?.(); } catch { /* Ignore cleanup failures. */ }
+    try { context?.close?.()?.catch?.(() => {}); } catch {}
     throw error;
   }
 }
@@ -843,8 +863,8 @@ function installGetUserMediaHook() {
 
   nativeGetUserMedia = mediaDevices.getUserMedia;
   const patchedGetUserMedia = async function(constraints) {
-    const voiceMessageArmed = consumeVoiceMessageCaptureArm();
     const hasAudio = constraints?.audio !== false && constraints?.audio != null;
+    const voiceMessageArmed = hasAudio && consumeVoiceMessageCaptureArm();
     const captureKind = voiceMessageArmed ? 'voice-message' : 'voice-call';
     const enabled = voiceMessageArmed
       ? isAudioExperimentEnabled()

@@ -2,6 +2,7 @@ const BRIDGE_PROPERTY = '__whatsappWebPlusCompanionBridge';
 const BRIDGE_CONTRACT_VERSION = 2;
 const BRIDGE_QUEUE_LIMIT = 50;
 const BRIDGE_TEXT_LIMIT = 1800;
+export const COMPANION_READER_LIMIT = 131072;
 const VALID_SOURCE = new Set(['status', 'message-log', 'alert']);
 const RANDOM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CHAT_TITLE_SELECTOR = [
@@ -65,7 +66,13 @@ function readContextState() {
 function normalizeText(text) {
   const value = String(text || '').trim();
   if (value.length <= BRIDGE_TEXT_LIMIT) return value;
-  return `${value.slice(0, BRIDGE_TEXT_LIMIT - 1).trimEnd()}…`;
+  let end = BRIDGE_TEXT_LIMIT - 1;
+  const lastCodeUnit = value.charCodeAt(end - 1);
+  const nextCodeUnit = value.charCodeAt(end);
+  // Keep the existing UTF-16 size limit without cutting an emoji in half.
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff &&
+    nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) end--;
+  return `${value.slice(0, end).trimEnd()}…`;
 }
 
 function normalizeLanguage(language) {
@@ -89,6 +96,40 @@ function createBridge() {
   let lastInvalidation = 'startup';
   let invalidatedSource = '';
   let previousContext = null;
+
+  const clearReader = () => {
+    for (let index = queue.length - 1; index >= 0; index--) {
+      if (queue[index].source === 'message-reader') queue.splice(index, 1);
+    }
+  };
+
+  const publishReader = ({ reader, language, privacy = false, expectedContext } = {}) => {
+    syncContext();
+    if (!expectedContext || expectedContext.sessionToken !== sessionToken ||
+      expectedContext.context !== contextToken || expectedContext.generation !== generation) return null;
+    let copy;
+    try {
+      const encoded = JSON.stringify(reader);
+      if (!encoded || encoded.length > COMPANION_READER_LIMIT) return null;
+      copy = JSON.parse(encoded);
+    } catch { return null; }
+    if (copy?.version !== 1 || !['ready', 'error'].includes(copy.status) ||
+      !Array.isArray(copy.runs) || copy.runs.length > 4096) return null;
+    clearReader();
+    const entry = Object.freeze({
+      sequence: ++sequence, generation, sessionToken, context: contextToken,
+      source: 'message-reader', language: normalizeLanguage(language),
+      privacy: Boolean(privacy), text: '',
+      readerExpiresAt: Date.now() + 10000,
+      reader: Object.freeze({ ...copy, runs: Object.freeze(copy.runs.map(run => Object.freeze(run))) })
+    });
+    queue.push(entry);
+    if (queue.length > BRIDGE_QUEUE_LIMIT) {
+      dropped += queue.length - BRIDGE_QUEUE_LIMIT;
+      queue.splice(0, queue.length - BRIDGE_QUEUE_LIMIT);
+    }
+    return entry;
+  };
 
   const publish = ({ text, source, language, privacy = false } = {}) => {
     syncContext();
@@ -149,6 +190,11 @@ function createBridge() {
 
   const readSince = (lastSequence = 0, expectedGeneration = generation) => {
     syncContext();
+    for (let index = queue.length - 1; index >= 0; index--) {
+      if (queue[index].source === 'message-reader' && queue[index].readerExpiresAt <= Date.now()) {
+        queue.splice(index, 1);
+      }
+    }
     const cursor = Number.isSafeInteger(lastSequence) && lastSequence >= 0 ? lastSequence : 0;
     const requestedGeneration = Number.isSafeInteger(expectedGeneration) && expectedGeneration > 0
       ? expectedGeneration
@@ -176,7 +222,10 @@ function createBridge() {
 
   return Object.freeze({
     contractVersion: BRIDGE_CONTRACT_VERSION,
+    readerContractVersion: 1,
     publish,
+    publishReader,
+    clearReader,
     invalidate,
     readSince,
     snapshot() {
@@ -220,6 +269,19 @@ export function invalidateCompanionAnnouncements(reason, source = '') {
 
 export function isCompanionRuntime() {
   return COMPANION_RUNTIME;
+}
+
+export function beginCompanionReader() {
+  const bridge = ensureCompanionBridge();
+  if (bridge?.readerContractVersion !== 1 || typeof bridge.publishReader !== 'function') return null;
+  bridge.clearReader();
+  const { sessionToken, context, generation } = bridge.snapshot();
+  return { sessionToken, context, generation };
+}
+
+export function publishCompanionReader(details) {
+  const bridge = ensureCompanionBridge();
+  return typeof bridge?.publishReader === 'function' ? bridge.publishReader(details) : null;
 }
 
 if (isCompanionRuntime()) ensureCompanionBridge();

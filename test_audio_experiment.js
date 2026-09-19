@@ -179,6 +179,7 @@ windowTarget.dispatchEvent = EventTarget.prototype.dispatchEvent.bind(windowTarg
 windowTarget.addEventListener('wa-plus-native-voice-report', event => eventReports.push(event.detail));
 
 const context = {
+  setTimeout, clearTimeout,
   console, Date, JSON, Object, Array, String, Number, Boolean, Math,
   Event, EventTarget, CustomEvent: FakeCustomEvent, performance,
   IS_DEBUG_BUILD: true,
@@ -198,16 +199,18 @@ context.globalThis = context;
 vm.createContext(context);
 
 let shortcutCapturePromise;
-windowTarget.addEventListener('keydown', event => {
-  if (event.code === 'KeyR' && event.ctrlKey && event.altKey && event.shiftKey) {
-    shortcutCapturePromise = mediaDevices.getUserMedia({ audio: { deviceId: { exact: 'mic-1' } } });
-  }
-}, true);
 
 let source = fs.readFileSync(path.join(__dirname, 'src/audio-experiment.js'), 'utf8');
 source = source.replace(/^import .*;\s*$/gm, '').replace(/export function /g, 'function ');
 vm.runInContext(source, context, { filename: 'src/audio-experiment.js' });
 const plain = value => JSON.parse(JSON.stringify(value));
+
+// The document-start userscript installs capture listeners before WhatsApp's shortcut handler.
+windowTarget.addEventListener('keydown', event => {
+  if (event.code === 'KeyR' && event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) {
+    shortcutCapturePromise = mediaDevices.getUserMedia({ audio: { deviceId: { exact: 'mic-1' } } });
+  }
+});
 
 (async () => {
   const api = windowTarget.WAPlusNativeVoice;
@@ -245,14 +248,20 @@ const plain = value => JSON.parse(JSON.stringify(value));
   assert.equal(api.getReports().some(item => item.kind.startsWith('media-recorder-')), false);
 
   assert.equal(api.armNextCapture(), true);
-  const remappedShortcut = new Event('keydown');
-  Object.defineProperties(remappedShortcut, {
+  await mediaDevices.getUserMedia({ video: true });
+  const afterVideoOnly = await mediaDevices.getUserMedia({ audio: true });
+  assert.notEqual(afterVideoOnly, nativeStream);
+  afterVideoOnly.getAudioTracks()[0].stop();
+  originalStopCount = 0;
+  // Native recording must select the voice profile without an explicit Alt+M/API arm.
+  const nativeShortcut = new Event('keydown');
+  Object.defineProperties(nativeShortcut, {
     code: { value: 'KeyR' },
     ctrlKey: { value: true },
     altKey: { value: true },
     shiftKey: { value: true }
   });
-  windowTarget.dispatchEvent(remappedShortcut);
+  windowTarget.dispatchEvent(nativeShortcut);
   const processed = await shortcutCapturePromise;
   assert.notEqual(processed, nativeStream);
   assert.equal(processed.getAudioTracks()[0].id, 'processed-track');
@@ -269,10 +278,10 @@ const plain = value => JSON.parse(JSON.stringify(value));
   assert.equal(clearReport.kind, 'getUserMedia');
   assert.equal(clearReport.processing.mode, 'codec-aware-clear');
   assert.equal(clearReport.processing.contextSampleRate, 48000);
-  assert.equal(clearReport.processing.highPassHz, 70);
-  assert.equal(clearReport.processing.lowMidGainDb, -1.2);
-  assert.equal(clearReport.processing.presenceGainDb, 1.1);
-  assert.equal(clearReport.processing.outputGainDb, -1);
+  assert.equal(clearReport.processing.highPassHz, 45);
+  assert.equal(clearReport.processing.lowMidGainDb, -0.5);
+  assert.equal(clearReport.processing.presenceGainDb, 1.2);
+  assert.equal(clearReport.processing.outputGainDb, -1.5);
 
   const captureAfterClear = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(captureAfterClear, nativeStream);
@@ -308,7 +317,10 @@ const plain = value => JSON.parse(JSON.stringify(value));
   assert.equal(copiedDiagnostics.reportsNewestFirst[0].kind, 'media-recorder-result');
   assert.equal(api.getCallReports().every(item => item.captureKind === 'voice-call'), true);
 
+  let explicitStopEndedEvents = 0;
+  processed.getAudioTracks()[0].addEventListener('ended', () => explicitStopEndedEvents++);
   processed.getAudioTracks()[0].stop();
+  assert.equal(explicitStopEndedEvents, 0, 'explicit stop must remain silent');
   assert.equal(originalStopCount, 1);
   assert.equal(FakeAudioContext.instances.at(-1).state, 'closed');
 
@@ -325,13 +337,13 @@ const plain = value => JSON.parse(JSON.stringify(value));
   const clearPlus = await mediaDevices.getUserMedia({ audio: true });
   const clearPlusReport = api.getLastReport();
   assert.equal(clearPlusReport.processing.mode, 'codec-aware-clear-plus');
-  assert.equal(clearPlusReport.processing.highPassHz, 85);
-  assert.equal(clearPlusReport.processing.lowMidGainDb, -2.5);
-  assert.equal(clearPlusReport.processing.presenceGainDb, 2.5);
+  assert.equal(clearPlusReport.processing.highPassHz, 20);
+  assert.equal(clearPlusReport.processing.lowMidGainDb, 0);
+  assert.equal(clearPlusReport.processing.presenceGainDb, 1.2);
   assert.deepEqual(plain(clearPlusReport.processing.compressor), {
-    threshold: -18, knee: 12, ratio: 2, attack: 0.01, release: 0.15
+    threshold: -12, knee: 24, ratio: 1.5, attack: 0.025, release: 0.2
   });
-  assert.equal(FakeAudioContext.instances.at(-1).compressor.ratio.value, 2);
+  assert.equal(FakeAudioContext.instances.at(-1).compressor.ratio.value, 1.5);
   clearPlus.getAudioTracks()[0].stop();
 
   assert.equal(api.selectProfile('noise-filter'), true);
@@ -412,6 +424,10 @@ const plain = value => JSON.parse(JSON.stringify(value));
   assert.equal(api.armNextCapture(), true);
   const voiceMessageBypass = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(voiceMessageBypass, nativeStream);
+  windowTarget.dispatchEvent(nativeShortcut);
+  assert.equal(await shortcutCapturePromise, nativeStream);
+  assert.deepEqual(plain(capturedConstraints), { audio: { deviceId: { exact: 'mic-1' } } },
+    'native voice recording must not inherit the enabled call profile');
 
   assert.equal(api.selectCallAudioProfile('natural'), true);
   const callNatural = await mediaDevices.getUserMedia({
@@ -491,6 +507,43 @@ const plain = value => JSON.parse(JSON.stringify(value));
   assert.equal(voiceMessageDiagnostics.encoded.encodedBitDepth, null);
   assert.equal(voiceMessageDiagnostics.decoded.sampleRate, 48000);
   assert.equal(voiceMessageDiagnostics.decoded.channels, 1);
+
+  windowTarget.AudioContext = class extends FakeAudioContext {
+    constructor(options) { super(options); this.state = 'suspended'; }
+    resume() { return new Promise(() => {}); }
+  };
+  assert.equal(api.selectProfile('clear'), true);
+  assert.equal(api.armNextCapture(), true);
+  const stopsBeforeTimeout = originalStopCount;
+  assert.equal(await mediaDevices.getUserMedia({ audio: true }), nativeStream);
+  assert.equal(api.getLastReport().processing.mode, 'codec-aware-fallback-natural');
+  assert.equal(api.getLastReport().processing.error, 'AudioContext resume timed out');
+  assert.equal(FakeAudioContext.instances.at(-1).state, 'closed');
+  assert.equal(FakeAudioContext.instances.at(-1).destination.stream.getAudioTracks()[0].readyState, 'ended');
+  assert.equal(originalStopCount, stopsBeforeTimeout);
+  windowTarget.AudioContext = FakeAudioContext;
+
+  // Revoking permission or losing the device must notify the consumer of the replacement track.
+  const previousInputTracks = nativeStream.tracks;
+  const lostInput = new FakeTrack();
+  nativeStream.tracks = [lostInput];
+  assert.equal(api.armNextCapture(), true);
+  const lostStream = await mediaDevices.getUserMedia({ audio: true });
+  const lostOutput = lostStream.getAudioTracks()[0];
+  const lostContext = FakeAudioContext.instances.at(-1);
+  let externalEndedEvents = 0;
+  lostOutput.addEventListener('ended', () => {
+    externalEndedEvents++;
+    assert.equal(lostOutput.readyState, 'ended');
+    assert.equal(lostContext.state, 'closed');
+  });
+  lostInput.readyState = 'ended';
+  lostInput.dispatchEvent(new Event('ended'));
+  assert.equal(externalEndedEvents, 1, 'external microphone loss must emit ended');
+  lostInput.dispatchEvent(new Event('ended'));
+  lostOutput.stop();
+  assert.equal(externalEndedEvents, 1, 'cleanup must not emit duplicate ended events');
+  nativeStream.tracks = previousInputTracks;
 
   const unavailableStore = new Map();
   const unavailableWindow = new EventTarget();

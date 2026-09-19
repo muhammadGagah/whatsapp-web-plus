@@ -45,9 +45,13 @@ import {
 
 let lastFocusedChatRowNode = null;
 let lastFocusedChatTitle = '';
+let lastFocusedChatIdentity = '';
 let lastFocusedChatRowIndex = -1;
 let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
+let lastFocusedMessageTarget = null;
+let lastFocusedMessageContainer = null;
+let lastFocusedMessageChatTitle = '';
 let announcementTimer = null;
 let userAnnouncementUntil = 0;
 let announcementGeneration = 0;
@@ -450,8 +454,9 @@ export function getMessageReadMoreButton(messageItem) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-export function hasMessageReadMoreControl(messageItem) {
-  return getRawMessageReadMoreControls(messageItem).length > 0;
+export function hasMessageReadMoreControl(messageItem, { renderedOnly = false } = {}) {
+  const controls = getRawMessageReadMoreControls(messageItem);
+  return renderedOnly ? controls.some(isRenderedElement) : controls.length > 0;
 }
 
 let pendingMessageExpansion = null;
@@ -507,7 +512,7 @@ function isExcludedPrimaryMessageNode(node, messageItem, isRoot = false) {
   return (owningMessage && owningMessage !== messageItem) ||
     testId === 'quoted-message' || testId === 'msg-meta' ||
     testId === 'caption-read-more-button' || /(?:^|-)reaction(?:-|$)/i.test(testId) ||
-    ['button', 'input', 'textarea', 'select'].includes(tagName) ||
+    ['button', 'input', 'textarea', 'select', 'script', 'style', 'template'].includes(tagName) ||
     role === 'button' || role === 'menu' || role === 'listbox' ||
     role === 'dialog' || role === 'alertdialog' || role.startsWith('menuitem');
 }
@@ -516,30 +521,94 @@ function getNodeChildren(node) {
   return Array.from(node?.childNodes || node?.children || []);
 }
 
+// Block boundaries are layout, not authored line breaks. Keep them distinct
+// until normalization so nested wrappers do not create empty lines.
+function isReaderBlock(node) {
+  const tag = (node?.tagName || '').toLowerCase();
+  if (typeof window.getComputedStyle === 'function') {
+    const display = window.getComputedStyle(node).display;
+    if (display) return ['block', 'flow-root', 'flex', 'grid', 'table', 'table-row',
+      'table-caption', 'list-item'].includes(display);
+  }
+  return /^(div|p|blockquote|pre|section|article|header|footer|h[1-6]|table|tr)$/.test(tag);
+}
+
+function normalizeReaderBoundaries(runs) {
+  const result = [];
+  let boundary = false;
+  for (const run of runs) {
+    if (run.type === 'blockBoundary') {
+      boundary = true;
+      continue;
+    }
+    // HTML indentation between blocks must not become a spurious blank line.
+    if (boundary && run.type === 'text' && !run.text.trim() && !run.preserveWhitespace) continue;
+    const previous = result[result.length - 1];
+    if (boundary && previous && !['break', 'listStart', 'listItemStart', 'listItemEnd',
+      'listEnd'].includes(previous.type) && !['break', 'listStart', 'listEnd',
+      'listItemStart', 'listItemEnd'].includes(run.type) &&
+      !/[\r\n][^\S\r\n]*$/.test(previous.text || '') &&
+      !/^[^\S\r\n]*[\r\n]/.test(run.text || '')) {
+      result.push({ type: 'break' });
+    }
+    boundary = false;
+    appendReaderRun(result, run.type === 'text' ? { type: 'text', text: run.text } : run);
+  }
+  return result;
+}
+
+function readerTextRun(text, element) {
+  // Preserved whitespace in WhatsApp's message body is authored content,
+  // including spans containing only a newline. Ordinary HTML indentation is not.
+  const whiteSpace = typeof window.getComputedStyle === 'function' && element
+    ? window.getComputedStyle(element).whiteSpace : '';
+  return { type: 'text', text,
+    preserveWhitespace: /^(pre|pre-wrap|pre-line|break-spaces)$/.test(whiteSpace) };
+}
+
 function collectReaderText(node, messageItem, isRoot = false) {
-  if (node?.nodeType === 3) return node.nodeValue || '';
-  if (!node || (node.nodeType != null && node.nodeType !== 1) ||
-    isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return '';
-  const tagName = (node.tagName || '').toLowerCase();
-  if (tagName === 'br') return '\n';
-  if (tagName === 'img') return node.getAttribute?.('alt') || '';
-  const children = getNodeChildren(node);
-  return children.length
-    ? children.map(child => collectReaderText(child, messageItem)).join('')
-    : node.textContent || '';
+  // Link labels may themselves contain block children. Preserve their labels
+  // and safe href as one link rather than flattening adjacent words together.
+  const parts = [];
+  const visit = (current, root = false) => {
+    if (current?.nodeType === 3) {
+      appendReaderRun(parts, readerTextRun(current.nodeValue || '', current.parentElement));
+      return;
+    }
+    if (!current || (current.nodeType != null && current.nodeType !== 1) ||
+      isExcludedPrimaryMessageNode(current, messageItem, root)) return;
+    const tag = (current.tagName || '').toLowerCase();
+    if (tag === 'br') { parts.push({ type: 'break' }); return; }
+    if (tag === 'img') {
+      const block = !root && isReaderBlock(current);
+      if (block) parts.push({ type: 'blockBoundary' });
+      appendReaderRun(parts, { type: 'text', text: current.getAttribute?.('alt') || '' });
+      if (block) parts.push({ type: 'blockBoundary' });
+      return;
+    }
+    const block = !root && isReaderBlock(current);
+    if (block) parts.push({ type: 'blockBoundary' });
+    const children = getNodeChildren(current);
+    if (children.length) children.forEach(child => visit(child));
+    else appendReaderRun(parts, readerTextRun(current.textContent || '', current));
+    if (block) parts.push({ type: 'blockBoundary' });
+  };
+  visit(node, isRoot);
+  return normalizeReaderBoundaries(parts).map(run => run.type === 'break' ? '\n' : run.text || '').join('');
 }
 
 function appendReaderRun(runs, run) {
   if (!run) return;
   if (run.type === 'text' && !run.text) return;
   const previous = runs[runs.length - 1];
-  if (run.type === 'text' && previous?.type === 'text') previous.text += run.text;
+  if (run.type === 'text' && previous?.type === 'text' &&
+    previous.preserveWhitespace === run.preserveWhitespace) previous.text += run.text;
   else runs.push(run);
 }
 
 function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false) {
   if (node?.nodeType === 3) {
-    appendReaderRun(runs, { type: 'text', text: node.nodeValue || '' });
+    appendReaderRun(runs, readerTextRun(node.nodeValue || '', node.parentElement));
     return;
   }
   if (!node || (node.nodeType != null && node.nodeType !== 1) ||
@@ -548,9 +617,12 @@ function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false
   const tagName = (node.tagName || '').toLowerCase();
   if (tagName === 'ul' || tagName === 'ol') {
     runs.push({ type: 'listStart', ordered: tagName === 'ol' });
-    getNodeChildren(node).forEach(child =>
-      collectPrimaryMessageReaderRuns(child, messageItem, runs)
-    );
+    getNodeChildren(node).forEach(child => {
+      // HTML separators between list items are not authored message lines.
+      // Keep whitespace inside each li untouched, including intentional gaps.
+      if (child.nodeType === 3 && /^[\t\n\r\f ]*$/.test(child.nodeValue || '')) return;
+      collectPrimaryMessageReaderRuns(child, messageItem, runs);
+    });
     runs.push({ type: 'listEnd' });
     return;
   }
@@ -567,25 +639,31 @@ function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false
     return;
   }
   if (tagName === 'img') {
+    const block = !isRoot && isReaderBlock(node);
+    if (block) runs.push({ type: 'blockBoundary' });
     appendReaderRun(runs, { type: 'text', text: node.getAttribute?.('alt') || '' });
+    if (block) runs.push({ type: 'blockBoundary' });
     return;
   }
   if (tagName === 'a' && node.hasAttribute?.('href')) {
+    const block = !isRoot && isReaderBlock(node);
+    if (block) runs.push({ type: 'blockBoundary' });
     const text = collectReaderText(node, messageItem, true);
     appendReaderRun(runs, {
       type: 'link',
       text,
       href: node.getAttribute('href') || ''
     });
+    if (block) runs.push({ type: 'blockBoundary' });
     return;
   }
 
+  const block = !isRoot && isReaderBlock(node);
+  if (block) runs.push({ type: 'blockBoundary' });
   const children = getNodeChildren(node);
-  if (!children.length) {
-    appendReaderRun(runs, { type: 'text', text: node.textContent || '' });
-    return;
-  }
-  children.forEach(child => collectPrimaryMessageReaderRuns(child, messageItem, runs));
+  if (!children.length) appendReaderRun(runs, readerTextRun(node.textContent || '', node));
+  else children.forEach(child => collectPrimaryMessageReaderRuns(child, messageItem, runs));
+  if (block) runs.push({ type: 'blockBoundary' });
 }
 
 function getMessageSentAt(messageItem, root) {
@@ -613,8 +691,9 @@ function getMessageSentAt(messageItem, root) {
 export function getMessageReaderSnapshot(messageItem) {
   const root = messageItem && getPrimaryMessageTextRoot(messageItem);
   if (!root) return null;
-  const runs = [];
-  collectPrimaryMessageReaderRuns(root, messageItem, runs, true);
+  const collected = [];
+  collectPrimaryMessageReaderRuns(root, messageItem, collected, true);
+  const runs = normalizeReaderBoundaries(collected);
   const normalizedText = cleanString(runs.map(run =>
     run.type === 'break' ? '\n' : run.text || ''
   ).join(''), false);
@@ -668,6 +747,9 @@ export function getFocusedMessageReaderSource(event) {
   const readMoreButton = getMessageReadMoreButton(messageItem);
   return {
     messageItem,
+    messageContainer: messageItem.closest?.(SELECTORS.conversationMessages),
+    main: messageItem.closest?.(SELECTORS.main),
+    chatTitle: getCurrentChatTitle(),
     identity: getMessageExpansionIdentity(messageItem),
     readMoreButton,
     hasReadMoreControl: hasMessageReadMoreControl(messageItem),
@@ -676,12 +758,33 @@ export function getFocusedMessageReaderSource(event) {
 }
 
 export function isMessageReaderSourceCurrent(source) {
-  if (!source?.messageItem || !isPrimaryMessageItem(source.messageItem)) return false;
+  if (!source?.messageItem) return false;
+  const { messageContainer, main } = source;
+  if (!messageContainer?.isConnected || !main?.isConnected ||
+    document.querySelector(SELECTORS.main) !== main ||
+    document.querySelector(SELECTORS.conversationMessages) !== messageContainer ||
+    !main.contains?.(messageContainer) || getCurrentChatTitle() !== source.chatTitle) return false;
   const { identity } = source;
-  return !!identity?.dataId && (
+  if (!identity?.dataId) return false;
+  if (isPrimaryMessageItem(source.messageItem) &&
+    messageContainer.contains?.(source.messageItem) &&
     identity.wrapper?.isConnected && identity.wrapper.contains?.(source.messageItem) &&
-    identity.wrapper.getAttribute?.('data-id') === identity.dataId
-  );
+    identity.wrapper.getAttribute?.('data-id') === identity.dataId) return true;
+
+  // Expanding a reply can remount its DOM. Follow only the same unique message
+  // in the original conversation, never a recycled row or a different route.
+  const wrappers = Array.from(messageContainer.querySelectorAll?.(
+    '[data-testid^="conv-msg-"][data-id]'
+  ) || []).filter(wrapper => wrapper.isConnected && messageContainer.contains(wrapper) &&
+    wrapper.getAttribute('data-id') === identity.dataId);
+  if (wrappers.length !== 1) return false;
+  const items = Array.from(wrappers[0].querySelectorAll?.('.focusable-list-item') || [])
+    .filter(item => isPrimaryMessageItem(item) &&
+      item.closest?.(SELECTORS.conversationMessages) === messageContainer);
+  if (items.length !== 1) return false;
+  source.messageItem = items[0];
+  source.identity = { wrapper: wrappers[0], dataId: identity.dataId };
+  return true;
 }
 
 function getMessageExpansionSourceLabel(messageItem) {
@@ -1180,13 +1283,16 @@ export function focusChatRow(
 ) {
   if (!shouldContinue() || !getChatRowActivator(row) || getActiveModal()) return false;
   const rowTitle = getChatRowTitle(row);
+  const rowIdentity = getChatRowIdentity(row);
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const focusTarget = (retried = false) => {
     if (!shouldContinue() || getActiveModal()) return false;
     const connectedRowTitle = row.isConnected ? getChatRowTitle(row) : '';
-    const currentRow = row.isConnected && connectedRowTitle === rowTitle
-      ? row
-      : findChatRowByTitle(getChatListRows(), rowTitle);
+    const currentRow = rowIdentity
+      ? (row.isConnected && getChatRowIdentity(row) === rowIdentity
+        ? row : findChatRowByIdentity(getChatListRows(), rowIdentity))
+      : (row.isConnected && connectedRowTitle === rowTitle
+        ? row : findChatRowByTitle(getChatListRows(), rowTitle));
     if (!currentRow) {
       if (!retried) {
         schedule(() => focusTarget(true));
@@ -1348,6 +1454,7 @@ export function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
   if (!isAnnouncementReductionEnabled()) {
     releaseMessageAttributes(OWNERS.messageGrid, () => false);
     releaseMessageAttributes(OWNERS.messageCell, () => false);
+    releaseMessageAttributes(OWNERS.metaAIMessageName, () => false);
     restoreChatRowNativeMasks(rootEl);
     restoreChatRowNativeMasksOutsideChatList();
     return null;
@@ -1580,6 +1687,7 @@ function orderChatRowsByPosition(rows) {
 function rememberChatRowState(row) {
   lastFocusedChatRowNode = row;
   lastFocusedChatTitle = getChatRowTitle(row);
+  lastFocusedChatIdentity = getChatRowIdentity(row);
   lastFocusedChatRowIndex = -1;
   const chatList = row?.closest?.(SELECTORS.chatListInSide) || row?.closest?.(SELECTORS.chatList);
   if (!chatList) return;
@@ -1776,6 +1884,20 @@ export function getCurrentChatTitle() {
   return '';
 }
 
+function getChatRowIdentity(row) {
+  for (const attribute of ['data-chat-id', 'data-id']) {
+    const value = row?.getAttribute?.(attribute);
+    if (value) return `${attribute}:${value}`;
+  }
+  return '';
+}
+
+function findChatRowByIdentity(rows, identity) {
+  if (!identity) return null;
+  const matches = rows.filter(row => getChatRowIdentity(row) === identity);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function findChatRowByTitle(rows, title) {
   if (!title) return null;
   const matches = rows.filter(row => getChatRowTitle(row) === title);
@@ -1800,18 +1922,25 @@ export function getPreferredChatRow(rows, origin = null, allowSemanticFallback =
     originRow.closest?.(SELECTORS.chatListInSide);
   if (originInChatList) return originRow;
 
-  if (lastFocusedChatTitle && rows.includes(lastFocusedChatRowNode)) {
-    const connectedTitle = getChatRowTitle(lastFocusedChatRowNode);
-    if (connectedTitle === lastFocusedChatTitle) {
-      return lastFocusedChatRowNode;
-    }
-  }
-  if (lastFocusedChatTitle) {
-    const rememberedRow = findChatRowByTitle(rows, lastFocusedChatTitle);
-    if (rememberedRow) return rememberedRow;
+  if (lastFocusedChatIdentity) {
+    const identified = findChatRowByIdentity(rows, lastFocusedChatIdentity);
+    if (identified) return identified;
+    // Never equate a recycled DOM node or identical title with a known chat key.
     if (!allowSemanticFallback) return null;
+  } else {
+    if (lastFocusedChatTitle && rows.includes(lastFocusedChatRowNode)) {
+      const connectedTitle = getChatRowTitle(lastFocusedChatRowNode);
+      if (connectedTitle === lastFocusedChatTitle) {
+        return lastFocusedChatRowNode;
+      }
+    }
+    if (lastFocusedChatTitle) {
+      const rememberedRow = findChatRowByTitle(rows, lastFocusedChatTitle);
+      if (rememberedRow) return rememberedRow;
+      if (!allowSemanticFallback) return null;
+    }
+    if (lastFocusedChatRowNode && !allowSemanticFallback) return null;
   }
-  if (lastFocusedChatRowNode && !allowSemanticFallback) return null;
 
   const selectedRow = getSelectedChatRow(rows);
   const currentChatRow = findChatRowByTitle(rows, getCurrentChatTitle());
@@ -1863,8 +1992,12 @@ export function rememberFocusedRow(target, interactionType = 'focus') {
   const main = document.querySelector(SELECTORS.main);
   if (isChatMainActive(main) && main.contains(row)) {
     lastFocusedMessageNode = row;
+    lastFocusedMessageTarget = target;
+    // Capture context before a MutationObserver can see a replacement route.
+    lastFocusedMessageContainer = document.querySelector(SELECTORS.conversationMessages);
+    lastFocusedMessageChatTitle = getCurrentChatTitle();
     const message = row.querySelector('[data-id]');
-    lastFocusedMessageId = message ? message.getAttribute('data-id') : '';
+    lastFocusedMessageId = row.getAttribute('data-id') || message?.getAttribute('data-id') || '';
     const cell = target.closest?.('[role="gridcell"]');
     const grid = cell?.closest?.('[role="grid"]');
     if (grid && ownedAttributes.get(cell)?.get('role')?.owner === OWNERS.messageCell) {
@@ -1883,16 +2016,23 @@ export function refreshAnnouncementReduction() {
 }
 
 export function getRememberedFocus() {
-  return { lastFocusedChatRowNode, lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId };
+  return {
+    lastFocusedChatRowNode, lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId,
+    lastFocusedMessageTarget, lastFocusedMessageContainer, lastFocusedMessageChatTitle
+  };
 }
 
 export function clearRememberedChatRow() {
   lastFocusedChatRowNode = null;
   lastFocusedChatTitle = '';
+  lastFocusedChatIdentity = '';
   lastFocusedChatRowIndex = -1;
   clearChatListShortcutArrowAnchor();
 }
 
 export function clearRememberedMessageRow() {
   lastFocusedMessageNode = null;
+  lastFocusedMessageTarget = null;
+  lastFocusedMessageContainer = null;
+  lastFocusedMessageChatTitle = '';
 }

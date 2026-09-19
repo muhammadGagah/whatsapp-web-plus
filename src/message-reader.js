@@ -7,9 +7,73 @@ import {
   isMessageReaderSourceCurrent
 } from './chat-accessibility.js';
 import { getLanguage, getSupportedLanguage, t } from './settings-state.js';
+import { isPrivacyModeEnabled } from './privacy.js';
+import {
+  beginCompanionReader, COMPANION_READER_LIMIT, isCompanionRuntime, publishCompanionReader
+} from './companion-bridge.js';
 
 const READER_EXPANSION_TIMEOUT_MS = 2000;
 const SAFE_READER_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+let pendingCompanionReader = null;
+
+function makeCompanionReaderPayload(snapshot, errorKey = 'messageReaderExpansionFailed') {
+  const runs = [];
+  for (const run of snapshot?.runs || []) {
+    if (run.type !== 'link') { runs.push({ ...run }); continue; }
+    const safeUrl = getSafeMessageReaderUrl(run.href);
+    const visibleText = run.text || (safeUrl ? safeUrl.href : run.href) || '';
+    if (!safeUrl) {
+      runs.push({ type: 'text', text: `${visibleText} (${t('messageReaderUnsafeLink')})` });
+      continue;
+    }
+    runs.push({ type: 'link', text: visibleText, href: safeUrl.href });
+    const visibleHostname = getVisibleUrlHostname(visibleText);
+    if (visibleHostname && visibleHostname.toLowerCase() !== safeUrl.hostname.toLowerCase()) {
+      runs.push({ type: 'text', text: ` (${t('messageReaderLinkDestination', {
+        destination: safeUrl.hostname
+      })})` });
+    }
+  }
+  return {
+    version: 1, status: snapshot ? 'ready' : 'error',
+    title: t(snapshot ? 'messageReaderCompanionDocumentTitle' : 'messageReaderCompanionFailureDocumentTitle'),
+    heading: t(snapshot ? 'messageReaderHeading' : 'messageReaderFailureHeading'),
+    sentAt: snapshot?.sentAt || '', sentAtLabel: t('messageReaderSentAt'),
+    timeUnavailable: t('messageReaderTimeUnavailable'),
+    message: snapshot ? '' : t(errorKey), runs
+  };
+}
+
+function finishCompanionReader(request, snapshot) {
+  if (pendingCompanionReader !== request) return;
+  pendingCompanionReader = null;
+  let reader = makeCompanionReaderPayload(snapshot);
+  if (reader.runs.length > 4096 || JSON.stringify(reader).length > COMPANION_READER_LIMIT ||
+    reader.runs.some(run => run.type === 'link' && run.href.length > 8192)) {
+    reader = makeCompanionReaderPayload(null, 'messageReaderTooLarge');
+  }
+  // No browser fallback: WhatsApp desktop routes about:blank to an OS app picker.
+  publishCompanionReader({ reader, expectedContext: request.companionContext,
+    language: getLanguage(), privacy: isPrivacyModeEnabled() });
+}
+
+function startCompanionReader(source) {
+  if (pendingCompanionReader) {
+    pendingCompanionReader.settled = true;
+    pendingCompanionReader.observer?.disconnect();
+    if (pendingCompanionReader.timeoutId) clearTimeout(pendingCompanionReader.timeoutId);
+    pendingCompanionReader = null;
+  }
+  const companionContext = beginCompanionReader();
+  if (!companionContext) {
+    announce(t('messageReaderCompanionUnavailable'));
+    return;
+  }
+  const request = { source, companionContext, observer: null, timeoutId: null, settled: false };
+  pendingCompanionReader = request;
+  if (source.readMoreButton) startExpandedReader(request);
+  else finishExpansion(request, source.snapshot);
+}
 
 function clearNode(node) {
   if (node) node.textContent = '';
@@ -259,6 +323,10 @@ function finishExpansion(request, snapshot = null) {
   request.settled = true;
   request.observer?.disconnect();
   if (request.timeoutId) clearTimeout(request.timeoutId);
+  if (request.companionContext) {
+    finishCompanionReader(request, snapshot);
+    return true;
+  }
   if (request.readerWindow.closed) return true;
   try {
     renderReaderWindow(request.readerWindow, view => {
@@ -277,7 +345,7 @@ function tryFinishExpandedReader(request) {
   if (!isMessageReaderSourceCurrent(request.source)) {
     return finishExpansion(request);
   }
-  if (hasMessageReadMoreControl(request.source.messageItem)) return false;
+  if (hasMessageReadMoreControl(request.source.messageItem, { renderedOnly: true })) return false;
   const snapshot = getMessageReaderSnapshot(request.source.messageItem);
   if (!snapshot || snapshot.textLength <= request.source.snapshot.textLength) return false;
   return finishExpansion(request, snapshot);
@@ -285,10 +353,12 @@ function tryFinishExpandedReader(request) {
 
 function startExpandedReader(request) {
   request.observer = new MutationObserver(() => tryFinishExpandedReader(request));
-  request.observer.observe(request.source.messageItem, {
+  request.observer.observe(request.source.messageContainer, {
     childList: true,
     characterData: true,
-    subtree: true
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['hidden', 'style', 'class', 'aria-hidden', 'data-id', 'role', 'tabindex']
   });
   request.timeoutId = setTimeout(() => finishExpansion(request), READER_EXPANSION_TIMEOUT_MS);
   if (!activateMessageReadMore(request.source.messageItem, request.source.readMoreButton)) {
@@ -317,6 +387,11 @@ export function handleMessageReaderShortcut(event) {
     !source.readMoreButton || !isMessageReaderSourceCurrent(source)
   )) {
     announce(t('messageReaderExpansionUnavailable'));
+    return true;
+  }
+
+  if (isCompanionRuntime()) {
+    startCompanionReader(source);
     return true;
   }
 

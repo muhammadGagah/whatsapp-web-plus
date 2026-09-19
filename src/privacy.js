@@ -800,7 +800,11 @@ function maskPhoneAuthorText(el) {
     }
     return;
   }
-  rememberPrivacyAttribute(el, 'aria-hidden', el.getAttribute('aria-hidden'), 'true');
+  const currentHidden = el.getAttribute('aria-hidden');
+  // Repeated cleanup must preserve the host value captured before masking.
+  if (!state || currentHidden !== state.masked) {
+    rememberPrivacyAttribute(el, 'aria-hidden', currentHidden, 'true');
+  }
   _origSetAttribute.call(el, 'aria-hidden', 'true');
 }
 

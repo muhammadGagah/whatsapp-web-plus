@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-web-plus",
-  "version": "2.6.80",
+  "version": "2.6.82",
   "private": true,
   "scripts": {
     "build": "node build.mjs",
@@ -10,7 +10,7 @@
     "verify:signed-update": "node scripts/verify-signed-update.mjs",
     "test:update-manifest": "node test_update_manifest.mjs",
     "test:loader": "node test_loader_contract.js",
-    "test": "npm run build && npm run build:debug && npm run test:update-manifest && node test_privacy_filter.js && node test_accessibility_runtime.js && node test_settings_state.js && node test_settings_menu.js && node test_status_accessibility.js && node test_status_transition_diagnostics.js && node test_audio_experiment.js && node test_semantic_health.js && npm run test:loader"
+    "test": "npm run build && npm run build:debug && npm run test:update-manifest && node test_privacy_filter.js && node test_owned_attributes.js && node test_meta_ai_cleanup.js && node test_accessibility_runtime.js && node test_d02_d06_focus.js && node test_companion_reader.js && node test_settings_state.js && node test_settings_menu.js && node test_formatting_toolbar.js && node test_status_accessibility.js && node test_status_transition_diagnostics.js && node test_audio_experiment.js && node test_semantic_health.js && npm run test:loader"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"

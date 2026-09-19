@@ -958,6 +958,7 @@ function handleSettingsShortcut(event) {
 }
 
 function handleKeydown(event) {
+  if (event.defaultPrevented || event.isComposing) return;
   if (!event.repeat && !event.isComposing && handleSettingsShortcut(event) &&
       (isSettingsMenuOpen() || !getActiveModal())) {
     event.preventDefault();

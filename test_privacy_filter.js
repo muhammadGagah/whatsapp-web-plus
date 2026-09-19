@@ -1032,6 +1032,8 @@ assert.equal(
 cleanElementAttributes(viewOncePhoneAuthor);
 assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), 'true');
 assert.equal(hasPrivacyState(viewOncePhoneAuthor, 'aria-hidden'), true);
+cleanElementAttributes(viewOncePhoneAuthor);
+assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), 'true');
 const restorableBody = 'Call +62 812-3456-7890';
 const restorableLabel = `Message Author ${restorableBody} 10:01`;
 const restorableAriaMessage = createMessageElement(restorableBody);
@@ -1051,5 +1053,27 @@ assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), null);
 assert.equal(restorableAriaMessage.getAttribute('aria-label'), restorableLabel);
 assert.equal(restorableTitleMessage.getAttribute('title'), restorableLabel);
 assert.equal(restorablePropertyMessage.ariaLabel, restorableLabel);
+
+for (const initialHidden of [null, 'false']) {
+    setPrivacy(true);
+    if (initialHidden === null) viewOncePhoneAuthor.removeAttribute('aria-hidden');
+    else viewOncePhoneAuthor.setAttribute('aria-hidden', initialHidden);
+    viewOncePhoneAuthor.textContent = '+62 812-3456-7890';
+    cleanElementAttributes(viewOncePhoneAuthor);
+    cleanElementAttributes(viewOncePhoneAuthor);
+    setPrivacy(false);
+    restorePrivacyAttributes();
+    assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), initialHidden,
+        'disabling privacy after repeated cleaning restores the original author visibility');
+
+    setPrivacy(true);
+    cleanElementAttributes(viewOncePhoneAuthor);
+    cleanElementAttributes(viewOncePhoneAuthor);
+    viewOncePhoneAuthor.textContent = 'Contact name';
+    cleanElementAttributes(viewOncePhoneAuthor);
+    assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), initialHidden,
+        'a recycled author with a contact name becomes visible after repeated masking');
+    assert.equal(hasPrivacyState(viewOncePhoneAuthor, 'aria-hidden'), false);
+}
 
 console.log('privacy filter checks passed');

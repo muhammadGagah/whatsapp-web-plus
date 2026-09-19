@@ -7,11 +7,16 @@ const originalSource = fs.readFileSync('whatsapp_web_plus.user.js', 'utf8');
 const debugSource = fs.readFileSync('whatsapp_web_plus.debug.js', 'utf8');
 const expectedVersion = fs.readFileSync('src/metadata.txt', 'utf8')
     .match(/^\/\/ @version\s+(\S+)$/m)?.[1];
-const source = originalSource.replace('    ensureLiveRegion();', `
+// Most reader cases exercise the browser route; the dedicated Companion suite
+// exercises its native route. Other bridge tests still use a Companion runtime.
+const source = originalSource.replace('function handleMessageReaderShortcut(event) {',
+    'function handleMessageReaderShortcut(event) { const isCompanionRuntime = () => false;')
+    .replace('    ensureLiveRegion();', `
     globalThis.__runtime = {
         SELECTORS, OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute, releaseOwnedWithin,
         isMetaAIReply, applyMetaAIMessageName,
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
+        scheduleChatPulseSync, toggleChatPulse, followChatPulseTail,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
         queuePassiveAnnouncements, discardPassiveAnnouncements, discardAllPassiveAnnouncements,
         resetPassiveAnnouncementContext,
@@ -40,7 +45,8 @@ const source = originalSource.replace('    ensureLiveRegion();', `
         getActiveModal,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
         recoverFocusAfterRemoval,
-        getRoleFixRoot, scheduleRoleFix,
+        getRoleFixRoot, scheduleRoleFix, createCleanupObserver,
+        getDirtyRoots() { return [...dirtyRoots]; },
         getHeaderInfoButton, getHeaderText, announceChatHeaderShortcut,
         closeMediaPlayerShortcut, focusMessageInputShortcut, rememberFocusedRow, CLEAN_UI_CSS,
         CLEAN_UI_HIDDEN_ATTRIBUTE, getDesktopAppPromo, getDesktopAppPromoCloseButton,
@@ -2206,8 +2212,11 @@ const captionNestedText = new Element('strong');
 captionNestedText.setAttribute('data-testid', 'selectable-text');
 captionNestedText.appendChild(document.createTextNode('Second package'));
 captionListItemTwo.appendChild(captionNestedText);
+captionList.appendChild(document.createTextNode('\n  '));
 captionList.appendChild(captionListItemOne);
+captionList.appendChild(document.createTextNode('\r\n\t '));
 captionList.appendChild(captionListItemTwo);
+captionList.appendChild(document.createTextNode('\n'));
 const hiddenCaptionDuplicate = new Element('span');
 hiddenCaptionDuplicate.hidden = true;
 hiddenCaptionDuplicate.appendChild(document.createTextNode('HIDDEN CAPTION DUPLICATE'));
@@ -2290,6 +2299,28 @@ assert.doesNotMatch(imageSnapshotText, /HIDDEN CAPTION DUPLICATE/);
 assert.equal(imageSnapshot.runs.filter(run => run.type === 'listStart').length, 1);
 assert.equal(imageSnapshot.runs.filter(run => run.type === 'listItemStart').length, 2);
 
+const listRunStart = imageSnapshot.runs.findIndex(run => run.type === 'listStart');
+assert.deepEqual(Array.from(imageSnapshot.runs.slice(listRunStart, listRunStart + 8), run => run.type),
+    ['listStart', 'listItemStart', 'text', 'listItemEnd',
+        'listItemStart', 'text', 'listItemEnd', 'listEnd'],
+    'HTML whitespace before, between and after list items does not become message lines');
+const nestedSpacingList = new Element('ol');
+const nestedSpacingItem = new Element('li');
+const authoredListText = 'Nested first line\n\nNested second line';
+nestedSpacingItem.appendChild(document.createTextNode(authoredListText));
+nestedSpacingList.appendChild(document.createTextNode('\n'));
+nestedSpacingList.appendChild(nestedSpacingItem);
+nestedSpacingList.appendChild(document.createTextNode('\n'));
+captionListItemTwo.appendChild(nestedSpacingList);
+const nestedSpacingSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+const nestedSpacingStart = nestedSpacingSnapshot.runs.findIndex(run => run.type === 'listStart' && run.ordered);
+assert.deepEqual(Array.from(nestedSpacingSnapshot.runs.slice(nestedSpacingStart, nestedSpacingStart + 5), run => run.type),
+    ['listStart', 'listItemStart', 'text', 'listItemEnd', 'listEnd'],
+    'nested ordered lists also discard structural whitespace');
+assert.equal(nestedSpacingSnapshot.runs[nestedSpacingStart + 2].text, authoredListText,
+    'authored blank lines inside list items remain unchanged');
+captionListItemTwo.removeChild(nestedSpacingList);
+
 const ambiguousImageCaption = new Element('span');
 ambiguousImageCaption.setAttribute('data-testid', 'image-caption selectable-text');
 ambiguousImageCaption.appendChild(document.createTextNode('A different caption'));
@@ -2316,6 +2347,8 @@ assert.equal(imageReaderDocument, imageReaderWindow.initialDocument,
 assert.equal(collectReaderElements(imageReaderDocument.body, 'ul').length, 1,
     'image-caption lists retain native list semantics');
 assert.equal(collectReaderElements(imageReaderDocument.body, 'li').length, 2);
+assert.deepEqual(collectReaderElements(imageReaderDocument.body, 'ul')[0].children.map(node => node.tagName),
+    ['LI', 'LI'], 'the rendered list has no newline text or br nodes between items');
 assert.equal(collectReaderElements(imageReaderDocument.body, 'a').length, 1);
 assert.equal((collectReaderText(imageReaderDocument.body).match(/Image offer/g) || []).length, 1,
     'the media alternative does not duplicate the authored image caption');
@@ -2438,6 +2471,80 @@ for (const rejectedReaderKey of [
 
 messageCell.queryAllHandler = normalReaderQueryAll;
 
+const blockImageLink = new Element('a');
+blockImageLink.setAttribute('href', 'https://example.com/block-image');
+blockImageLink.appendChild(document.createTextNode('Before'));
+const linkedBlockImage = new Element('img');
+linkedBlockImage.setAttribute('alt', 'Photo');
+blockImageLink.appendChild(linkedBlockImage);
+blockImageLink.appendChild(document.createTextNode('After'));
+readerBody.appendChild(blockImageLink);
+sandbox.window.getComputedStyle = element => ({
+    display: element === linkedBlockImage ? 'block' : 'inline',
+    visibility: 'visible'
+});
+const blockImageSnapshot = runtime.getMessageReaderSnapshot(messageCell);
+assert.equal(blockImageSnapshot.runs.find(run =>
+    run.type === 'link' && run.href === 'https://example.com/block-image'
+).text, 'Before\nPhoto\nAfter',
+'block images within link labels preserve word and layout boundaries');
+delete sandbox.window.getComputedStyle;
+readerBody.removeChild(blockImageLink);
+
+// WhatsApp splits authored lines into block spans, including spans whose only
+// content is a newline (as in chat-reply.txt). Layout must not add or erase lines.
+const spacingBody = new Element('span');
+spacingBody.setAttribute('data-testid', 'selectable-text');
+spacingBody.closestHandler = readerBody.closestHandler;
+const spacingLines = ['Opening.\n', 'First paragraph.\n', '\n',
+    'Second paragraph.\n', '\n', '\n', 'Third paragraph.'];
+for (const text of spacingLines) {
+    const line = new Element('span');
+    line.appendChild(document.createTextNode(text));
+    spacingBody.appendChild(line);
+}
+readerMetadata.appendChild(spacingBody);
+messageCell.queryAllHandler = selector => selector === runtime.SELECTORS.messagePrimaryText
+    ? [spacingBody] : normalReaderQueryAll(selector);
+sandbox.window.getComputedStyle = () => ({
+    display: 'block', visibility: 'visible', whiteSpace: 'pre-wrap'
+});
+const spacingExpected = spacingLines.join('');
+const flattenSpacing = runs => runs.map(run => run.type === 'break' ? '\n' : run.text || '').join('');
+assert.equal(flattenSpacing(runtime.getMessageReaderSnapshot(messageCell).runs), spacingExpected,
+    'authored single, double and triple newlines survive block spans exactly');
+runtime.handleShortcuts(makeEvent({ target: messageCell, code: 'KeyC', altKey: true, shiftKey: true }));
+const spacingRenderedBody = collectReaderElements(openedReaderWindows.at(-1).document.body, 'div')
+    .find(element => element.getAttribute('class') === 'message-reader-body');
+assert.equal(collectReaderText(spacingRenderedBody), spacingExpected,
+    'the browser reader receives the exact authored paragraph spacing');
+// Labels use the same boundary normalizer and must retain blank lines too.
+const spacingLink = new Element('a');
+spacingLink.setAttribute('href', 'https://example.com/lines');
+for (const line of [...spacingBody.children]) {
+    spacingBody.removeChild(line);
+    spacingLink.appendChild(line);
+}
+spacingBody.appendChild(spacingLink);
+assert.equal(runtime.getMessageReaderSnapshot(messageCell).runs[0].text, spacingExpected,
+    'multiline link labels retain authored spacing');
+spacingBody.removeChild(spacingLink);
+for (const text of ['First', '\n  ', 'Second']) {
+    if (text.trim()) {
+        const block = new Element('div');
+        block.appendChild(document.createTextNode(text));
+        spacingBody.appendChild(block);
+    } else spacingBody.appendChild(document.createTextNode(text));
+}
+sandbox.window.getComputedStyle = () => ({
+    display: 'block', visibility: 'visible', whiteSpace: 'normal'
+});
+assert.equal(flattenSpacing(runtime.getMessageReaderSnapshot(messageCell).runs), 'First\nSecond',
+    'ordinary HTML indentation does not create an authored blank line');
+delete sandbox.window.getComputedStyle;
+messageCell.queryAllHandler = normalReaderQueryAll;
+readerMetadata.removeChild(spacingBody);
+
 const hiddenReaderLink = new Element('a');
 hiddenReaderLink.setAttribute('href', 'https://example.com/hidden');
 hiddenReaderLink.appendChild(document.createTextNode('CSS-hidden duplicate text'));
@@ -2529,6 +2636,8 @@ assert.equal(liveRegion.textContent,
 scheduledTimeouts.clear();
 sandbox.window.open = successfulOpen;
 
+const readerPreviousConversation = selectorResults.get(runtime.SELECTORS.conversationMessages);
+selectorResults.set(runtime.SELECTORS.conversationMessages, messageContainerForGrid);
 const collapsedReaderButton = new Element('button');
 collapsedReaderButton.setAttribute('type', 'button');
 collapsedReaderButton.setAttribute('role', 'button');
@@ -2726,7 +2835,167 @@ assert.equal(failedReaderDocument.eventListeners.get('keydown').length, 1,
     'Escape stays installed after the clean-reader failure view is rendered');
 messageIdentity.isConnected = true;
 
+// WhatsApp can remount the primary item or its keyed wrapper while expanding a
+// reply. Drive the real reader observer after replacement, without moving focus.
+function runReaderRemountCase(kind) {
+    scheduledFrames.length = 0;
+    scheduledTimeouts.clear();
+    const savedMain = selectorResults.get(runtime.SELECTORS.main);
+    const savedConversation = selectorResults.get(runtime.SELECTORS.conversationMessages);
+    const main = new Element('div');
+    const conversation = new Element('div');
+    const header = new Element('header');
+    const title = new Element('span');
+    title.textContent = 'Synthetic reply conversation';
+    header.queryHandler = () => title;
+    main.appendChild(header);
+    main.appendChild(conversation);
+    main.queryHandler = selector => selector === 'header' ? header :
+        selector.includes(runtime.SELECTORS.conversationMessages) ? conversation : null;
+    selectorResults.set(runtime.SELECTORS.main, main);
+    selectorResults.set(runtime.SELECTORS.conversationMessages, conversation);
+    let wrappers = [];
+    conversation.queryAllHandler = selector => {
+        if (selector.includes('data-id')) {
+            const exactId = selector.match(/\[data-id="([^"]+)"\]/)?.[1];
+            return wrappers.filter(wrapper => !exactId || wrapper.getAttribute('data-id') === exactId);
+        }
+        if (selector.includes('.focusable-list-item')) return wrappers.map(wrapper => wrapper.item);
+        return [];
+    };
+    conversation.queryHandler = selector => conversation.querySelectorAll(selector)[0] || null;
+    function createItem(wrapper, row, expanded = false) {
+        const item = new Element('div');
+        item.setAttribute('data-focusable-list-item', 'true');
+        item.setAttribute('tabindex', '0');
+        item.setAttribute('aria-labelledby', 'synthetic-reply-label');
+        const body = new Element('span');
+        body.textContent = expanded
+            ? 'The complete reply now includes substantially more accessible text than its original preview.'
+            : 'Short reply preview…';
+        const quote = new Element('div');
+        quote.setAttribute('data-testid', 'quoted-message');
+        const quoteBody = new Element('span');
+        quoteBody.textContent = 'QUOTED PREVIEW MUST NOT APPEAR';
+        quote.appendChild(quoteBody);
+        item.appendChild(quote);
+        item.appendChild(body);
+        body.closestHandler = selector => selector === '.focusable-list-item' ? item : null;
+        quoteBody.closestHandler = selector => selector === '.focusable-list-item' ? item :
+            selector === '[data-testid="quoted-message"]' ? quote : null;
+        item.closestHandler = selector => {
+            if (selector === 'div[role="row"]') return row;
+            if (selector === runtime.SELECTORS.main) return main;
+            if (selector === runtime.SELECTORS.conversationMessages) return conversation;
+            if (selector === '[data-testid^="conv-msg-"][data-id]') return wrapper;
+            return null;
+        };
+        const message = new Element('div');
+        const button = new Element('div');
+        button.setAttribute('role', 'button');
+        button.setAttribute('tabindex', '0');
+        button.setAttribute('data-testid', 'caption-read-more-button');
+        button.textContent = 'Read more';
+        message.appendChild(button);
+        item.appendChild(message);
+        item.readerBody = body;
+        item.readMoreButton = button;
+        button.closestHandler = selector => selector === '.focusable-list-item' ? item :
+            selector === runtime.SELECTORS.voiceMessageContainer ? message : null;
+        item.queryAllHandler = selector => {
+            if (selector === runtime.SELECTORS.messagePrimaryText) return [quoteBody, body];
+            if (selector === runtime.SELECTORS.messageReadMoreButton) return expanded ? [] : [button];
+            return [];
+        };
+        wrapper.appendChild(item);
+        wrapper.item = item;
+        row.queryHandler = selector => selector === '.focusable-list-item' ? wrapper.item : null;
+        wrapper.queryAllHandler = selector => selector.includes('.focusable-list-item') ? [wrapper.item] : [];
+        wrapper.queryHandler = selector => wrapper.querySelectorAll(selector)[0] || null;
+        return item;
+    }
+    function createWrapper(id, expanded = false) {
+        const row = new Element('div');
+        row.setAttribute('role', 'row');
+        const wrapper = new Element('div');
+        wrapper.setAttribute('data-id', id);
+        wrapper.setAttribute('data-testid', 'conv-msg-synthetic-reply');
+        wrapper.closestHandler = selector => selector === runtime.SELECTORS.conversationMessages ? conversation :
+            selector === runtime.SELECTORS.main ? main : selector === 'div[role="row"]' ? row : null;
+        row.appendChild(wrapper);
+        conversation.appendChild(row);
+        createItem(wrapper, row, expanded);
+        wrappers.push(wrapper);
+        return wrapper;
+    }
+    const original = createWrapper('synthetic-reply-id');
+    document.activeElement = original.item;
+    const event = makeEvent({ target: original.item, code: 'KeyC', altKey: true, shiftKey: true });
+    runtime.handleShortcuts(event);
+    assert.equal(event.prevented, true, kind + ': shortcut opens from the primary message');
+    const reader = openedReaderWindows.at(-1);
+    const expansionObserver = MutationObserver.instances.at(-1);
+    const otherFocus = new Element('button');
+    document.activeElement = otherFocus;
+    if (['hidden-control', 'visible-control', 'hidden-without-growth'].includes(kind)) {
+        if (kind !== 'hidden-without-growth') {
+            original.item.readerBody.textContent =
+                'The complete reply now includes substantially more accessible text than its original preview.';
+        }
+        original.item.readMoreButton.hidden = kind !== 'visible-control';
+    } else if (kind === 'same-item-wrapper') {
+        const oldItem = original.item;
+        original.removeChild(oldItem);
+        oldItem.isConnected = false;
+        createItem(original, original.parentElement, true);
+    } else {
+        original.item.isConnected = false;
+        original.isConnected = false;
+        conversation.removeChild(original.parentElement);
+        wrappers = [];
+        createWrapper(kind === 'different-id' ? 'unrelated-message-id' : 'synthetic-reply-id', true);
+        if (kind === 'duplicate-id') createWrapper('synthetic-reply-id', true);
+        if (kind === 'new-conversation') {
+            conversation.isConnected = false;
+            selectorResults.set(runtime.SELECTORS.conversationMessages, new Element('div'));
+        }
+        if (kind === 'new-chat-title') title.textContent = 'Unrelated conversation';
+    }
+    expansionObserver.trigger([{ type: 'childList', target: conversation }]);
+    if (kind === 'visible-control' || kind === 'hidden-without-growth') {
+        const pendingResult = collectReaderText(reader.document.body);
+        assert.doesNotMatch(pendingResult, /complete reply now includes|Short reply preview/,
+            kind + ': the reader waits instead of presenting unconfirmed content');
+        assert.equal(expansionObserver.disconnected, false, kind + ': expansion remains pending');
+        const timeout = Array.from(scheduledTimeouts.values()).at(-1);
+        assert.equal(typeof timeout, 'function', kind + ': bounded timeout remains armed');
+        timeout();
+    }
+    const result = collectReaderText(reader.document.body);
+    if (kind === 'same-item-wrapper' || kind === 'same-id-wrapper' || kind === 'hidden-control') {
+        assert.match(result, /complete reply now includes/, kind + ': same-message remount completes expansion');
+        assert.doesNotMatch(result, /QUOTED PREVIEW MUST NOT APPEAR/, kind + ': quoted content remains excluded');
+        assert.doesNotMatch(result, /Short reply preview/, kind + ': collapsed preview is not mistaken for completion');
+    } else {
+        assert.match(result, /complete message could not be loaded/i, kind + ': unrelated or ambiguous replacement is rejected');
+        assert.doesNotMatch(result, /complete reply now includes/, kind + ': no replacement content leaks into reader');
+    }
+    assert.equal(document.activeElement, otherFocus, kind + ': async resolution never steals keyboard focus');
+    assert.equal(reader.document.eventListeners.get('keydown').length, 1,
+        kind + ': Escape remains available on the settled reader');
+    selectorResults.set(runtime.SELECTORS.main, savedMain);
+    if (savedConversation) selectorResults.set(runtime.SELECTORS.conversationMessages, savedConversation);
+    else selectorResults.delete(runtime.SELECTORS.conversationMessages);
+    scheduledFrames.length = 0;
+    scheduledTimeouts.clear();
+}
+for (const kind of ['same-item-wrapper', 'same-id-wrapper', 'different-id', 'duplicate-id',
+    'new-conversation', 'new-chat-title', 'hidden-control', 'visible-control',
+    'hidden-without-growth']) runReaderRemountCase(kind);
+
 messageCell.queryAllHandler = previousReaderQueryAll;
+if (readerPreviousConversation) selectorResults.set(runtime.SELECTORS.conversationMessages, readerPreviousConversation);
+else selectorResults.delete(runtime.SELECTORS.conversationMessages);
 document.activeElement = messageCell;
 scheduledFrames.length = 0;
 scheduledTimeouts.clear();
@@ -3006,10 +3275,10 @@ while (scheduledFrames.length && mediaCloseChecks < 20) {
     mediaCloseChecks++;
 }
 assert.equal(mediaCloseChecks, 12);
-const [mediaClosedTimerId, announceMediaClosed] = Array.from(scheduledTimeouts.entries()).at(-1);
-scheduledTimeouts.delete(mediaClosedTimerId);
-announceMediaClosed();
-assert.equal(liveRegion.textContent, 'Media player closed.');
+const [mediaCloseFailedTimerId, announceMediaCloseFailed] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(mediaCloseFailedTimerId);
+announceMediaCloseFailed();
+assert.equal(liveRegion.textContent, 'Media player is still open. Try closing it again.');
 
 const hiddenCloseButton = new Element();
 const safeMediaOrigin = new Element();
@@ -3019,6 +3288,10 @@ document.activeElement = hiddenCloseButton;
 runtime.closeMediaPlayerShortcut(safeMediaOrigin);
 scheduledFrames.shift()();
 assert.equal(document.activeElement, safeMediaOrigin);
+const [mediaClosedTimerId, announceMediaClosed] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(mediaClosedTimerId);
+announceMediaClosed();
+assert.equal(liveRegion.textContent, 'Media player closed.');
 
 const bodyOriginCloseButton = new Element();
 const chatsFallbackButton = new Element();
@@ -4748,7 +5021,7 @@ assert.match(
     originalSource,
     /if \(remap\[0\] === ["']voice-recording["']\) armNextVoiceMessageCapture\(\);\s+e\.preventDefault\(\);\s+target\.dispatchEvent/
 );
-assert.doesNotMatch(originalSource, /addEventListener\(["']keydown["'], handleVoiceCaptureActivation/);
+assert.match(originalSource, /addEventListener\(["']keydown["'], handleVoiceCaptureActivation, true\)/);
 assert.equal(runtime.setShortcutRemap('previous-chat', true), true);
 assert.equal(runtime.setShortcutRemap('next-chat', true), true);
 runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowUp', target: remapTarget }));
@@ -5244,5 +5517,65 @@ assert.match(
     /markerAttributeMutation[\s\S]*target\?\.matches\?\.\(SELECTORS\.statusActiveMarker\)[\s\S]*target\?\.querySelector\?\.\(SELECTORS\.statusPlayerRoot\)/,
     'active-marker activation and deactivation must resynchronize a reused Status viewer'
 );
+
+const unreadMutationRow = new Element();
+const unreadMutationTarget = new Element();
+unreadMutationTarget.nodeType = 1;
+unreadMutationTarget.closestHandler = selector =>
+    selector === runtime.SELECTORS.chatListInSide || selector === 'div[role="row"]'
+        ? unreadMutationRow : null;
+const unreadMutationObserver = runtime.createCleanupObserver();
+unreadMutationObserver.trigger([{
+    type: 'childList', target: unreadMutationTarget,
+    addedNodes: [], removedNodes: [new Element()]
+}]);
+assert.ok(runtime.getDirtyRoots().includes(unreadMutationRow),
+    'removing the native unread badge must refresh the aggregate chat label');
+const unreadTextRow = new Element();
+unreadMutationTarget.closestHandler = selector =>
+    selector === runtime.SELECTORS.chatListInSide || selector === 'div[role="row"]'
+        ? unreadTextRow : null;
+unreadMutationObserver.trigger([{
+    type: 'characterData', target: { nodeType: 3, parentElement: unreadMutationTarget }
+}]);
+assert.ok(runtime.getDirtyRoots().includes(unreadTextRow),
+    'native text updates must refresh the aggregate chat label');
+unreadMutationObserver.disconnect();
+
+if (!runtime.getChatPulseEnabled()) runtime.toggleChatPulse(false);
+scheduledTimeouts.clear();
+runtime.scheduleChatPulseSync();
+const pulseBatch = Array.from(scheduledTimeouts.entries()).at(-1);
+assert.ok(pulseBatch);
+for (let mutation = 0; mutation < 100; mutation++) runtime.scheduleChatPulseSync();
+assert.equal(scheduledTimeouts.get(pulseBatch[0]), pulseBatch[1],
+    'continuous mutations must not postpone the pending reading batch');
+scheduledTimeouts.delete(pulseBatch[0]);
+pulseBatch[1]();
+runtime.scheduleChatPulseSync();
+assert.ok(scheduledTimeouts.size > 0, 'a completed batch must allow the next sync');
+runtime.toggleChatPulse(false);
+
+const followContainer = new Element();
+const previousTail = new Element();
+const nextTail = new Element();
+followContainer.rect = { top: 0, bottom: 500, height: 500 };
+previousTail.rect = { top: 400, bottom: 480, height: 80 };
+followContainer.queryHandler = selector => selector.includes('previous-tail') ? previousTail : nextTail;
+const focusBeforeFollow = document.activeElement;
+runtime.followChatPulseTail(followContainer, 'previous-tail', 'next-tail');
+assert.equal(nextTail.scrollIntoViewCalls, 1);
+assert.equal(document.activeElement, focusBeforeFollow, 'following new messages must preserve focus');
+previousTail.rect = { top: 600, bottom: 680, height: 80 };
+runtime.followChatPulseTail(followContainer, 'previous-tail', 'next-tail');
+assert.equal(nextTail.scrollIntoViewCalls, 1, 'reading older history must not force a scroll');
+previousTail.rect = { top: 400, bottom: 480, height: 80 };
+document.hidden = true;
+runtime.followChatPulseTail(followContainer, 'previous-tail', 'next-tail');
+assert.equal(nextTail.scrollIntoViewCalls, 1, 'background chats must not be scrolled');
+document.hidden = false;
+runtime.followChatPulseTail(followContainer, '', 'next-tail');
+runtime.followChatPulseTail(followContainer, 'next-tail', 'next-tail');
+assert.equal(nextTail.scrollIntoViewCalls, 1, 'initial history and receipts must not trigger scrolling');
 
 console.log('accessibility runtime checks passed');

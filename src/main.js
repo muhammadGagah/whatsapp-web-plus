@@ -60,6 +60,7 @@ import {
   updateStyleSheets
 } from './appearance.js';
 import { startSettingsMenu } from './settings-menu.js';
+import { startFormattingToolbar } from './formatting-toolbar.js';
 import {
   releaseStatusAccessibility,
   scheduleStatusAccessibilitySync,
@@ -265,12 +266,14 @@ function createCleanupObserver() {
           }
           recleanMessageAncestor(parent);
           maybeCaptureUnreadDivider(parent);
+          if (parent.closest?.(SELECTORS.chatListInSide)) scheduleRoleFix(getRoleFixRoot(parent));
         }
         scheduleCleanUiSync();
         continue;
       }
 
       if (mutation.type === 'childList') {
+        if (target?.closest?.(SELECTORS.chatListInSide)) scheduleRoleFix(getRoleFixRoot(target));
         mutation.addedNodes.forEach(node => {
           scheduleRoleFix(handleAddedNode(node));
           if (node.nodeType === 1 &&
@@ -286,12 +289,15 @@ function createCleanupObserver() {
         });
         mutation.removedNodes.forEach(node => {
           if (node.nodeType !== 1) return;
+          // A DOM move can clear keyboard focus even after the node reconnects.
+          recoverFocusAfterRemoval(node, mutation.nextSibling, mutation.previousSibling);
+          // Keep privacy and status ownership intact for reinserted subtrees.
+          if (node.isConnected) return;
           if (node.matches?.(SELECTORS.statusPlayerRoot) || node.querySelector?.(SELECTORS.statusPlayerRoot)) {
             statusRelevant = true;
             releaseStatusAccessibility(node);
           }
           forgetPrivacyState(node);
-          recoverFocusAfterRemoval(node, mutation.nextSibling, mutation.previousSibling);
         });
         if (targetInConversation) {
           scheduleRoleFix(target.closest?.(SELECTORS.conversationMessages) || target);
@@ -332,6 +338,7 @@ startStatusAutoAdvanceGuard();
 onDomReady(function() {
   try {
     ensureLiveRegion();
+    startFormattingToolbar();
     startSettingsMenu();
     startCleanupObserver();
     updateStyleSheets();

@@ -362,17 +362,35 @@ export function reconcileChatPulseEntries(chatTitle, entries) {
   return announcements;
 }
 
+function followChatPulseTail(container, previousTailId, nextTailId) {
+  if (!container || !previousTailId || previousTailId === nextTailId ||
+    document.hidden || document.hasFocus?.() === false || getActiveModal()) return;
+  const previous = findMessageById(container, previousTailId);
+  const next = findMessageById(container, nextTailId);
+  if (!previous || !next) return;
+  const viewport = container.getBoundingClientRect();
+  const previousRect = previous.getBoundingClientRect();
+  if (viewport.height <= 0 || previousRect.height <= 0 ||
+    previousRect.bottom <= viewport.top || previousRect.top >= viewport.bottom) return;
+  next.scrollIntoView({ block: 'end', behavior: 'instant' });
+}
+
 export function syncChatPulse() {
   if (!isAutomaticReadingEnabled()) return;
+  const chatTitle = getCurrentChatTitle();
+  const previousTailId = chatTitle === chatPulseChatTitle ? chatPulseTailId : '';
   queuePassiveAnnouncements('pulse', reconcileChatPulseEntries(
-    getCurrentChatTitle(),
+    chatTitle,
     getChatPulseEntries()
   ));
+  followChatPulseTail(
+    document.querySelector(SELECTORS.conversationMessages), previousTailId, chatPulseTailId
+  );
 }
 
 export function scheduleChatPulseSync() {
   if (!isAutomaticReadingEnabled()) return;
-  if (chatPulseSyncTimer !== null) clearTimeout(chatPulseSyncTimer);
+  if (chatPulseSyncTimer !== null) return;
   chatPulseSyncTimer = setTimeout(() => {
     chatPulseSyncTimer = null;
     syncChatPulse();
@@ -751,6 +769,7 @@ function recoverChatListFocusAfterCommunityClose(recovery, isClosed) {
 }
 
 export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSibling = null) {
+  const request = pendingFocusRequest;
   const remembered = getRememberedFocus();
   const communityClose = pendingCommunityClose && (
     rootEl === pendingCommunityClose.drawer || rootEl.contains?.(pendingCommunityClose.drawer)
@@ -763,12 +782,13 @@ export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSib
   if (communitySectionClose) pendingCommunitySectionClose = null;
   const lostChat = remembered.lastFocusedChatRowNode &&
     (rootEl === remembered.lastFocusedChatRowNode || rootEl.contains?.(remembered.lastFocusedChatRowNode));
-  const lostMessage = remembered.lastFocusedMessageNode &&
-    (rootEl === remembered.lastFocusedMessageNode || rootEl.contains?.(remembered.lastFocusedMessageNode));
+  const lostMessage = [remembered.lastFocusedMessageNode, remembered.lastFocusedMessageTarget]
+    .some(node => node && (rootEl === node || rootEl.contains?.(node)));
   if (!communityClose && !communitySectionClose && !lostChat && !lostMessage) return;
 
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   schedule(() => {
+    if (!isFocusRequestCurrent(request)) return;
     if (communityClose) {
       // Recover NVDA from the removed Communities subtree after the route settles.
       const tryRecover = attempt => {
@@ -819,15 +839,27 @@ export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSib
     if (lostChat) {
       focusChatListShortcut(document.body);
     } else {
-      clearRememberedMessageRow();
       const messageContainer = document.querySelector(SELECTORS.conversationMessages);
+      // The removal belongs to the old conversation, not a newly rendered route.
+      if (!messageContainer || messageContainer !== remembered.lastFocusedMessageContainer ||
+        getCurrentChatTitle() !== remembered.lastFocusedMessageChatTitle) return;
+      const rememberedRow = remembered.lastFocusedMessageNode;
+      const currentMessageId = rememberedRow?.getAttribute('data-id') ||
+        rememberedRow?.querySelector('[data-id]')?.getAttribute('data-id') || '';
+      const movedRow = rememberedRow?.isConnected && messageContainer.contains(rememberedRow) &&
+        currentMessageId === remembered.lastFocusedMessageId ? rememberedRow : null;
+      // Traditional DOM moves clear focus even when the row is connected again.
+      if (movedRow && movedRow.contains(remembered.lastFocusedMessageTarget) &&
+        isRenderedElement(remembered.lastFocusedMessageTarget) &&
+        focusItem(remembered.lastFocusedMessageTarget)) return;
+      clearRememberedMessageRow();
       const replacement = findMessageById(messageContainer, remembered.lastFocusedMessageId);
       const replacementRow = replacement && (replacement.closest('div[role="row"]') || replacement);
       const adjacentRows = [
         getAdjacentMessageRow(nextSibling),
         getAdjacentMessageRow(previousSibling, true)
       ];
-      const row = replacementRow || adjacentRows.find(candidate =>
+      const row = movedRow || replacementRow || adjacentRows.find(candidate =>
         candidate?.isConnected && messageContainer?.contains(candidate)
       ) || getMessageRows().at(-1);
       if (!focusItem(getBestInnerFocusElement(row))) focusItem(messageContainer);
@@ -1262,7 +1294,7 @@ function activateMediaPlayerClose(closeButton, origin = document.activeElement) 
   const confirmClosed = attempt => {
     if (closeButton.isConnected && isRenderedElement(closeButton)) {
       if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => confirmClosed(attempt + 1));
-      else announce(t('mediaClosed'));
+      else announce(t('mediaCloseFailed'));
       return;
     }
     const active = document.activeElement;
