@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.82
+// @version      2.6.83
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.82",
+    scriptVersion: "2.6.83",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.82";
+  var SCRIPT_VERSION = "2.6.83";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -7160,26 +7160,48 @@
   function getMediaPlayerCloseButton() {
     return document.querySelector(SELECTORS.videoPlayerClose) || document.querySelector(SELECTORS.audioPlayerClose);
   }
+  var pendingMediaCloses = /* @__PURE__ */ new WeakMap();
+  var MEDIA_CLOSE_TIMEOUT_MS = 1500;
+  var MEDIA_CLOSE_POLL_MS = 100;
   function activateMediaPlayerClose(closeButton, origin = document.activeElement) {
     if (!closeButton) {
       announce(t("mediaNotOpen"));
       return false;
     }
-    closeButton.click();
+    const pending = pendingMediaCloses.get(closeButton);
+    if (pending) {
+      pending.request = beginFocusRequest();
+      return true;
+    }
+    const pendingClose = { request: beginFocusRequest() };
+    pendingMediaCloses.set(closeButton, pendingClose);
+    const deadline = Date.now() + MEDIA_CLOSE_TIMEOUT_MS;
+    try {
+      closeButton.click();
+    } catch (error) {
+      pendingMediaCloses.delete(closeButton);
+      throw error;
+    }
     const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
-    const confirmClosed = (attempt) => {
+    const confirmClosed = () => {
       if (closeButton.isConnected && isRenderedElement(closeButton)) {
-        if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => confirmClosed(attempt + 1));
-        else announce(t("mediaCloseFailed"));
+        if (Date.now() < deadline) {
+          setTimeout(confirmClosed, MEDIA_CLOSE_POLL_MS);
+        } else {
+          pendingMediaCloses.delete(closeButton);
+          if (isFocusRequestCurrent(pendingClose.request)) announce(t("mediaCloseFailed"));
+        }
         return;
       }
+      pendingMediaCloses.delete(closeButton);
+      if (!isFocusRequestCurrent(pendingClose.request)) return;
       const active = document.activeElement;
-      if (!active || active === document.body || active === document.documentElement || !active.isConnected || !isRenderedElement(active)) {
+      if (!getActiveModal() && (!active || active === document.body || active === document.documentElement || !active.isConnected || !isRenderedElement(active))) {
         [origin, getNavButton("navChats"), document.querySelector(SELECTORS.chatList)].filter((candidate) => candidate && candidate !== document.body && candidate !== document.documentElement && candidate.isConnected && isRenderedElement(candidate)).some(focusItem);
       }
       announce(t("mediaClosed"));
     };
-    schedule(() => confirmClosed(1));
+    schedule(confirmClosed);
     return true;
   }
   function closeMediaPlayerShortcut(origin = document.activeElement) {
@@ -7382,7 +7404,9 @@
   function getIncomingCallAction(code) {
     if (typeof document.querySelectorAll !== "function") return null;
     const containers = Array.from(
-      document.querySelectorAll('[data-testid="voip-container-audio-call"]')
+      document.querySelectorAll(
+        '[data-testid="voip-container-audio-call"], [data-testid="voip-container-incoming-video-call"]'
+      )
     ).filter((container) => isVisibleCallControl(container));
     if (containers.length !== 1) return null;
     const callRoot = containers[0].closest('[data-testid="move_resize_component"]') || containers[0];

@@ -83,7 +83,7 @@ To open the update page yourself:
 3. Review the version and confirm the update in Tampermonkey.
 4. Refresh WhatsApp Web.
 
-The current version is **2.6.82**. Read the [release history](CHANGELOG.md) for changes.
+The current version is **2.6.83**. Read the [release history](CHANGELOG.md) for changes.
 
 ## If WhatsApp Web Plus does not start
 
@@ -102,6 +102,8 @@ See the [site-access instructions](docs/detailed-guide.md#3-check-site-access-if
 - [Custom language strings](docs/detailed-guide.md#custom-language-string-reference)
 - [Developer setup and debugging](docs/detailed-guide.md#for-contributors)
 - [Translation guide](translator.md)
+- [Signed update publishing guide (English)](docs/SIGNED-USERSSCRIPT-UPDATES.md)
+- [Panduan penerbitan pembaruan bertanda tangan (Bahasa Indonesia)](docs/SIGNED-USERSSCRIPT-UPDATES-ID.md)
 
 ## Reporting a problem
 

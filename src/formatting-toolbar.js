@@ -8,7 +8,6 @@ const ICONS = new Set(['ic-format-bold', 'ic-format-italic', 'ic-format-striketh
   'ic-code', 'ic-format-list-numbered', 'ic-format-list-bulleted', 'ic-format-quote']);
 const HELP_ID = 'wa-plus-formatting-toolbar-help';
 
-// Dependency injection keeps selection and host-DOM lifecycle tests independent of WhatsApp.
 export function createFormattingToolbarController(deps = {}) {
   const doc = deps.document || document;
   const win = deps.window || window;

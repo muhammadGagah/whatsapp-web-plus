@@ -1,6 +1,17 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.82 reflect the corresponding source in `src/`.
+This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.83 reflect the corresponding source in `src/`.
+
+## 2.6.83 - 2026-09-21
+
+### Fixed
+
+- Fixed premature “Media player is still open” announcements after `Alt+0`. The script now allows up to 1.5 seconds for dismissal, avoids duplicate close clicks, and preserves newer focus requests and modal focus boundaries.
+- Fixed `Ctrl+Alt+A` and `Ctrl+Alt+D` for incoming video calls by recognizing WhatsApp's incoming-video container. The camera toggle is not mistaken for Accept, and ambiguous or unavailable controls remain untouched.
+
+### Documentation
+
+- Added English and Indonesian signed-update publishing guides and release command references under `docs/`, with configurable example paths and public-download verification steps. Moved the existing signing documents from Companion to the script repository.
 
 ## 2.6.82 - 2026-09-19
 
@@ -45,7 +56,7 @@ This file records notable user-facing changes to WhatsApp Web Plus. Entries for 
 
 - Restored focus to the last chat-list position when Communities content closes, including when focus is in the selected community, the hidden Create communities section, or the document root after a second Escape. Clean UI now also recognizes and hides WhatsApp's current Create communities empty-state panel instead of leaving NVDA's cursor stranded on it.
 - Changed `Alt + 1` to enter the ready chat list after a fresh reload, return to the last keyboard-focused row afterward, or preserve the current row when already in the list, without scrolling back to the first chat.
-- Stopped NVDA from announcing *not selected* for chat-list rows. WhatsApp marks every row other than the open chat with `aria-selected="false"`; once the grid-cell role moves onto the row activator, that value makes the browser report the row as selectable but unselected, which NVDA reads on every focus change. Unselected rows now use `undefined`, the value of that state meaning the row is not selectable, so the unwanted state is silent. The open chat keeps WhatsApp's own selected state. This speech cleanup is separate from focus and row-index recovery.
+- Stopped NVDA from announcing *not selected* for chat-list rows. WhatsApp marks every row other than the open chat with `aria-selected="false"`. After the script moves the grid-cell role onto the row activator, NVDA reads that state whenever focus changes. Unselected rows now use `undefined` to indicate that they are not selectable. This stops the repeated announcement. The open chat keeps WhatsApp's own selected state. This speech cleanup is separate from focus and row-index recovery.
 - Replaced WhatsApp's opaque mention identities in focused message labels with their visible `@Name` values, including when Privacy Mode is enabled, without exposing phone numbers.
 
 ## 2.6.76 - 2026-08-16
@@ -132,7 +143,7 @@ This file records notable user-facing changes to WhatsApp Web Plus. Entries for 
 
 ### Changed
 
-- Split the maintained implementation into modules under `src/`; the installable userscript is generated during the build.
+- Split the maintained implementation into modules under `src/`. The installable userscript is generated during the build.
 - Improved message-history navigation, focus recovery after WhatsApp rerenders, automatic message reading, chat activity announcements, delivery-state announcements, and Meta AI handling.
 - Refined Privacy Mode so phone numbers are masked in conversation summaries and script announcements while contact names and visible phone-link names remain usable.
 - Made Clean UI and Original Dark Mode settings persistent and safer around focused controls.

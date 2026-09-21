@@ -3019,11 +3019,18 @@ function makeCallButton(icon, label) {
     button.queryAllHandler = selector => selector === 'span' && label ? [labelSpan] : [];
     return button;
 }
-for (const acceptIcon of ['ic-call-filled', 'ic-videocam-filled']) {
+for (const [containerId, acceptIcon] of [
+    ['voip-container-audio-call', 'ic-call-filled'],
+    ['voip-container-incoming-video-call', 'ic-videocam-filled']
+]) {
+    callContainer.setAttribute('data-testid', containerId);
     const acceptCall = makeCallButton(acceptIcon, 'Accepter');
     const declineCall = makeCallButton('ic-call-end-filled', 'Refuser');
-    callToolbar.queryAllHandler = selector => selector === 'button' ? [acceptCall, declineCall] : [];
-    selectorAllResults.set('[data-testid="voip-container-audio-call"]', [callContainer]);
+    // The observed video toolbar also contains a camera toggle sharing the accept icon.
+    const cameraToggle = makeCallButton('ic-videocam-filled', '');
+    cameraToggle.setAttribute('aria-label', 'Turn camera off');
+    callToolbar.queryAllHandler = selector => selector === 'button' ? [cameraToggle, acceptCall, declineCall] : [];
+    selectorAllResults.set('[data-testid="voip-container-audio-call"], [data-testid="voip-container-incoming-video-call"]', [callContainer]);
     const answerEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyA' });
     runtime.handleShortcuts(answerEvent);
     assert.equal(answerEvent.prevented, true);
@@ -3033,6 +3040,27 @@ for (const acceptIcon of ['ic-call-filled', 'ic-videocam-filled']) {
     assert.equal(declineEvent.prevented, true);
     assert.equal(declineCall.clickCalls, 1);
 }
+const incomingCallSelector = '[data-testid="voip-container-audio-call"], [data-testid="voip-container-incoming-video-call"]';
+const videoAnswer = makeCallButton('ic-videocam-filled', 'Accept');
+const videoDecline = makeCallButton('ic-call-end-filled', 'Decline');
+for (const scenario of ['two-containers', 'two-answers', 'disabled', 'hidden', 'altgraph', 'editor']) {
+    const extra = makeCallButton('ic-videocam-filled', 'Accept');
+    selectorAllResults.set(incomingCallSelector, scenario === 'two-containers' ? [callContainer, new Element()] : [callContainer]);
+    callToolbar.queryAllHandler = selector => selector === 'button'
+        ? [videoAnswer, videoDecline, ...(scenario === 'two-answers' ? [extra] : [])] : [];
+    videoAnswer.disabled = scenario === 'disabled';
+    videoAnswer.hidden = scenario === 'hidden';
+    const target = new Element();
+    if (scenario === 'editor') target.closestHandler = selector => selector.includes('contenteditable') ? target : null;
+    const ignored = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyD', target,
+        getModifierState: modifier => scenario === 'altgraph' && modifier === 'AltGraph' });
+    runtime.handleShortcuts(ignored);
+    assert.equal(ignored.prevented, false, scenario + ': call is not activated');
+    assert.equal(videoDecline.clickCalls, 0);
+}
+videoAnswer.disabled = false;
+videoAnswer.hidden = false;
+selectorAllResults.set(incomingCallSelector, [callContainer]);
 const iconOnlyAnswer = makeCallButton('ic-call-filled', '');
 const iconOnlyEnd = makeCallButton('ic-call-end-filled', '');
 callToolbar.queryAllHandler = selector => selector === 'button' ? [iconOnlyAnswer, iconOnlyEnd] : [];
@@ -3055,7 +3083,7 @@ const hiddenLabelEvent = makeEvent({ altKey: true, ctrlKey: true, code: 'KeyD' }
 runtime.handleShortcuts(hiddenLabelEvent);
 assert.equal(hiddenLabelEvent.prevented, false);
 assert.equal(hiddenLabelEnd.clickCalls, 0);
-selectorAllResults.delete('[data-testid="voip-container-audio-call"]');
+selectorAllResults.delete('[data-testid="voip-container-audio-call"], [data-testid="voip-container-incoming-video-call"]');
 
 let event = makeEvent({ altKey: true, code: 'KeyD' });
 runtime.handleShortcuts(event);
@@ -3269,16 +3297,74 @@ selectorResults.set(audioPlayerCloseSelector, lingeringMediaClose);
 runtime.clearStatusRegion();
 scheduledFrames.length = 0;
 runtime.closeMediaPlayerShortcut();
-let mediaCloseChecks = 0;
-while (scheduledFrames.length && mediaCloseChecks < 20) {
-    scheduledFrames.shift()();
-    mediaCloseChecks++;
+// A frame is not an elapsed-time budget: wait for the close animation.
+let mediaNow = Date.now();
+sandbox.Date = class extends Date { static now() { return mediaNow; } };
+function runNextMediaTimer(milliseconds = 100) {
+    mediaNow += milliseconds;
+    const [id, callback] = Array.from(scheduledTimeouts.entries()).at(-1);
+    scheduledTimeouts.delete(id);
+    callback();
 }
-assert.equal(mediaCloseChecks, 12);
-const [mediaCloseFailedTimerId, announceMediaCloseFailed] = Array.from(scheduledTimeouts.entries()).at(-1);
-scheduledTimeouts.delete(mediaCloseFailedTimerId);
-announceMediaCloseFailed();
+scheduledTimeouts.clear();
+scheduledFrames.shift()();
+assert.equal(scheduledFrames.length, 0);
+for (let i = 0; i < 16; i++) {
+    if (i < 15) assert.equal(liveRegion.textContent, '');
+    runNextMediaTimer();
+}
 assert.equal(liveRegion.textContent, 'Media player is still open. Try closing it again.');
+assert.equal(lingeringMediaClose.clickCalls, 1);
+
+for (const outcome of ['detached', 'hidden-parent', 'user-focus', 'new-modal', 'superseded', 'repeated-shortcut']) {
+    runtime.clearStatusRegion();
+    scheduledTimeouts.clear();
+    scheduledFrames.length = 0;
+    const animatedClose = new Element();
+    const parent = new Element();
+    parent.appendChild(animatedClose);
+    const origin = new Element();
+    selectorResults.set(audioPlayerCloseSelector, animatedClose);
+    document.activeElement = animatedClose;
+    if (outcome === 'repeated-shortcut') {
+        runtime.handleShortcuts(makeEvent({ altKey: true, code: 'Digit0', target: origin }));
+        runtime.handleShortcuts(makeEvent({ altKey: true, code: 'Digit0', target: origin }));
+    } else {
+        runtime.closeMediaPlayerShortcut(origin);
+        runtime.closeMediaPlayerShortcut(origin);
+    }
+    assert.equal(animatedClose.clickCalls, 1, 'pending close never clicks twice');
+    scheduledFrames.shift()();
+    for (let i = 0; i < 8; i++) runNextMediaTimer();
+    assert.equal(liveRegion.textContent, '', 'no premature failure during 800ms animation');
+    if (outcome === 'hidden-parent') parent.hidden = true;
+    else animatedClose.isConnected = false;
+    const otherFocus = new Element();
+    if (outcome === 'user-focus') document.activeElement = otherFocus;
+    if (outcome === 'new-modal') {
+        selectorAllResults.set(modalSelector, [vendorDialog]);
+        vendorDialog.hidden = false;
+        document.activeElement = document.body;
+    }
+    if (outcome === 'superseded') runtime.cancelPendingFocusRequests();
+    runNextMediaTimer();
+    if (outcome === 'superseded') {
+        assert.equal(liveRegion.textContent, '');
+        assert.equal(scheduledTimeouts.size, 0);
+    } else {
+        runNextMediaTimer();
+        assert.equal(liveRegion.textContent, 'Media player closed.');
+    }
+    if (outcome === 'user-focus') assert.equal(document.activeElement, otherFocus);
+    if (outcome === 'new-modal') {
+        assert.equal(document.activeElement, document.body, 'do not focus behind a new modal');
+        selectorAllResults.delete(modalSelector);
+        vendorDialog.hidden = true;
+    }
+    if (['detached', 'hidden-parent', 'repeated-shortcut'].includes(outcome)) assert.equal(document.activeElement, origin);
+}
+delete sandbox.Date;
+scheduledTimeouts.clear();
 
 const hiddenCloseButton = new Element();
 const safeMediaOrigin = new Element();

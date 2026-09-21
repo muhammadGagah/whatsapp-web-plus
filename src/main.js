@@ -332,7 +332,6 @@ function startCleanupObserver() {
   }
 }
 
-// Wrap Status media listeners registered during WhatsApp startup.
 startStatusAutoAdvanceGuard();
 
 onDomReady(function() {

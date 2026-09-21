@@ -1284,22 +1284,45 @@ function getMediaPlayerCloseButton() {
     document.querySelector(SELECTORS.audioPlayerClose);
 }
 
+const pendingMediaCloses = new WeakMap();
+const MEDIA_CLOSE_TIMEOUT_MS = 1500;
+const MEDIA_CLOSE_POLL_MS = 100;
+
 function activateMediaPlayerClose(closeButton, origin = document.activeElement) {
   if (!closeButton) {
     announce(t('mediaNotOpen'));
     return false;
   }
-  closeButton.click();
+  const pending = pendingMediaCloses.get(closeButton);
+  if (pending) {
+    pending.request = beginFocusRequest();
+    return true;
+  }
+  const pendingClose = { request: beginFocusRequest() };
+  pendingMediaCloses.set(closeButton, pendingClose);
+  const deadline = Date.now() + MEDIA_CLOSE_TIMEOUT_MS;
+  try {
+    closeButton.click();
+  } catch (error) {
+    pendingMediaCloses.delete(closeButton);
+    throw error;
+  }
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
-  const confirmClosed = attempt => {
+  const confirmClosed = () => {
     if (closeButton.isConnected && isRenderedElement(closeButton)) {
-      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => confirmClosed(attempt + 1));
-      else announce(t('mediaCloseFailed'));
+      if (Date.now() < deadline) {
+        setTimeout(confirmClosed, MEDIA_CLOSE_POLL_MS);
+      } else {
+        pendingMediaCloses.delete(closeButton);
+        if (isFocusRequestCurrent(pendingClose.request)) announce(t('mediaCloseFailed'));
+      }
       return;
     }
+    pendingMediaCloses.delete(closeButton);
+    if (!isFocusRequestCurrent(pendingClose.request)) return;
     const active = document.activeElement;
-    if (!active || active === document.body || active === document.documentElement ||
-      !active.isConnected || !isRenderedElement(active)) {
+    if (!getActiveModal() && (!active || active === document.body || active === document.documentElement ||
+      !active.isConnected || !isRenderedElement(active))) {
       [origin, getNavButton('navChats'), document.querySelector(SELECTORS.chatList)]
         .filter(candidate => candidate && candidate !== document.body &&
           candidate !== document.documentElement && candidate.isConnected && isRenderedElement(candidate))
@@ -1307,7 +1330,7 @@ function activateMediaPlayerClose(closeButton, origin = document.activeElement) 
     }
     announce(t('mediaClosed'));
   };
-  schedule(() => confirmClosed(1));
+  schedule(confirmClosed);
   return true;
 }
 
@@ -1547,7 +1570,9 @@ function getIncomingCallAction(code) {
   if (typeof document.querySelectorAll !== 'function') return null;
 
   const containers = Array.from(
-    document.querySelectorAll('[data-testid="voip-container-audio-call"]')
+    document.querySelectorAll(
+      '[data-testid="voip-container-audio-call"], [data-testid="voip-container-incoming-video-call"]'
+    )
   ).filter(container => isVisibleCallControl(container));
   if (containers.length !== 1) return null;
 
