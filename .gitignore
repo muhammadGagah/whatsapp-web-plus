@@ -2,6 +2,10 @@ debug*.txt
 whatsapp_web_plus.debug.js
 scriptLama.js
 node_modules/
-docs/
+docs/*
+!docs/RELEASE-SIGNING-CHEATSHEET.md
+!docs/RELEASE-SIGNING-CHEATSHEET-ID.md
+!docs/SIGNED-USERSSCRIPT-UPDATES.md
+!docs/SIGNED-USERSSCRIPT-UPDATES-ID.md
 *.private.pem
 release-private-key.pem

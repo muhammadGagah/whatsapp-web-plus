@@ -24,7 +24,7 @@ WhatsApp Web Plus currently provides English and Indonesian menus and announceme
    const messages = Object.freeze({ en, id, es });
    ```
 
-6. Optional: to select the new language automatically on first use, extend the browser-language check near `savedLanguage` in `src/settings-state.js`. If you are unsure how, skip this step — users can still select the language manually from the settings menu.
+6. Optional: to select the new language automatically on first use, extend the browser-language check near `savedLanguage` in `src/settings-state.js`. If you are unsure how, skip this step. Users can still select the language manually from the settings menu.
 
 Do not edit `whatsapp_web_plus.user.js`. It is generated from the files in `src/`.
 
@@ -32,7 +32,7 @@ Do not edit `whatsapp_web_plus.user.js`. It is generated from the files in `src/
 
 Edit only the text values in that language's file under `src/locales`. Do not rename or remove keys. Compare the file with `en.js` and add any keys introduced since the translation was last updated.
 
-This translates WhatsApp Web Plus, not WhatsApp itself. Detection of WhatsApp's own delivery and activity wording currently covers English and Indonesian. Supporting those inputs in another WhatsApp interface language may also require code and tests; mention that language in the pull request.
+This translates WhatsApp Web Plus, not WhatsApp itself. Detection of WhatsApp's own delivery and activity wording currently covers English and Indonesian. Supporting those inputs in another WhatsApp interface language may also require code and tests. Mention that language in the pull request.
 
 ## Translate placeholders safely
 
@@ -57,7 +57,7 @@ The current settings menu uses left-to-right layout. Arabic, Hebrew, and other r
 
 ## Check the translation
 
-The commands below require [Node.js](https://nodejs.org/). If you cannot run them, you can still submit the translation file and say so in the pull request; a maintainer can run the checks for you.
+The commands below require [Node.js](https://nodejs.org/). If you cannot run them, you can still submit the translation file and say so in the pull request. A maintainer can run the checks for you.
 
 Install dependencies once:
 
@@ -71,7 +71,7 @@ Then rebuild the userscript and run all checks:
 npm test
 ```
 
-For a new language, add checks to `test_settings_state.js` for selecting the language, translating a plain message, and replacing at least one placeholder. If you are not comfortable editing test files, submit the translation anyway and mention it; a maintainer can add the checks.
+For a new language, add checks to `test_settings_state.js` for selecting the language, translating a plain message, and replacing at least one placeholder. If you are not comfortable editing test files, submit the translation anyway and mention it. A maintainer can add the checks.
 
 Test the translation manually in WhatsApp Web:
 

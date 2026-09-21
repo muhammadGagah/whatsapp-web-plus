@@ -34,17 +34,17 @@ Only install Tampermonkey from its official website or the extension store linke
 
 #### Alternative: install Tampermonkey from an official CRX package
 
-Most people never need this method, if the store installation above worked, skip to step 2. Use this method only if installation from the browser's extension store is unavailable. A **CRX** file is a packaged Chrome extension. Tampermonkey's official package instructions use Developer mode and drag-and-drop, but drag-and-drop is not a reliable keyboard-only workflow. The steps below extract the package and load its folder instead.
+If installation from the extension store worked, skip to step 2. Use this method only if installation from the browser's extension store is unavailable. A **CRX** file is a packaged Chrome extension. Tampermonkey's official package instructions use Developer mode and drag-and-drop, but drag-and-drop is not a reliable keyboard-only workflow. The steps below extract the package and load its folder instead.
 
 If you previously chose **Download** instead of **Get from Store** and already have `tampermonkey_stable.crx`, skip steps 1 and 2.
 
-Later in these steps you will use a browser button named **Load unpacked**. That button cannot open a CRX or ZIP file directly, it needs a folder whose top level contains a file named `manifest.json`. The steps below create that folder.
+Later in these steps you will use a browser button named **Load unpacked**. That button cannot open a CRX or ZIP file directly. It needs a folder whose top level contains a file named `manifest.json`. The steps below create that folder.
 
 1. Open the [official Tampermonkey versions page](https://www.tampermonkey.net/faq.php?q=Q406).
 2. In the stable **Tampermonkey** row, activate the **crx** link. The downloaded file is normally named `tampermonkey_stable.crx`.
 3. In File Explorer, make sure file-name extensions are visible by choosing **View**, **Show**, then **File name extensions**.
 4. Select `tampermonkey_stable.crx` with the arrow keys. Press **F2**, then **Ctrl+A**. Type `tampermonkey_stable.zip` and press **Enter**. If Windows asks for confirmation, move to **Yes** with **Tab** and press **Enter**.
-5. Press **Shift+F10** on the renamed ZIP file. Use **Up Arrow** or **Down Arrow** to find **Extract All**, then press **Enter**. In the extraction dialog, move to **Extract** with **Tab** and press **Enter**. Keep the extracted folder in a permanent location, moving or deleting it later can stop the extension from loading.
+5. Press **Shift+F10** on the renamed ZIP file. Use **Up Arrow** or **Down Arrow** to find **Extract All**, then press **Enter**. In the extraction dialog, move to **Extract** with **Tab** and press **Enter**. Keep the extracted folder in a permanent location. Moving or deleting it later can stop the extension from loading.
 6. Open the extensions page for your browser:
    - Google Chrome: enter `chrome://extensions` in the address bar.
    - Microsoft Edge: enter `edge://extensions` in the address bar.
@@ -75,7 +75,7 @@ Tampermonkey 5.3 and later requires one extra permission on Chrome-based browser
 4. If **Allow User Scripts** is available and NVDA announces **off**, **not checked**, or **not pressed**, press **Space** once. Confirm that it is now on, checked, or pressed.
 5. If **Allow User Scripts** is not available, return to the main extensions page and enable **Developer mode** in the same way. This is the fallback documented by Tampermonkey for Chrome-based browsers.
 
-Browser-internal addresses such as `chrome://extensions` and `edge://extensions` must be entered in the address bar, they usually cannot be opened as links from this page.
+Browser-internal addresses such as `chrome://extensions` and `edge://extensions` must be entered in the address bar. They usually cannot be opened as links from this page.
 
 **Developer mode** is a browser-wide extension setting. You do not need to create or edit code when using it for this purpose.
 
@@ -148,11 +148,15 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | `Shift + Enter` | Expand the focused message when it contains WhatsApp's Read more button, then expose the complete text to the screen reader |
 | `Alt + Shift + C` | Open the focused text message or authored image, video, or document caption in a clean browser tab |
 
-`Alt + Shift + C` works only when DOM focus is on a message in the message history, such as while NVDA is in focus mode. A userscript cannot read the NVDA browse-mode virtual cursor. If the message still has **Read more**, the script opens the reader tab first, expands the source message, and then loads the complete text. Text messages and authored image, video, or document captions retain their lists and safe web, email, and telephone links. File names, attachment controls, media controls, quoted content, and message metadata are excluded. Use the **Close reader** button or press `Ctrl + W` to close the tab. `Escape` also closes it when NVDA passes the key to the page, if NVDA is in focus mode, the first press may return NVDA to browse mode and the second press closes the tab.
+`Alt + Shift + C` works only when keyboard focus is on a message in the message history, such as while NVDA is in focus mode. A userscript cannot read the NVDA browse-mode virtual cursor.
+
+If the message still has **Read more**, the script opens the reader tab first, expands the source message, and then loads the complete text. Text messages and authored image, video, or document captions retain their lists and safe web, email, and telephone links. File names, attachment controls, media controls, quoted content, and message metadata are excluded.
+
+Use the **Close reader** button or press `Ctrl + W` to close the tab. `Escape` also closes it when NVDA passes the key to the page. If NVDA is in focus mode, the first press may return NVDA to browse mode and the second press closes the tab.
 
 ### Incoming call controls
 
-These shortcuts work only while an incoming voice or video call is ringing and WhatsApp is showing its **Accept** and **Decline** buttons. They press those same buttons for you, if a shortcut does nothing, you can always move to the buttons and press them yourself.
+These shortcuts work only while an incoming voice or video call is ringing and WhatsApp is showing its **Accept** and **Decline** buttons. They press those same buttons for you. If a shortcut does nothing, you can always move to the buttons and press them yourself.
 
 | Shortcut | Action |
 | --- | --- |
@@ -175,7 +179,13 @@ Your optional feature choices are remembered after you refresh WhatsApp Web.
 
 Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, **Voice message recording**, **Voice calls**, and a command to open the WhatsApp Web Plus update page. The update command stays in the main menu so it is easy to find.
 
-Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Arrow` or `Escape` to go back to the previous menu, `Enter` or `Space` to change a setting, and `Escape` again to close the menu.
+Use these keys to navigate the menu:
+
+- Arrow keys move between items.
+- `Right Arrow` or `Enter` opens a submenu.
+- `Left Arrow` or `Escape` returns to the previous menu.
+- `Enter` or `Space` changes a setting.
+- `Escape` again closes the menu.
 
 ### What each setting does
 
@@ -185,22 +195,22 @@ Use the arrow keys to move, `Right Arrow` or `Enter` to open a submenu, `Left Ar
 - **Automatically read new messages** can announce new incoming and outgoing messages in the open chat, plus delivery changes such as Sent, Delivered, and Read for outgoing messages. It is off by default.
 - **Open chats at first unread message** moves focus to the first unread message when you press `Enter` on a chat in the chat list. If the chat has no unread messages, WhatsApp focuses the message editor as usual. It is off by default.
 - **Announce sender device** adds a best-effort indicator such as iPhone, iPad, Mac, Android, or WhatsApp Web or Desktop to focused messages and automatic message announcements. It is off by default, and no indicator is added when the device cannot be recognized.
-- **Announce total unread chats** keeps WhatsApp's total unread-chat count available to screen readers. It is on by default, turn it off if the changing count interrupts message reading.
-- **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button, `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is off by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so use DOM focus or focus mode for this shortcut.
+- **Announce total unread chats** keeps WhatsApp's total unread-chat count available to screen readers. It is on by default. Turn it off if the changing count interrupts message reading.
+- **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button. `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is off by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so move keyboard focus to the message or use focus mode for this shortcut.
 - **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
-- **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to natural completion without being paused, sought, or restarted, WhatsApp then remains on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
+- **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to the end. The script does not pause, seek, or restart playback. WhatsApp then stays on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
 - **Shortcut remapping** enables or disables the additional `Alt+M`, `Alt+Up Arrow`, and `Alt+Down Arrow` shortcuts individually. `Alt+M` is on by default. The two chat-navigation shortcuts are off until you enable them because they can conflict with commands used by some screen readers and other platforms. All three shortcuts trigger WhatsApp's existing commands.
-- **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`, selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
-- **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually, select **WhatsApp default** immediately if a call loses audio or develops echo.
+- **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`. Selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
+- **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually. Select **WhatsApp default** immediately if a call loses audio or develops echo.
 - **Custom language strings** lets users enter the exact WhatsApp text used for unread markers, activity, delivery states, navigation, privacy filtering, and appearance cleanup. The five navigation names control `Alt + Shift + 1` through `5`. See the reference below before changing these fields.
 - **Clean UI** hides promotional and extra controls while keeping the chat list and conversation available.
 - **Original Dark Mode** restores WhatsApp's older dark colors. It changes only the visual appearance, not screen-reader output.
 
 ### Custom language string reference
 
-These fields are detectors for text supplied by WhatsApp, not translations of WhatsApp Web Plus announcements. Enter the exact text shown or announced by WhatsApp in your interface language. The script treats your entry as plain literal text, so do not enter computer code, search patterns, or explanations, only the exact text itself.
+These fields help the script recognize text shown by WhatsApp. They do not change the language of WhatsApp Web Plus announcements. Enter the exact text shown or announced by WhatsApp in your interface language. Enter only the text itself. Do not add computer code, search patterns, or explanations.
 
-English and Indonesian wording is already built in. Change a field only when the related feature does not recognize WhatsApp in another language. Examples below show the expected shape of each value, WhatsApp may use different wording in your version. Leave a field blank and save it to restore the built-in behavior.
+English and Indonesian wording is already built in. Change a field only when the related feature does not recognize WhatsApp in another language. The examples below show what to enter. WhatsApp may use different wording in your version. Leave a field blank and save it to restore the built-in behavior.
 
 #### Messages, activity, and delivery
 
@@ -226,7 +236,7 @@ Use the four specific delivery fields whenever a label means Pending, Sent, Deli
 - **Channels button accessible name** must match the complete accessible name of the Channels button. It controls `Alt + Shift + 4`. Example: `Canales`.
 - **Meta AI button accessible name** must match the complete accessible name of the Meta AI button. It controls `Alt + Shift + 5` and also helps the script recognize Meta AI content. Example: `Meta AI`.
 
-Navigation accessible names must match WhatsApp exactly, including capitalization and spacing. Enter only the button name, do not add words such as “button” that are supplied by the screen reader.
+Navigation accessible names must match WhatsApp exactly, including capitalization and spacing. Enter only the button name. Do not add words such as “button” that are supplied by the screen reader.
 
 #### Privacy, chat status, and participant lists
 
