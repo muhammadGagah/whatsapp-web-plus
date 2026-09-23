@@ -43,6 +43,8 @@ class Element {
     appendChild(child) { child.parentElement = this; this.children.push(child); return child; }
     append(...children) { children.forEach(child => this.appendChild(child)); }
     after(sibling) {
+        if (sibling.parentElement) sibling.parentElement.children = sibling.parentElement.children.filter(child => child !== sibling);
+        sibling.parentElement = this.parentElement;
         if (!this.parentElement) return;
         sibling.parentElement = this.parentElement;
         const index = this.parentElement.children.indexOf(this);
@@ -296,6 +298,8 @@ assert.equal(document.activeElement.dataset.action, 'language');
 assert.equal(document.activeElement.getAttribute('tabindex'), '-1');
 const updateItem = rootMenu.children.find(item => item.dataset.action === 'open-update');
 assert.ok(updateItem);
+const shortcutListItem = rootMenu.children.find(item => item.dataset.action === 'shortcut-list');
+assert.equal(shortcutListItem.children[1].textContent, 'Shortcut list');
 const privacyItem = rootMenu.children.find(item => item.dataset.action === 'privacy');
 const accessibilityItem = rootMenu.children.find(item => item.dataset.action === 'accessibility');
 const keyboardShortcutsItem = rootMenu.children.find(item => item.dataset.action === 'keyboard-shortcuts');
@@ -383,7 +387,7 @@ assert.deepEqual(
     callAudioProfileItems.map(item => item.children[1].textContent),
     [
         'WhatsApp default (WhatsApp controls audio)',
-        'Raw (requests browser input processing off; use headphones)',
+        'Raw (requests browser input processing off. Use headphones)',
         'Natural (browser call processing only)',
         'Clear (light voice equalizer)',
         'Noise filter (stronger background-noise reduction)'
@@ -499,15 +503,18 @@ for (const [item, menu] of [
     assert.equal(menu.parentElement, rootMenu);
     assert.equal(rootMenu.children.indexOf(menu), rootMenu.children.indexOf(item) + 1);
 }
-for (const [action, checked, label] of [
-    ['remap-voice-recording', 'true', 'Use Alt+M to start voice recording'],
-    ['remap-previous-chat', 'false', 'Use Alt+Up Arrow for previous chat'],
-    ['remap-next-chat', 'false', 'Use Alt+Down Arrow for next chat']
+for (const [action, label] of [
+    ['remap-voice-recording', 'Record voice message: Alt+M'],
+    ['remap-previous-chat', 'Previous chat: Not assigned'],
+    ['remap-next-chat', 'Next chat: Not assigned'],
+    ['remap-voice-call', 'Start voice call: Not assigned'],
+    ['remap-video-call', 'Start video call: Not assigned']
 ]) {
     const item = keyboardShortcutsMenu.children.find(child => child.dataset.action === action);
     assert.equal(item.tagName, 'BUTTON');
-    assert.equal(item.getAttribute('role'), 'menuitemcheckbox');
-    assert.equal(item.getAttribute('aria-checked'), checked);
+    assert.equal(item.getAttribute('role'), 'menuitem');
+    assert.equal(item.getAttribute('aria-haspopup'), 'dialog');
+    assert.equal(item.getAttribute('aria-checked'), null);
     assert.equal(item.getAttribute('aria-keyshortcuts'), null);
     assert.equal(item.children[1].textContent, label);
 }
@@ -704,19 +711,64 @@ keydown(keyboardEvent({ key: 'Enter' }));
 assert.equal(keyboardShortcutsMenu.hidden, false);
 assert.equal(document.activeElement.dataset.action, 'remap-voice-recording');
 keydown(keyboardEvent({ key: ' ' }));
-assert.equal(storedValues.get('wa-plus-remap-voice-recording'), 'false');
-assert.equal(document.activeElement.getAttribute('aria-checked'), 'false');
-assert.equal(rootMenu.hidden, false);
-keydown(keyboardEvent({ key: 'ArrowDown' }));
-assert.equal(document.activeElement.dataset.action, 'remap-previous-chat');
-keydown(keyboardEvent({ key: ' ' }));
-assert.equal(storedValues.get('wa-plus-remap-previous-chat'), 'true');
-assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
-keydown(keyboardEvent({ key: 'ArrowDown' }));
-assert.equal(document.activeElement.dataset.action, 'remap-next-chat');
-keydown(keyboardEvent({ key: ' ' }));
-assert.equal(storedValues.get('wa-plus-remap-next-chat'), 'true');
-assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
+const shortcutEditor = document.getElementById('wa-plus-custom-text-dialog');
+const shortcutInput = document.getElementById('wa-plus-custom-text-input');
+const shortcutForm = shortcutEditor.children[0];
+const submitShortcut = () => shortcutForm.listeners.get('submit')[0]({ preventDefault() {} });
+assert.equal(shortcutEditor.open, true);
+assert.equal(document.activeElement, shortcutInput);
+assert.equal(shortcutInput.getAttribute('aria-describedby'), 'wa-plus-shortcut-error');
+const shortcutHelp = document.getElementById('wa-plus-custom-text-help');
+assert.ok(shortcutForm.children.indexOf(shortcutHelp) < shortcutForm.children.indexOf(shortcutInput));
+assert.equal(shortcutHelp.getAttribute('aria-hidden'), null);
+assert.equal(shortcutInput.value, 'Alt+M');
+const recordShortcut = shortcutForm.children.at(-1).children.find(button => button.textContent === 'Record shortcut');
+recordShortcut.listeners.get('click')[0]();
+const captureKey = event => shortcutInput.listeners.get('keydown')[0]({ stopPropagation() {}, ...event });
+const commaEvent = keyboardEvent({ key: ',', code: 'Comma', altKey: true });
+captureKey(commaEvent);
+assert.equal(shortcutInput.value, 'Alt+,');
+assert.equal(document.activeElement, recordShortcut);
+assert.equal(storedValues.get('wa-plus-shortcut-bindings'), undefined);
+recordShortcut.listeners.get('click')[0]();
+captureKey(keyboardEvent({ key: 'Escape', code: 'Escape' }));
+assert.equal(shortcutEditor.open, true);
+assert.equal(shortcutInput.value, 'Alt+,');
+recordShortcut.listeners.get('click')[0]();
+const captureTab = keyboardEvent({ key: 'Tab', code: 'Tab' });
+captureKey(captureTab);
+assert.ok(!captureTab.prevented);
+captureKey(keyboardEvent({ key: 'x', code: 'KeyX', altKey: true }));
+assert.equal(shortcutInput.value, 'Alt+,');
+shortcutInput.value = 'Alt+Shift+C';
+submitShortcut();
+assert.equal(shortcutEditor.open, true);
+assert.equal(shortcutInput.getAttribute('aria-invalid'), 'true');
+assert.equal(document.activeElement.id, 'wa-plus-shortcut-error');
+shortcutInput.value = 'Ctrl+Shift+M';
+const saveShortcutStorage = context.localStorage.setItem;
+context.localStorage.setItem = () => { throw new Error('blocked'); };
+submitShortcut();
+assert.equal(shortcutEditor.open, true);
+assert.equal(shortcutInput.value, 'Ctrl+Shift+M');
+assert.equal(document.activeElement.textContent, 'The setting could not be saved.');
+context.localStorage.setItem = saveShortcutStorage;
+submitShortcut();
+assert.equal(shortcutEditor.open, false);
+assert.equal(document.activeElement, invoker);
+assert.equal(JSON.parse(storedValues.get('wa-plus-shortcut-bindings'))['voice-recording'], 'Ctrl+Shift+M');
+keydown(settingsShortcut());
+keyboardShortcutsItem.focus();
+keydown(keyboardEvent({ key: 'Enter' }));
+keydown(keyboardEvent({ key: 'Enter' }));
+const shortcutReset = shortcutForm.children.at(-1).children.find(button => button.textContent === 'Restore default');
+shortcutReset.listeners.get('click')[0]();
+assert.equal(shortcutInput.value, 'Alt+M');
+assert.equal(shortcutEditor.open, true, 'reset only edits the field until Save');
+submitShortcut();
+keydown(settingsShortcut());
+keyboardShortcutsItem.focus();
+keydown(keyboardEvent({ key: 'Enter' }));
 keydown(keyboardEvent({ key: 'Escape' }));
 assert.equal(document.activeElement, keyboardShortcutsItem);
 keydown(keyboardEvent({ key: 'ArrowDown' }));
@@ -743,6 +795,7 @@ assert.equal(storedValues.get('wa-plus-language'), 'id');
 assert.equal(rootMenu.hidden, true);
 
 keydown(settingsShortcut());
+assert.equal(shortcutListItem.children[1].textContent, 'Daftar shortcut');
 assert.equal(keyboardShortcutsItem.children[1].textContent, 'Pemetaan ulang pintasan');
 assert.equal(statusReadingItem.children[1].textContent, 'Bersihkan pembacaan Status dan hentikan perpindahan otomatis');
 assert.equal(voiceCallsItem.children[1].textContent, 'Panggilan suara');
@@ -756,7 +809,7 @@ assert.deepEqual(
     callAudioProfileItems.map(item => item.children[1].textContent),
     [
         'Bawaan WhatsApp (audio diatur oleh WhatsApp)',
-        'Mentah (meminta pemrosesan input browser dimatikan; gunakan headphone)',
+        'Mentah (meminta pemrosesan input browser dimatikan. Gunakan headphone)',
         'Alami (hanya pemrosesan panggilan dari browser)',
         'Jernih (ekualiser suara ringan)',
         'Peredam bising (pengurangan suara latar lebih kuat)'
@@ -764,9 +817,9 @@ assert.deepEqual(
 );
 assert.equal(clearCallProfileItem.getAttribute('aria-checked'), 'true');
 for (const [action, label] of [
-    ['remap-voice-recording', 'Gunakan Alt+M untuk mulai merekam pesan suara'],
-    ['remap-previous-chat', 'Gunakan Alt+Panah atas untuk chat sebelumnya'],
-    ['remap-next-chat', 'Gunakan Alt+Panah bawah untuk chat berikutnya']
+    ['remap-voice-recording', 'Rekam pesan suara: Alt+M'],
+    ['remap-previous-chat', 'Chat sebelumnya: Belum ditetapkan'],
+    ['remap-next-chat', 'Chat berikutnya: Belum ditetapkan']
 ]) {
     const item = keyboardShortcutsMenu.children.find(child => child.dataset.action === action);
     assert.equal(item.children[1].textContent, label);
@@ -1016,6 +1069,7 @@ assert.equal(rootMenu.hidden, true);
 context.localStorage.setItem = () => { throw new Error('storage denied'); };
 customInput.value = 'tetap tersedia untuk dicoba lagi';
 const customForm = customDialog.children[0];
+assert.ok(customForm.children.indexOf(document.getElementById('wa-plus-custom-text-help')) > customForm.children.indexOf(customInput));
 const customErrorTimerStart = scheduledTimers.length;
 customForm.listeners.get('submit')[0]({ preventDefault() {} });
 assert.equal(customDialog.open, true);

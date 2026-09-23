@@ -44,6 +44,8 @@ import {
 } from './companion-bridge.js';
 
 let lastFocusedChatRowNode = null;
+let lastFocusedChatTarget = null;
+let lastFocusedChatContainer = null;
 let lastFocusedChatTitle = '';
 let lastFocusedChatIdentity = '';
 let lastFocusedChatRowIndex = -1;
@@ -562,7 +564,14 @@ function readerTextRun(text, element) {
   // including spans containing only a newline. Ordinary HTML indentation is not.
   const whiteSpace = typeof window.getComputedStyle === 'function' && element
     ? window.getComputedStyle(element).whiteSpace : '';
+  const collapseSpaces = /^(normal|nowrap|pre-line)$/.test(whiteSpace);
+  if (whiteSpace === 'normal' || whiteSpace === 'nowrap') {
+    text = text.replace(/[\t\n\r\f ]+/g, ' ');
+  } else if (whiteSpace === 'pre-line') {
+    text = text.replace(/\r\n?/g, '\n').replace(/[\t\f ]+/g, ' ').replace(/ *\n */g, '\n');
+  }
   return { type: 'text', text,
+    collapseSpaces,
     preserveWhitespace: /^(pre|pre-wrap|pre-line|break-spaces)$/.test(whiteSpace) };
 }
 
@@ -602,8 +611,18 @@ function appendReaderRun(runs, run) {
   if (run.type === 'text' && !run.text) return;
   const previous = runs[runs.length - 1];
   if (run.type === 'text' && previous?.type === 'text' &&
-    previous.preserveWhitespace === run.preserveWhitespace) previous.text += run.text;
-  else runs.push(run);
+    previous.preserveWhitespace === run.preserveWhitespace &&
+    previous.collapseSpaces === run.collapseSpaces) {
+    let text = run.text;
+    // Collapsible spaces spanning adjacent inline nodes still form one space.
+    // Keep this separate from authored spaces in pre/pre-wrap message bodies.
+    if (run.collapseSpaces) {
+      if (previous.text.endsWith(' ') && text.startsWith(' ')) text = text.slice(1);
+      if (previous.text.endsWith('\n')) text = text.replace(/^ +/, '');
+      if (text.startsWith('\n')) previous.text = previous.text.replace(/ +$/, '');
+    }
+    previous.text += text;
+  } else runs.push(run);
 }
 
 function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false) {
@@ -1685,6 +1704,10 @@ function orderChatRowsByPosition(rows) {
 }
 
 function rememberChatRowState(row) {
+  if (row !== lastFocusedChatRowNode) {
+    lastFocusedChatTarget = null;
+    lastFocusedChatContainer = null;
+  }
   lastFocusedChatRowNode = row;
   lastFocusedChatTitle = getChatRowTitle(row);
   lastFocusedChatIdentity = getChatRowIdentity(row);
@@ -1978,6 +2001,10 @@ export function getActiveModal(preferredTarget = document.activeElement) {
 
 export function rememberFocusedRow(target, interactionType = 'focus') {
   trackChatListShortcutArrowFocus(target, interactionType);
+  if (interactionType === 'focus' && !lastFocusedChatRowNode?.contains?.(target)) {
+    lastFocusedChatTarget = null;
+    lastFocusedChatContainer = null;
+  }
   if (!target.closest) return;
 
   const row = target.closest('div[role="row"]');
@@ -1987,6 +2014,10 @@ export function rememberFocusedRow(target, interactionType = 'focus') {
   if (side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
     if (isAnnouncementReductionEnabled()) applyChatRowNativeMask(row);
     rememberChatRowState(row);
+    if (interactionType === 'focus') {
+      lastFocusedChatTarget = target;
+      lastFocusedChatContainer = row.closest(SELECTORS.chatListInSide);
+    }
   }
 
   const main = document.querySelector(SELECTORS.main);
@@ -2017,12 +2048,15 @@ export function refreshAnnouncementReduction() {
 
 export function getRememberedFocus() {
   return {
-    lastFocusedChatRowNode, lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId,
+    lastFocusedChatRowNode, lastFocusedChatTarget, lastFocusedChatContainer,
+    lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId,
     lastFocusedMessageTarget, lastFocusedMessageContainer, lastFocusedMessageChatTitle
   };
 }
 
 export function clearRememberedChatRow() {
+  lastFocusedChatTarget = null;
+  lastFocusedChatContainer = null;
   lastFocusedChatRowNode = null;
   lastFocusedChatTitle = '';
   lastFocusedChatIdentity = '';

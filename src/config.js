@@ -17,6 +17,7 @@ export const STORAGE_KEYS = Object.freeze({
   announceUnreadChatTotal: 'wa-plus-announce-unread-chat-total',
   voiceMessageKeyboardPlayback: 'wa-plus-voice-message-keyboard-playback',
   openChatsAtFirstUnread: 'wa-plus-open-chats-at-first-unread',
+  shortcutBindings: 'wa-plus-shortcut-bindings',
   remapVoiceRecording: 'wa-plus-remap-voice-recording',
   remapPreviousChat: 'wa-plus-remap-previous-chat',
   remapNextChat: 'wa-plus-remap-next-chat',

@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.83
+// @version      2.6.84
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.83",
+    scriptVersion: "2.6.84",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.83";
+  var SCRIPT_VERSION = "2.6.84";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -53,6 +53,7 @@
     announceUnreadChatTotal: "wa-plus-announce-unread-chat-total",
     voiceMessageKeyboardPlayback: "wa-plus-voice-message-keyboard-playback",
     openChatsAtFirstUnread: "wa-plus-open-chats-at-first-unread",
+    shortcutBindings: "wa-plus-shortcut-bindings",
     remapVoiceRecording: "wa-plus-remap-voice-recording",
     remapPreviousChat: "wa-plus-remap-previous-chat",
     remapNextChat: "wa-plus-remap-next-chat",
@@ -193,8 +194,224 @@
   var PHONE_URL_RE = /\b(?:https?:\/\/)?(?:wa\.me\/|phone=|tel:)(?:\+\s*)?\d[\d\s()./‐‑‒–—―-]{5,}\d\b/gi;
   var WEB_URL_RE = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 
+  // src/shortcut-bindings.js
+  var SHORTCUT_ACTIONS = Object.freeze({
+    "voice-recording": { label: "shortcutVoiceRecording", defaultBinding: "Alt+M" },
+    "previous-chat": { label: "shortcutPreviousChat", defaultBinding: "Alt+ArrowUp" },
+    "next-chat": { label: "shortcutNextChat", defaultBinding: "Alt+ArrowDown" },
+    "voice-call": { label: "shortcutVoiceCall", defaultBinding: "" },
+    "video-call": { label: "shortcutVideoCall", defaultBinding: "" }
+  });
+  var RESERVED_SHORTCUTS = /* @__PURE__ */ new Set([
+    "Ctrl+Alt+Shift+[",
+    "Ctrl+Alt+Shift+]",
+    "Ctrl+-",
+    "Ctrl+=",
+    "Ctrl+Shift+-",
+    "Ctrl+Shift+=",
+    "Alt+F10",
+    "Ctrl+F4",
+    "Ctrl+F5",
+    ..."0123456789".split("").map((key) => `Ctrl+${key}`),
+    "Alt+0",
+    "Alt+1",
+    "Alt+2",
+    "Alt+3",
+    "Alt+T",
+    "Alt+Shift+1",
+    "Alt+Shift+2",
+    "Alt+Shift+3",
+    "Alt+Shift+4",
+    "Alt+Shift+5",
+    "Alt+Shift+C",
+    "Alt+Shift+D",
+    "Alt+Shift+N",
+    "Alt+Shift+L",
+    "Alt+Shift+7",
+    "Alt+Shift+8",
+    "Alt+Shift+9",
+    "Ctrl+Alt+A",
+    "Ctrl+Alt+D",
+    "Ctrl+Alt+V",
+    "Ctrl+Alt+M",
+    "Ctrl+Alt+R",
+    "Ctrl+Alt+H",
+    "Ctrl+Alt+S",
+    "Ctrl+Alt+W",
+    "Ctrl+Alt+Shift+R",
+    "Alt+ArrowLeft",
+    "Alt+ArrowRight",
+    "Alt+Home",
+    "Alt+F4",
+    "Alt+F",
+    "Alt+E",
+    "Alt+D",
+    ..."ACFHKLNOPRSTUVWXYZ".split("").map((key) => `Ctrl+${key}`),
+    ...["A", "B", "C", "D", "I", "J", "N", "O", "P", "R", "T", "V", "W", "Y", "Z"].map((key) => `Ctrl+Shift+${key}`)
+  ]);
+  var PUNCTUATION_CODES = Object.freeze({
+    ",": "Comma",
+    ".": "Period",
+    "/": "Slash",
+    ";": "Semicolon",
+    "'": "Quote",
+    "[": "BracketLeft",
+    "]": "BracketRight",
+    "-": "Minus",
+    "=": "Equal",
+    "`": "Backquote",
+    "\\": "Backslash"
+  });
+  function captureShortcutBinding(event) {
+    if (event.repeat || event.isComposing || event.metaKey || event.getModifierState?.("AltGraph")) return null;
+    const key = Object.keys(PUNCTUATION_CODES).find((key2) => PUNCTUATION_CODES[key2] === event.code) || (/^Key[A-Z]$/.test(event.code) ? event.code.slice(3) : /^Digit[0-9]$/.test(event.code) ? event.code.slice(5) : event.code);
+    return parseShortcutBinding([
+      event.ctrlKey && "Ctrl",
+      event.altKey && "Alt",
+      event.shiftKey && "Shift",
+      key
+    ].filter(Boolean).join("+"));
+  }
+  function parseShortcutBinding(value) {
+    if (typeof value !== "string") return null;
+    if (!value.trim()) return { text: "", code: "", ctrlKey: false, altKey: false, shiftKey: false };
+    const parts = value.split("+").map((part) => part.trim().toLowerCase());
+    const key = parts.pop();
+    if (!parts.length || parts.some((part) => !["ctrl", "alt", "shift"].includes(part)) || new Set(parts).size !== parts.length || !parts.some((part) => part === "ctrl" || part === "alt")) return null;
+    const named = {
+      up: "ArrowUp",
+      down: "ArrowDown",
+      left: "ArrowLeft",
+      right: "ArrowRight",
+      arrowup: "ArrowUp",
+      arrowdown: "ArrowDown",
+      arrowleft: "ArrowLeft",
+      arrowright: "ArrowRight"
+    };
+    const name = /^[a-z0-9]$/.test(key) ? key.toUpperCase() : /^f(?:[1-9]|1[0-2])$/.test(key) ? key.toUpperCase() : named[key] || (PUNCTUATION_CODES[key] ? key : null);
+    if (!name) return null;
+    const code = /^[A-Z]$/.test(name) ? `Key${name}` : /^\d$/.test(name) ? `Digit${name}` : PUNCTUATION_CODES[name] || name;
+    const ctrlKey = parts.includes("ctrl");
+    const altKey = parts.includes("alt");
+    const shiftKey = parts.includes("shift");
+    return {
+      text: [ctrlKey && "Ctrl", altKey && "Alt", shiftKey && "Shift", name].filter(Boolean).join("+"),
+      code,
+      ctrlKey,
+      altKey,
+      shiftKey
+    };
+  }
+  function isReservedShortcut(binding) {
+    return RESERVED_SHORTCUTS.has(binding.text) || binding.ctrlKey && binding.altKey && binding.shiftKey && ["ArrowUp", "ArrowDown"].includes(binding.code);
+  }
+  function matchesShortcutBinding(event, value) {
+    const binding = parseShortcutBinding(value);
+    return !!binding?.code && !event.metaKey && event.code === binding.code && !!event.ctrlKey === binding.ctrlKey && !!event.altKey === binding.altKey && !!event.shiftKey === binding.shiftKey;
+  }
+
   // src/locales/en.js
   var en_default = {
+    shortcutDescription5_0: "Mark as unread",
+    shortcutDescription5_1: "Mute chat",
+    shortcutDescription5_2: "Archive chat",
+    shortcutDescription5_3: "Pin chat",
+    shortcutDescription5_4: "Search",
+    shortcutDescription5_5: "Search chat",
+    shortcutDescription5_6: "New chat",
+    shortcutDescription5_7: "Next chat",
+    shortcutDescription5_8: "Previous chat",
+    shortcutDescription5_9: "Add chat to list",
+    shortcutDescription5_10: "Close chat",
+    shortcutDescription5_11: "New group",
+    shortcutDescription5_12: "Profile and About",
+    shortcutDescription5_13: "Increase speed of selected voice message",
+    shortcutDescription5_14: "Decrease speed of selected voice message",
+    shortcutDescription5_15: "Settings",
+    shortcutDescription5_16: "Emoji panel",
+    shortcutDescription5_17: "GIF panel",
+    shortcutDescription5_18: "Sticker panel",
+    shortcutDescription5_19: "Extended search",
+    shortcutDescription5_20: "Lock app",
+    shortcutDescription5_21: "Open chat info",
+    shortcutDescription5_22: "Block chat",
+    shortcutDescription5_23: "Reply",
+    shortcutDescription5_24: "Reply privately",
+    shortcutDescription5_25: "Forward",
+    shortcutDescription5_26: "Star message",
+    shortcutDescription5_27: "Open attachment dropdown",
+    shortcutDescription5_28: "Start PTT recording",
+    shortcutDescription5_29: "Pause PTT recording",
+    shortcutDescription5_30: "Send PTT",
+    shortcutDescription5_31: "Edit last message",
+    shortcutDescription5_32: "Zoom in",
+    shortcutDescription5_33: "Zoom out",
+    shortcutDescription5_34: "Zoom reset",
+    shortcutDescription5_35: "Open chat",
+    shortcutDescription6_0: "Toggle camera",
+    shortcutDescription6_1: "Toggle mute",
+    shortcutDescription6_2: "Reactions",
+    shortcutDescription6_3: "Raise hand",
+    shortcutDescription6_4: "Screen share",
+    shortcutDescription6_5: "End call",
+    shortcutSection5: "WhatsApp built-in shortcuts",
+    shortcutSection6: "Calls",
+    shortcutNativeBrowserNote: "These are the WhatsApp browser shortcuts. Some commands depend on the selected message or current panel.",
+    shortcutNativeWebviewNote: "These are the shortcuts for WhatsApp in WebView2. Some commands depend on the selected message or current panel.",
+    shortcutCallContextNote: "Use these shortcuts while call controls are available. The same key can have a different function in a chat.",
+    shortcutListDefaultsNote: "These are default shortcuts. Your saved assignments are shown in Shortcut remapping.",
+    shortcutRecord: "Record shortcut",
+    shortcutCapturePrompt: "Press your shortcut. Escape cancels recording. Tab leaves recording.",
+    shortcutCaptured: "Recorded {shortcut}. Record another shortcut",
+    shortcutCaptureHelp: "Choose Record shortcut, then press a combination such as Alt+comma. NVDA must be in focus mode so the script receives the keys. If NVDA is in browse mode, press NVDA+Space to switch before recording. Choose Save to apply the recorded shortcut. You can also type the combination manually.",
+    shortcutDescription1_3: "Play or pause the focused voice message when the optional keyboard playback setting is enabled (off by default)",
+    shortcutList: "Shortcut list",
+    shortcutSection0: "Navigation",
+    shortcutDescription0_0: "Open Chats",
+    shortcutDescription0_1: "Open Status or Updates",
+    shortcutDescription0_2: "Open Communities",
+    shortcutDescription0_3: "Open Channels",
+    shortcutDescription0_4: "Open Meta AI",
+    shortcutDescription0_5: "Move to the chat list",
+    shortcutDescription0_6: "Move to the latest message",
+    shortcutDescription0_7: "Move to the first unread message",
+    shortcutDescription0_8: "Move between messages and the editor",
+    shortcutDescription0_9: "Read the chat title. Press twice quickly to toggle chat activity monitoring",
+    shortcutDescription0_10: "Close the media player or desktop app promotion",
+    shortcutSection1: "Messages and formatting",
+    shortcutDescription1_0: "Open the focused message in the message reader",
+    shortcutDescription1_1: "Expand Read more in the focused message",
+    shortcutDescription1_2: "Open formatting options for selected text in the editor",
+    shortcutSection2: "Settings and appearance",
+    shortcutDescription2_0: "Open or close settings",
+    shortcutDescription2_1: "Toggle Privacy Mode",
+    shortcutDescription2_2: "Toggle automatic message reading",
+    shortcutDescription2_3: "Toggle Clean UI",
+    shortcutDescription2_4: "Toggle Original Dark Mode",
+    shortcutSection3: "Incoming calls",
+    shortcutDescription3_0: "Accept an incoming call when its controls are visible",
+    shortcutDescription3_1: "Decline an incoming call when its controls are visible",
+    shortcutSection4: "Remappable defaults",
+    shortcutDescription4_0: "Record a voice message. Enabled by default",
+    shortcutDescription4_1: "Previous chat. Disabled until enabled in Shortcut remapping",
+    shortcutDescription4_2: "Next chat. Disabled until enabled in Shortcut remapping",
+    shortcutDescription4_3: "Start voice call: no default shortcut. Assign in Shortcut remapping",
+    shortcutDescription4_4: "Start video call: no default shortcut. Assign in Shortcut remapping",
+    shortcutVoiceRecording: "Record voice message",
+    shortcutPreviousChat: "Previous chat",
+    shortcutNextChat: "Next chat",
+    shortcutVoiceCall: "Start voice call",
+    shortcutVideoCall: "Start video call",
+    shortcutDisabled: "Not assigned",
+    editShortcut: "Shortcut: {name}",
+    shortcutCombination: "Key combination",
+    shortcutInstruction: "Type a combination such as Alt+C or Ctrl+Shift+M. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1\u2013F12, or ArrowUp/Down/Left/Right. Key letters refer to physical keyboard positions. Leave blank to disable. Restore default changes the field. Choose Save to apply. Browser, system, and NVDA shortcuts may take priority.",
+    shortcutRestoreDefault: "Restore default",
+    shortcutInvalid: "Enter a valid combination with Ctrl or Alt, or leave the field blank.",
+    shortcutReserved: "This combination is reserved for an existing command. Choose another.",
+    shortcutConflict: "This combination is already assigned to another action.",
+    shortcutSaved: "Shortcut saved for {name}.",
+    outgoingCallUnavailable: "The call button is unavailable or cannot be identified uniquely in this chat.",
     formattingToolbarName: "Text formatting",
     formattingToolbarAvailable: "Text formatting available. Press Alt+F10 for options, or Escape to dismiss.",
     formattingToolbarHelp: "Use Left and Right Arrow to choose a format. Press Enter to apply, or Escape to return to the message.",
@@ -216,6 +433,11 @@
     messageReaderDocumentTitle: "Message - WhatsApp Web Plus",
     messageReaderHeading: "Message",
     messageReaderClose: "Close reader",
+    messageReaderShowFormatted: "Show formatted view",
+    messageReaderShowText: "Show plain text view",
+    messageReaderCopy: "Copy message",
+    messageReaderCopied: "Message copied.",
+    messageReaderCopyFailed: "Could not copy the message. Select the message text and press Control+C.",
     messageReaderLoadingDocumentTitle: "Loading message - WhatsApp Web Plus",
     messageReaderLoadingHeading: "Loading message",
     messageReaderFailureDocumentTitle: "Message could not be loaded - WhatsApp Web Plus",
@@ -241,7 +463,7 @@
     audioProfileNoiseFilter: "Noise filter (noisy rooms)",
     callAudioProfiles: "Call microphone profile",
     callAudioProfileWhatsApp: "WhatsApp default (WhatsApp controls audio)",
-    callAudioProfileRaw: "Raw (requests browser input processing off; use headphones)",
+    callAudioProfileRaw: "Raw (requests browser input processing off. Use headphones)",
     callAudioProfileNatural: "Natural (browser call processing only)",
     callAudioProfileClear: "Clear (light voice equalizer)",
     callAudioProfileNoiseFilter: "Noise filter (stronger background-noise reduction)",
@@ -255,9 +477,6 @@
     voiceMessageDiagnosticsCopyFailed: "Focused voice-message audio diagnostics could not be copied.",
     voiceMessageDiagnosticsUnavailable: "No focused voice message was found. Focus a voice message, then open this menu again.",
     openChatsAtFirstUnread: "Open chats at first unread message",
-    remapVoiceRecording: "Use Alt+M to start voice recording",
-    remapPreviousChat: "Use Alt+Up Arrow for previous chat",
-    remapNextChat: "Use Alt+Down Arrow for next chat",
     customLanguageStrings: "Custom language strings",
     unreadDividerText: "Unread divider text: {value}",
     typingIndicatorText: "Typing indicator text: {value}",
@@ -380,7 +599,7 @@
     chatActivityOn: "Chat activity monitor on",
     chatActivityOff: "Chat activity monitor off",
     cleanUiOn: "Clean UI enabled.",
-    cleanUiOnHidden: "Clean UI enabled; extra controls hidden.",
+    cleanUiOnHidden: "Clean UI enabled. Extra controls hidden.",
     cleanUiOff: "Clean UI disabled.",
     darkOn: "Original Dark Mode Enabled",
     darkOff: "Original Dark Mode Disabled",
@@ -392,6 +611,106 @@
 
   // src/locales/id.js
   var id_default = {
+    shortcutDescription5_0: "Tandai belum dibaca",
+    shortcutDescription5_1: "Bisukan chat",
+    shortcutDescription5_2: "Arsipkan chat",
+    shortcutDescription5_3: "Sematkan chat",
+    shortcutDescription5_4: "Cari",
+    shortcutDescription5_5: "Cari dalam chat",
+    shortcutDescription5_6: "Chat baru",
+    shortcutDescription5_7: "Chat berikutnya",
+    shortcutDescription5_8: "Chat sebelumnya",
+    shortcutDescription5_9: "Tambahkan chat ke daftar",
+    shortcutDescription5_10: "Tutup chat",
+    shortcutDescription5_11: "Grup baru",
+    shortcutDescription5_12: "Profil dan Info",
+    shortcutDescription5_13: "Tingkatkan kecepatan pesan suara yang dipilih",
+    shortcutDescription5_14: "Kurangi kecepatan pesan suara yang dipilih",
+    shortcutDescription5_15: "Pengaturan",
+    shortcutDescription5_16: "Panel emoji",
+    shortcutDescription5_17: "Panel GIF",
+    shortcutDescription5_18: "Panel stiker",
+    shortcutDescription5_19: "Pencarian lanjutan",
+    shortcutDescription5_20: "Kunci aplikasi",
+    shortcutDescription5_21: "Buka info chat",
+    shortcutDescription5_22: "Blokir chat",
+    shortcutDescription5_23: "Balas",
+    shortcutDescription5_24: "Balas secara pribadi",
+    shortcutDescription5_25: "Teruskan",
+    shortcutDescription5_26: "Beri bintang pada pesan",
+    shortcutDescription5_27: "Buka pilihan lampiran",
+    shortcutDescription5_28: "Mulai merekam pesan suara",
+    shortcutDescription5_29: "Jeda perekaman pesan suara",
+    shortcutDescription5_30: "Kirim pesan suara",
+    shortcutDescription5_31: "Edit pesan terakhir",
+    shortcutDescription5_32: "Perbesar tampilan",
+    shortcutDescription5_33: "Perkecil tampilan",
+    shortcutDescription5_34: "Atur ulang zoom",
+    shortcutDescription5_35: "Buka chat",
+    shortcutDescription6_0: "Aktifkan atau nonaktifkan kamera",
+    shortcutDescription6_1: "Bisukan atau aktifkan mikrofon",
+    shortcutDescription6_2: "Reaksi",
+    shortcutDescription6_3: "Angkat tangan",
+    shortcutDescription6_4: "Berbagi layar",
+    shortcutDescription6_5: "Akhiri panggilan",
+    shortcutSection5: "Shortcut bawaan WhatsApp",
+    shortcutSection6: "Panggilan",
+    shortcutNativeBrowserNote: "Ini adalah shortcut WhatsApp di browser. Sebagian perintah bergantung pada pesan yang dipilih atau panel yang aktif.",
+    shortcutNativeWebviewNote: "Ini adalah shortcut WhatsApp di WebView2. Sebagian perintah bergantung pada pesan yang dipilih atau panel yang aktif.",
+    shortcutCallContextNote: "Gunakan shortcut ini ketika kontrol panggilan tersedia. Tombol yang sama dapat memiliki fungsi berbeda di chat.",
+    shortcutListDefaultsNote: "Ini adalah shortcut bawaan. Penetapan yang Anda simpan ditampilkan dalam Pemetaan ulang pintasan.",
+    shortcutRecord: "Rekam shortcut",
+    shortcutCapturePrompt: "Tekan shortcut Anda. Escape membatalkan perekaman. Tab keluar dari perekaman.",
+    shortcutCaptured: "Terekam {shortcut}. Rekam shortcut lain",
+    shortcutCaptureHelp: "Pilih Rekam shortcut, lalu tekan kombinasi seperti Alt+koma. NVDA harus berada dalam focus mode agar script menerima tombol yang ditekan. Jika NVDA masih dalam browse mode, tekan NVDA+Spasi sebelum merekam. Pilih Simpan untuk menerapkan shortcut yang direkam. Anda juga dapat mengetik kombinasi secara manual.",
+    shortcutDescription1_3: "Putar atau jeda pesan suara yang difokuskan jika pengaturan pemutaran dengan keyboard diaktifkan (nonaktif secara bawaan)",
+    shortcutList: "Daftar shortcut",
+    shortcutSection0: "Navigasi",
+    shortcutDescription0_0: "Buka Chat",
+    shortcutDescription0_1: "Buka Status atau Pembaruan",
+    shortcutDescription0_2: "Buka Komunitas",
+    shortcutDescription0_3: "Buka Saluran",
+    shortcutDescription0_4: "Buka Meta AI",
+    shortcutDescription0_5: "Pindah ke daftar chat",
+    shortcutDescription0_6: "Pindah ke pesan terakhir",
+    shortcutDescription0_7: "Pindah ke pesan pertama yang belum dibaca",
+    shortcutDescription0_8: "Berpindah antara pesan dan kolom penulisan",
+    shortcutDescription0_9: "Baca judul chat. Tekan dua kali dengan cepat untuk mengaktifkan atau menonaktifkan pemantauan aktivitas chat",
+    shortcutDescription0_10: "Tutup pemutar media atau promosi aplikasi desktop",
+    shortcutSection1: "Pesan dan pemformatan",
+    shortcutDescription1_0: "Buka pesan yang difokuskan di jendela baca",
+    shortcutDescription1_1: "Perluas Baca selengkapnya pada pesan yang difokuskan",
+    shortcutDescription1_2: "Buka pilihan format untuk teks yang dipilih di kolom penulisan",
+    shortcutSection2: "Pengaturan dan tampilan",
+    shortcutDescription2_0: "Buka atau tutup pengaturan",
+    shortcutDescription2_1: "Aktifkan atau nonaktifkan Mode Privasi",
+    shortcutDescription2_2: "Aktifkan atau nonaktifkan pembacaan pesan otomatis",
+    shortcutDescription2_3: "Aktifkan atau nonaktifkan Tampilan Bersih",
+    shortcutDescription2_4: "Aktifkan atau nonaktifkan Mode Gelap Asli",
+    shortcutSection3: "Panggilan masuk",
+    shortcutDescription3_0: "Terima panggilan masuk ketika tombolnya tersedia",
+    shortcutDescription3_1: "Tolak panggilan masuk ketika tombolnya tersedia",
+    shortcutSection4: "Bawaan yang dapat dipetakan ulang",
+    shortcutDescription4_0: "Rekam pesan suara. Aktif secara bawaan",
+    shortcutDescription4_1: "Chat sebelumnya. Nonaktif hingga diatur dalam Pemetaan ulang pintasan",
+    shortcutDescription4_2: "Chat berikutnya. Nonaktif hingga diatur dalam Pemetaan ulang pintasan",
+    shortcutDescription4_3: "Mulai panggilan suara: belum memiliki shortcut bawaan. Atur dalam Pemetaan ulang pintasan",
+    shortcutDescription4_4: "Mulai panggilan video: belum memiliki shortcut bawaan. Atur dalam Pemetaan ulang pintasan",
+    shortcutVoiceRecording: "Rekam pesan suara",
+    shortcutPreviousChat: "Chat sebelumnya",
+    shortcutNextChat: "Chat berikutnya",
+    shortcutVoiceCall: "Mulai panggilan suara",
+    shortcutVideoCall: "Mulai panggilan video",
+    shortcutDisabled: "Belum ditetapkan",
+    editShortcut: "Shortcut: {name}",
+    shortcutCombination: "Kombinasi tombol",
+    shortcutInstruction: "Ketik kombinasi seperti Alt+C atau Ctrl+Shift+M. Gunakan Ctrl atau Alt, boleh ditambah Shift, diikuti huruf, angka, tombol tanda baca seperti koma atau titik, F1\u2013F12, atau ArrowUp/Down/Left/Right. Huruf merujuk ke posisi fisik tombol keyboard. Kosongkan untuk menonaktifkan. Kembalikan bawaan mengubah kolom. Pilih Simpan untuk menerapkan. Shortcut browser, sistem, dan NVDA mungkin lebih diutamakan.",
+    shortcutRestoreDefault: "Kembalikan bawaan",
+    shortcutInvalid: "Masukkan kombinasi yang valid dengan Ctrl atau Alt, atau kosongkan kolom.",
+    shortcutReserved: "Kombinasi ini sudah digunakan oleh perintah tetap. Pilih kombinasi lain.",
+    shortcutConflict: "Kombinasi ini sudah ditetapkan untuk tindakan lain.",
+    shortcutSaved: "Shortcut untuk {name} disimpan.",
+    outgoingCallUnavailable: "Tombol panggilan tidak tersedia atau tidak dapat dikenali secara pasti pada chat ini.",
     formattingToolbarName: "Format teks",
     formattingToolbarAvailable: "Pilihan format teks tersedia. Tekan Alt+F10 untuk mengaksesnya, atau Escape untuk menutup.",
     formattingToolbarHelp: "Gunakan panah kiri dan kanan untuk memilih format. Tekan Enter untuk menerapkan, atau Escape untuk kembali ke pesan.",
@@ -413,6 +732,11 @@
     messageReaderDocumentTitle: "Pesan - WhatsApp Web Plus",
     messageReaderHeading: "Pesan",
     messageReaderClose: "Tutup pembaca",
+    messageReaderShowFormatted: "Tampilkan tampilan berformat",
+    messageReaderShowText: "Tampilkan tampilan teks biasa",
+    messageReaderCopy: "Salin pesan",
+    messageReaderCopied: "Pesan disalin.",
+    messageReaderCopyFailed: "Tidak dapat menyalin pesan. Pilih teks pesan lalu tekan Control+C.",
     messageReaderLoadingDocumentTitle: "Memuat pesan - WhatsApp Web Plus",
     messageReaderLoadingHeading: "Memuat pesan",
     messageReaderFailureDocumentTitle: "Pesan tidak dapat dimuat - WhatsApp Web Plus",
@@ -438,7 +762,7 @@
     audioProfileNoiseFilter: "Peredam bising (ruangan berisik)",
     callAudioProfiles: "Profil mikrofon panggilan",
     callAudioProfileWhatsApp: "Bawaan WhatsApp (audio diatur oleh WhatsApp)",
-    callAudioProfileRaw: "Mentah (meminta pemrosesan input browser dimatikan; gunakan headphone)",
+    callAudioProfileRaw: "Mentah (meminta pemrosesan input browser dimatikan. Gunakan headphone)",
     callAudioProfileNatural: "Alami (hanya pemrosesan panggilan dari browser)",
     callAudioProfileClear: "Jernih (ekualiser suara ringan)",
     callAudioProfileNoiseFilter: "Peredam bising (pengurangan suara latar lebih kuat)",
@@ -452,9 +776,6 @@
     voiceMessageDiagnosticsCopyFailed: "Diagnostik audio pesan suara yang difokuskan tidak dapat disalin.",
     voiceMessageDiagnosticsUnavailable: "Tidak ada pesan suara yang difokuskan. Fokuskan pesan suara, lalu buka kembali menu ini.",
     openChatsAtFirstUnread: "Buka chat pada pesan pertama yang belum dibaca",
-    remapVoiceRecording: "Gunakan Alt+M untuk mulai merekam pesan suara",
-    remapPreviousChat: "Gunakan Alt+Panah atas untuk chat sebelumnya",
-    remapNextChat: "Gunakan Alt+Panah bawah untuk chat berikutnya",
     customLanguageStrings: "Teks bahasa khusus",
     unreadDividerText: "Teks pemisah pesan belum dibaca: {value}",
     typingIndicatorText: "Teks indikator mengetik: {value}",
@@ -577,7 +898,7 @@
     chatActivityOn: "Monitor aktivitas chat aktif",
     chatActivityOff: "Monitor aktivitas chat nonaktif",
     cleanUiOn: "Antarmuka ringkas aktif.",
-    cleanUiOnHidden: "Antarmuka ringkas aktif; kontrol tambahan disembunyikan.",
+    cleanUiOnHidden: "Antarmuka ringkas aktif. Kontrol tambahan disembunyikan.",
     cleanUiOff: "Antarmuka ringkas nonaktif.",
     darkOn: "Mode gelap asli aktif",
     darkOff: "Mode gelap asli nonaktif",
@@ -665,6 +986,35 @@
     "previous-chat": readSetting(STORAGE_KEYS.remapPreviousChat, "false") === "true",
     "next-chat": readSetting(STORAGE_KEYS.remapNextChat, "false") === "true"
   };
+  var shortcutBindings = {};
+  try {
+    const stored = JSON.parse(readSetting(STORAGE_KEYS.shortcutBindings, "{}"));
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      for (const name of Object.keys(SHORTCUT_ACTIONS)) {
+        const parsed = parseShortcutBinding(stored[name]);
+        if (parsed && !isReservedShortcut(parsed)) shortcutBindings[name] = parsed.text;
+      }
+    }
+  } catch {
+  }
+  function getShortcutBinding(name) {
+    if (!Object.hasOwn(SHORTCUT_ACTIONS, name)) return "";
+    return Object.hasOwn(shortcutBindings, name) ? shortcutBindings[name] : shortcutRemaps[name] ? SHORTCUT_ACTIONS[name].defaultBinding : "";
+  }
+  function validateShortcutBinding(name, value) {
+    const parsed = parseShortcutBinding(value);
+    if (!Object.hasOwn(SHORTCUT_ACTIONS, name) || !parsed) return "shortcutInvalid";
+    if (isReservedShortcut(parsed)) return "shortcutReserved";
+    if (parsed.text && Object.keys(SHORTCUT_ACTIONS).some((other) => other !== name && getShortcutBinding(other) === parsed.text)) return "shortcutConflict";
+    return "";
+  }
+  function setShortcutBinding(name, value) {
+    if (validateShortcutBinding(name, value)) return false;
+    const next = { ...shortcutBindings, [name]: parseShortcutBinding(value).text };
+    if (!writeSetting(STORAGE_KEYS.shortcutBindings, JSON.stringify(next))) return false;
+    shortcutBindings = next;
+    return true;
+  }
   var messages = Object.freeze({ en: en_default, id: id_default });
   var regexCache = /* @__PURE__ */ new Map();
   var DELIVERY_STATUS_DEFINITIONS = Object.freeze([
@@ -998,9 +1348,12 @@
     return true;
   }
   function isShortcutRemapEnabled(name) {
-    return shortcutRemaps[name] === true;
+    return !!getShortcutBinding(name);
   }
   function setShortcutRemap(name, value) {
+    if (Object.hasOwn(shortcutBindings, name)) {
+      return setShortcutBinding(name, value ? SHORTCUT_ACTIONS[name].defaultBinding : "");
+    }
     const storageKey = shortcutRemapStorageKeys[name];
     if (!storageKey) return false;
     const nextValue = !!value;
@@ -2171,6 +2524,8 @@
 
   // src/chat-accessibility.js
   var lastFocusedChatRowNode = null;
+  var lastFocusedChatTarget = null;
+  var lastFocusedChatContainer = null;
   var lastFocusedChatTitle = "";
   var lastFocusedChatIdentity = "";
   var lastFocusedChatRowIndex = -1;
@@ -2577,9 +2932,16 @@
   }
   function readerTextRun(text, element) {
     const whiteSpace = typeof window.getComputedStyle === "function" && element ? window.getComputedStyle(element).whiteSpace : "";
+    const collapseSpaces = /^(normal|nowrap|pre-line)$/.test(whiteSpace);
+    if (whiteSpace === "normal" || whiteSpace === "nowrap") {
+      text = text.replace(/[\t\n\r\f ]+/g, " ");
+    } else if (whiteSpace === "pre-line") {
+      text = text.replace(/\r\n?/g, "\n").replace(/[\t\f ]+/g, " ").replace(/ *\n */g, "\n");
+    }
     return {
       type: "text",
       text,
+      collapseSpaces,
       preserveWhitespace: /^(pre|pre-wrap|pre-line|break-spaces)$/.test(whiteSpace)
     };
   }
@@ -2617,8 +2979,15 @@
     if (!run) return;
     if (run.type === "text" && !run.text) return;
     const previous = runs[runs.length - 1];
-    if (run.type === "text" && previous?.type === "text" && previous.preserveWhitespace === run.preserveWhitespace) previous.text += run.text;
-    else runs.push(run);
+    if (run.type === "text" && previous?.type === "text" && previous.preserveWhitespace === run.preserveWhitespace && previous.collapseSpaces === run.collapseSpaces) {
+      let text = run.text;
+      if (run.collapseSpaces) {
+        if (previous.text.endsWith(" ") && text.startsWith(" ")) text = text.slice(1);
+        if (previous.text.endsWith("\n")) text = text.replace(/^ +/, "");
+        if (text.startsWith("\n")) previous.text = previous.text.replace(/ +$/, "");
+      }
+      previous.text += text;
+    } else runs.push(run);
   }
   function collectPrimaryMessageReaderRuns(node, messageItem, runs, isRoot = false) {
     if (node?.nodeType === 3) {
@@ -3487,6 +3856,10 @@
     return Array.from(rows).map((row, index) => ({ row, index, y: getChatRowTranslateY(row) })).sort((a, b) => a.y - b.y || a.index - b.index).map((entry) => entry.row);
   }
   function rememberChatRowState(row) {
+    if (row !== lastFocusedChatRowNode) {
+      lastFocusedChatTarget = null;
+      lastFocusedChatContainer = null;
+    }
     lastFocusedChatRowNode = row;
     lastFocusedChatTitle = getChatRowTitle(row);
     lastFocusedChatIdentity = getChatRowIdentity(row);
@@ -3716,6 +4089,10 @@
   }
   function rememberFocusedRow(target, interactionType = "focus") {
     trackChatListShortcutArrowFocus(target, interactionType);
+    if (interactionType === "focus" && !lastFocusedChatRowNode?.contains?.(target)) {
+      lastFocusedChatTarget = null;
+      lastFocusedChatContainer = null;
+    }
     if (!target.closest) return;
     const row = target.closest('div[role="row"]');
     if (!row) return;
@@ -3723,6 +4100,10 @@
     if (side && isChatsTabActive() && side.contains(row) && row.closest(SELECTORS.chatList)) {
       if (isAnnouncementReductionEnabled()) applyChatRowNativeMask(row);
       rememberChatRowState(row);
+      if (interactionType === "focus") {
+        lastFocusedChatTarget = target;
+        lastFocusedChatContainer = row.closest(SELECTORS.chatListInSide);
+      }
     }
     const main = document.querySelector(SELECTORS.main);
     if (isChatMainActive(main) && main.contains(row)) {
@@ -3750,6 +4131,8 @@
   function getRememberedFocus() {
     return {
       lastFocusedChatRowNode,
+      lastFocusedChatTarget,
+      lastFocusedChatContainer,
       lastFocusedChatTitle,
       lastFocusedMessageNode,
       lastFocusedMessageId,
@@ -3759,6 +4142,8 @@
     };
   }
   function clearRememberedChatRow() {
+    lastFocusedChatTarget = null;
+    lastFocusedChatContainer = null;
     lastFocusedChatRowNode = null;
     lastFocusedChatTitle = "";
     lastFocusedChatIdentity = "";
@@ -5697,6 +6082,59 @@
       }
     }
   }
+  function serializeMessageReaderRuns(runs) {
+    let text = "";
+    const lists = [];
+    const boundary = () => {
+      if (text && !text.endsWith("\n")) text += "\n";
+    };
+    for (const run of runs || []) {
+      if (run.type === "break") text += "\n";
+      else if (run.type === "listStart") {
+        boundary();
+        lists.push({ ordered: run.ordered, next: 1 });
+      } else if (run.type === "listEnd") lists.pop();
+      else if (run.type === "listItemStart") {
+        boundary();
+        const list = lists[lists.length - 1];
+        text += "  ".repeat(Math.max(0, lists.length - 1));
+        text += list?.ordered ? `${list.next++}. ` : "- ";
+      } else if (run.type === "listItemEnd") boundary();
+      else if (run.type === "link") {
+        const visible = run.text || run.href || "";
+        text += visible;
+        if (!getSafeMessageReaderUrl(run.href)) text += ` (${t("messageReaderUnsafeLink")})`;
+        else if (run.href && visible !== run.href) text += ` (${run.href})`;
+      } else text += run.text || "";
+    }
+    return text.replace(/\r\n?/g, "\n");
+  }
+  async function copyMessageReaderText(readerWindow, text) {
+    const documentRef = readerWindow.document;
+    try {
+      if (readerWindow.navigator?.clipboard?.writeText) {
+        await readerWindow.navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+    }
+    if (!documentRef.execCommand || !documentRef.addEventListener) return false;
+    let supplied = false;
+    const onCopy = (event) => {
+      if (!event.clipboardData) return;
+      event.clipboardData.setData("text/plain", text);
+      event.preventDefault();
+      supplied = true;
+    };
+    documentRef.addEventListener("copy", onCopy);
+    try {
+      return documentRef.execCommand("copy") === true && supplied;
+    } catch {
+      return false;
+    } finally {
+      documentRef.removeEventListener("copy", onCopy);
+    }
+  }
   var readerEscapeDocuments = /* @__PURE__ */ new WeakSet();
   function closeReaderWindow(readerWindow) {
     try {
@@ -5728,7 +6166,6 @@
   }
   function createReaderView(documentRef, {
     titleKey = "messageReaderDocumentTitle",
-    headingKey = "messageReaderHeading",
     readerWindow = null
   } = {}) {
     const language2 = getSupportedLanguage(getLanguage()) || "en";
@@ -5768,7 +6205,6 @@
       padding-block: 1.5rem 3rem;
       padding-inline: clamp(1rem, 4vw, 3rem);
     }
-    h1 { font-size: 1.5rem; line-height: 1.3; margin-block: 0 1.5rem; }
     button {
       margin-block: 1.5rem 0;
       padding: 0.55rem 0.85rem;
@@ -5783,14 +6219,16 @@
     .message-reader-body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .message-reader-time { margin-block-start: 1.5rem; }
     a { color: LinkText; text-decoration: underline; text-underline-offset: 0.15em; }
-    a:focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+    textarea {
+      display: block; inline-size: 100%; min-block-size: 55vh;
+      white-space: pre; overflow: auto; font: inherit;
+      background: Canvas; color: CanvasText; border: 1px solid CanvasText;
+    }
+    [hidden] { display: none !important; }
+    a:focus-visible, button:focus-visible, textarea:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
   `;
     documentRef.head.appendChild(style);
     const main = documentRef.createElement("main");
-    const heading = documentRef.createElement("h1");
-    heading.setAttribute("id", "message-reader-heading");
-    heading.textContent = t(headingKey);
-    main.appendChild(heading);
     const closeButton = documentRef.createElement("button");
     closeButton.setAttribute("type", "button");
     closeButton.setAttribute("id", "message-reader-close");
@@ -5800,7 +6238,7 @@
     main.appendChild(content);
     main.appendChild(closeButton);
     documentRef.body.appendChild(main);
-    return { documentRef, content };
+    return { documentRef, content, readerWindow };
   }
   function renderReaderWindow(readerWindow, render, viewOptions = {}) {
     const view = createReaderView(readerWindow.document, {
@@ -5819,13 +6257,60 @@
   }
   function renderReaderSnapshot(view, snapshot) {
     clearNode(view.content);
+    const plainText = serializeMessageReaderRuns(snapshot.runs);
+    const plainView = view.documentRef.createElement("div");
+    const textArea = view.documentRef.createElement("textarea");
+    textArea.setAttribute("id", "message-reader-text");
+    textArea.setAttribute("readonly", "");
+    textArea.setAttribute("wrap", "off");
+    textArea.setAttribute("dir", "auto");
+    textArea.setAttribute("aria-label", t("messageReaderHeading"));
+    textArea.value = plainText;
+    plainView.appendChild(textArea);
+    view.content.appendChild(plainView);
     const article = view.documentRef.createElement("article");
-    article.setAttribute("aria-labelledby", "message-reader-heading");
+    article.hidden = true;
+    article.setAttribute("id", "message-reader-formatted");
+    article.setAttribute("tabindex", "-1");
+    article.setAttribute("aria-label", t("messageReaderHeading"));
     const body = view.documentRef.createElement("div");
     body.setAttribute("class", "message-reader-body");
     body.setAttribute("dir", "auto");
     appendReaderRuns(view.documentRef, body, snapshot.runs);
     article.appendChild(body);
+    const toggle = view.documentRef.createElement("button");
+    toggle.setAttribute("type", "button");
+    toggle.setAttribute("aria-controls", "message-reader-formatted");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.textContent = t("messageReaderShowFormatted");
+    toggle.onclick = () => {
+      const formatted = article.hidden;
+      article.hidden = !formatted;
+      plainView.hidden = formatted;
+      toggle.setAttribute("aria-expanded", String(formatted));
+      toggle.textContent = t(formatted ? "messageReaderShowText" : "messageReaderShowFormatted");
+      if (formatted) article.focus?.();
+      else textArea.focus?.();
+    };
+    const copy = view.documentRef.createElement("button");
+    copy.setAttribute("type", "button");
+    copy.textContent = t("messageReaderCopy");
+    const status = view.documentRef.createElement("div");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.setAttribute("aria-atomic", "true");
+    let copying = false;
+    copy.onclick = async () => {
+      if (copying) return;
+      copying = true;
+      status.textContent = "";
+      const success = await copyMessageReaderText(view.readerWindow, plainText);
+      status.textContent = t(success ? "messageReaderCopied" : "messageReaderCopyFailed");
+      copying = false;
+    };
+    view.content.appendChild(toggle);
+    view.content.appendChild(copy);
+    view.content.appendChild(status);
     const timeParagraph = view.documentRef.createElement("p");
     timeParagraph.setAttribute("class", "message-reader-time");
     if (snapshot.sentAt) {
@@ -5837,8 +6322,12 @@
     } else {
       timeParagraph.textContent = t("messageReaderTimeUnavailable");
     }
-    article.appendChild(timeParagraph);
     view.content.appendChild(article);
+    view.content.appendChild(timeParagraph);
+    if (view.documentRef.hasFocus?.()) {
+      textArea.focus?.();
+      textArea.setSelectionRange?.(0, 0);
+    }
   }
   function consumeShortcut(event) {
     event.preventDefault();
@@ -5860,8 +6349,7 @@
         if (snapshot) renderReaderSnapshot(view, snapshot);
         else renderReaderState(view, "messageReaderExpansionFailed");
       }, snapshot ? {} : {
-        titleKey: "messageReaderFailureDocumentTitle",
-        headingKey: "messageReaderFailureHeading"
+        titleKey: "messageReaderFailureDocumentTitle"
       });
     } catch {
     }
@@ -5930,8 +6418,7 @@
         if (source.readMoreButton) renderReaderState(initialView, "messageReaderLoading");
         else renderReaderSnapshot(initialView, source.snapshot);
       }, source.readMoreButton ? {
-        titleKey: "messageReaderLoadingDocumentTitle",
-        headingKey: "messageReaderLoadingHeading"
+        titleKey: "messageReaderLoadingDocumentTitle"
       } : {});
     } catch {
       readerWindow.close?.();
@@ -6195,10 +6682,10 @@
     deliveryDelivered: "Delivered",
     deliveryRead: "Read"
   });
-  var SHORTCUT_REMAPS = Object.freeze({
-    KeyM: ["voice-recording", "R", "KeyR"],
-    ArrowUp: ["previous-chat", "{", "BracketLeft"],
-    ArrowDown: ["next-chat", "}", "BracketRight"]
+  var NATIVE_REMAP_TARGETS = Object.freeze({
+    "voice-recording": ["R", "KeyR"],
+    "previous-chat": ["{", "BracketLeft"],
+    "next-chat": ["}", "BracketRight"]
   });
   function cancelPendingFocusRequests() {
     pendingFocusRequest++;
@@ -6733,8 +7220,9 @@
     const communitySectionClose = pendingCommunitySectionClose && (rootEl === pendingCommunitySectionClose.panel || rootEl.contains?.(pendingCommunitySectionClose.panel)) ? pendingCommunitySectionClose : null;
     if (communitySectionClose) pendingCommunitySectionClose = null;
     const lostChat = remembered.lastFocusedChatRowNode && (rootEl === remembered.lastFocusedChatRowNode || rootEl.contains?.(remembered.lastFocusedChatRowNode));
+    const lostChatTarget = remembered.lastFocusedChatTarget && (rootEl === remembered.lastFocusedChatTarget || rootEl.contains?.(remembered.lastFocusedChatTarget));
     const lostMessage = [remembered.lastFocusedMessageNode, remembered.lastFocusedMessageTarget].some((node) => node && (rootEl === node || rootEl.contains?.(node)));
-    if (!communityClose && !communitySectionClose && !lostChat && !lostMessage) return;
+    if (!communityClose && !communitySectionClose && !lostChat && !lostChatTarget && !lostMessage) return;
     const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
     schedule(() => {
       if (!isFocusRequestCurrent(request)) return;
@@ -6777,7 +7265,18 @@
       }
       if (getActiveModal()) return;
       if (document.activeElement !== document.body) return;
-      if (lostChat) {
+      if (lostChatTarget && !lostChat) {
+        const canRecover = () => isFocusRequestCurrent(request) && !getActiveModal() && document.activeElement === document.body && document.hasFocus?.() !== false && !getActiveNonChatTabLabelKey() && remembered.lastFocusedChatContainer?.isConnected && document.querySelector(SELECTORS.chatListInSide) === remembered.lastFocusedChatContainer && getRememberedFocus().lastFocusedChatTarget === remembered.lastFocusedChatTarget;
+        const tryRecover = (attempt) => {
+          if (!canRecover()) return;
+          const retry = () => {
+            if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+          };
+          const row = getPreferredChatRow(getChatListRows());
+          if (!row || !focusChatRow(row, retry, canRecover)) retry();
+        };
+        tryRecover(1);
+      } else if (lostChat) {
         focusChatListShortcut(document.body);
       } else {
         const messageContainer = document.querySelector(SELECTORS.conversationMessages);
@@ -7285,22 +7784,42 @@
     lastTPressTime = now;
     announceChatHeaderShortcut();
   }
+  var dispatchingNativeRemap = false;
   function remapWhatsAppShortcut(e) {
-    const remap = SHORTCUT_REMAPS[e.code];
-    if (!remap || !isShortcutRemapEnabled(remap[0])) return false;
+    if (dispatchingNativeRemap) return false;
+    const actions = Object.keys(SHORTCUT_ACTIONS).filter((name) => matchesShortcutBinding(e, getShortcutBinding(name)));
+    if (actions.length !== 1) return false;
+    const action = actions[0];
+    if (action === "voice-call" || action === "video-call") {
+      const main = document.querySelector(SELECTORS.main);
+      if (!isChatMainActive(main)) return false;
+      const header = main.querySelector("header");
+      const iconName = action === "voice-call" ? "ic-call" : "ic-videocam";
+      const buttons = Array.from(header?.querySelectorAll("button") || []).filter((button) => isVisibleCallControl(button) && button.querySelector("svg title")?.textContent?.trim() === iconName);
+      e.preventDefault();
+      if (buttons.length !== 1) announce(t("outgoingCallUnavailable"));
+      else buttons[0].click();
+      return true;
+    }
     const target = e.target?.dispatchEvent ? e.target : document.activeElement || document.body;
     if (!target?.dispatchEvent || typeof KeyboardEvent !== "function") return false;
-    if (remap[0] === "voice-recording") armNextVoiceMessageCapture();
+    if (action === "voice-recording") armNextVoiceMessageCapture();
+    const [key, code] = NATIVE_REMAP_TARGETS[action];
     e.preventDefault();
-    target.dispatchEvent(new KeyboardEvent("keydown", {
-      key: remap[1],
-      code: remap[2],
-      altKey: true,
-      ctrlKey: true,
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true
-    }));
+    dispatchingNativeRemap = true;
+    try {
+      target.dispatchEvent(new KeyboardEvent("keydown", {
+        key,
+        code,
+        altKey: true,
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      }));
+    } finally {
+      dispatchingNativeRemap = false;
+    }
     return true;
   }
   function handleNavShortcut(e) {
@@ -7348,7 +7867,6 @@
   }
   function handleAltShortcut(e) {
     if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return false;
-    if (remapWhatsAppShortcut(e)) return true;
     const shortcuts = {
       Digit1: handleFocusChatListShortcut,
       Digit2: focusLastMessageShortcut,
@@ -7477,7 +7995,222 @@
     }
     if (handleModalMediaShortcut(e, activeModal)) return;
     if (e.repeat || e.metaKey || e.getModifierState("AltGraph") || activeModal) return;
-    if (handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
+    if (remapWhatsAppShortcut(e) || handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
+  }
+
+  // src/shortcut-list.js
+  var DEFAULT_KEYS = [
+    [
+      "Alt+Shift+1",
+      "Alt+Shift+2",
+      "Alt+Shift+3",
+      "Alt+Shift+4",
+      "Alt+Shift+5",
+      "Alt+1",
+      "Alt+2",
+      "Alt+3",
+      "Alt+Shift+D",
+      "Alt+T",
+      "Alt+0"
+    ],
+    [
+      "Alt+Shift+C",
+      "Shift+Enter",
+      "Alt+F10",
+      "Enter / Space"
+    ],
+    [
+      "Shift+F8",
+      "Alt+Shift+N",
+      "Alt+Shift+L",
+      "Alt+Shift+8",
+      "Alt+Shift+9"
+    ],
+    [
+      "Ctrl+Alt+A",
+      "Ctrl+Alt+D"
+    ],
+    [
+      "Alt+M",
+      "Alt+ArrowUp",
+      "Alt+ArrowDown",
+      "",
+      ""
+    ],
+    [
+      "Ctrl+Alt+Shift+U",
+      "Ctrl+Alt+Shift+M",
+      "Ctrl+Alt+Shift+E",
+      "Ctrl+Alt+Shift+P",
+      "Ctrl+Alt+/",
+      "Ctrl+Shift+F",
+      "Ctrl+Alt+N",
+      "Ctrl+Alt+Shift+]",
+      "Ctrl+Alt+Shift+[",
+      "Ctrl+Alt+Shift+L",
+      "Escape",
+      "Ctrl+Alt+Shift+N",
+      "Ctrl+Alt+P",
+      "Shift+.",
+      "Shift+,",
+      "Ctrl+Alt+,",
+      "Ctrl+Alt+E",
+      "Ctrl+Alt+G",
+      "Ctrl+Alt+S",
+      "Alt+K",
+      "Ctrl+Alt+L",
+      "Alt+I",
+      "Ctrl+Shift+B",
+      "Alt+R",
+      "Ctrl+Alt+R",
+      "Ctrl+Alt+D",
+      "Alt+8",
+      "Alt+A",
+      "Ctrl+Alt+Shift+R",
+      "Alt+P",
+      "Ctrl+Enter",
+      "Cmd+ArrowUp"
+    ],
+    [
+      "Ctrl+Alt+V",
+      "Ctrl+Alt+M",
+      "Ctrl+Alt+R",
+      "Ctrl+Alt+H",
+      "Ctrl+Alt+S",
+      "Ctrl+Alt+W"
+    ]
+  ];
+  var WEBVIEW_SHORTCUT_KEYS = [
+    "Ctrl+Shift+U",
+    "Ctrl+Shift+M",
+    "Ctrl+Shift+A",
+    "Ctrl+Alt+Shift+P",
+    "Ctrl+Alt+/",
+    "Ctrl+Shift+F",
+    "Ctrl+Alt+N",
+    "Ctrl+]",
+    "Ctrl+[",
+    "Ctrl+Cmd+Shift+L",
+    "Escape",
+    "Ctrl+Shift+N",
+    "Ctrl+Alt+P",
+    "Shift+.",
+    "Shift+,",
+    "Alt+S",
+    "Ctrl+Alt+E",
+    "Ctrl+Alt+G",
+    "Ctrl+Alt+S",
+    "Alt+K",
+    "Alt+L",
+    "Alt+I",
+    "Ctrl+Shift+B",
+    "Alt+R",
+    "Ctrl+Alt+R",
+    "Ctrl+Alt+D",
+    "Alt+8",
+    "Alt+A",
+    "Ctrl+Alt+Shift+R",
+    "Alt+P",
+    "Ctrl+Enter",
+    "Ctrl+ArrowUp",
+    "Ctrl++",
+    "Ctrl+-",
+    "Ctrl+0",
+    "Ctrl+1..9"
+  ];
+  function getShortcutListRuns() {
+    const runs = [
+      { type: "heading", level: 1, text: t("shortcutList") },
+      { type: "text", text: t("shortcutListDefaultsNote") },
+      { type: "break" }
+    ];
+    DEFAULT_KEYS.forEach((keys, section) => {
+      if (section === 5 && isCompanionRuntime()) keys = WEBVIEW_SHORTCUT_KEYS;
+      runs.push({ type: "heading", level: 2, text: t(`shortcutSection${section}`) });
+      if (section >= 5) runs.push({ type: "text", text: t(section === 5 ? isCompanionRuntime() ? "shortcutNativeWebviewNote" : "shortcutNativeBrowserNote" : "shortcutCallContextNote") }, { type: "break" });
+      runs.push({ type: "listStart", ordered: false });
+      keys.forEach((key, index) => runs.push(
+        { type: "listItemStart" },
+        { type: "text", text: `${key ? `${key}: ` : ""}${t(`shortcutDescription${section}_${index}`)}` },
+        { type: "listItemEnd" }
+      ));
+      runs.push({ type: "listEnd" });
+    });
+    return runs;
+  }
+  function openShortcutList() {
+    const title = t("shortcutList");
+    const runs = getShortcutListRuns();
+    if (isCompanionRuntime()) {
+      const expectedContext = beginCompanionReader();
+      const result = expectedContext && publishCompanionReader({
+        expectedContext,
+        language: getLanguage(),
+        privacy: isPrivacyModeEnabled(),
+        reader: {
+          version: 1,
+          kind: "shortcuts",
+          status: "ready",
+          title,
+          heading: title,
+          sentAt: "",
+          sentAtLabel: "",
+          timeUnavailable: "",
+          message: "",
+          runs
+        }
+      });
+      if (!result) announce(t("messageReaderCompanionUnavailable"));
+      return;
+    }
+    let reader;
+    try {
+      reader = window.open("about:blank", "_blank");
+    } catch {
+    }
+    if (!reader) {
+      announce(t("messageReaderPopupBlocked"));
+      return;
+    }
+    reader.opener = null;
+    const doc = reader.document;
+    doc.title = title;
+    const viewport = doc.createElement("meta");
+    viewport.name = "viewport";
+    viewport.content = "width=device-width, initial-scale=1";
+    doc.head.appendChild(viewport);
+    doc.documentElement.lang = getLanguage();
+    const main = doc.createElement("main");
+    let list = null;
+    for (const run of runs) {
+      if (run.type === "heading") {
+        const heading2 = doc.createElement(`h${run.level}`);
+        heading2.textContent = run.text;
+        main.appendChild(heading2);
+      } else if (run.type === "listStart") {
+        list = doc.createElement("ul");
+        main.appendChild(list);
+      } else if (run.type === "listEnd") {
+        list = null;
+      } else if (run.type === "text" && !list) {
+        const note = doc.createElement("p");
+        note.textContent = run.text;
+        main.appendChild(note);
+      } else if (run.type === "text") {
+        const item = doc.createElement("li");
+        item.textContent = run.text;
+        list.appendChild(item);
+      }
+    }
+    const close = doc.createElement("button");
+    close.textContent = t("messageReaderClose");
+    close.addEventListener("click", () => reader.close());
+    main.appendChild(close);
+    doc.body.replaceChildren(main);
+    installReaderEscapeHandler(doc, reader);
+    const heading = main.querySelector("h1");
+    heading.tabIndex = -1;
+    if (doc.hasFocus?.()) heading.focus();
   }
 
   // src/unread-chat-total.js
@@ -7566,6 +8299,10 @@
   var customDialogInvoker = null;
   var customDialogKey = "";
   var customDialogName = "";
+  var shortcutDialogAction = "";
+  var shortcutCapturing = false;
+  var customDialogRecord;
+  var customDialogReset = null;
   function createMenuItem(role, action) {
     const item = document.createElement("button");
     item.type = "button";
@@ -7711,6 +8448,7 @@
       font: inherit;
     }
     .wa-plus-custom-text-dialog input:focus,
+    .wa-plus-custom-text-error:focus,
     .wa-plus-custom-text-dialog button:focus {
       outline: 2px solid Highlight;
       outline-offset: 2px;
@@ -7718,10 +8456,13 @@
     .wa-plus-custom-text-dialog-actions {
       display: flex;
       justify-content: flex-end;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-top: 1rem;
     }
     .wa-plus-custom-text-dialog button {
+      max-width: 100%;
+      overflow-wrap: anywhere;
       min-height: 2.75rem;
       padding: 0.5rem 1rem;
       border: 1px solid ButtonBorder;
@@ -7822,15 +8563,13 @@
     const statusReadingItem = createMenuItem("menuitemcheckbox", "status-reading-cleanup");
     statusReadingItem.dataset.labelKey = "statusReadingCleanup";
     accessibility.menu.appendChild(statusReadingItem);
-    [
-      ["remapVoiceRecording", "remap-voice-recording"],
-      ["remapPreviousChat", "remap-previous-chat"],
-      ["remapNextChat", "remap-next-chat"]
-    ].forEach(([labelKey, action]) => {
-      const item = createMenuItem("menuitemcheckbox", action);
-      item.dataset.labelKey = labelKey;
+    for (const [name, definition] of Object.entries(SHORTCUT_ACTIONS)) {
+      const item = createMenuItem("menuitem", `remap-${name}`);
+      item.dataset.labelKey = definition.label;
+      item.dataset.shortcutAction = name;
+      item.setAttribute("aria-haspopup", "dialog");
       keyboardShortcuts.menu.appendChild(item);
-    });
+    }
     [
       ["cleanUi", "clean-ui"],
       ["originalDark", "original-dark"]
@@ -7876,6 +8615,9 @@
       item.setAttribute("aria-haspopup", "dialog");
       customLanguageStrings.menu.appendChild(item);
     });
+    const shortcutListItem = createMenuItem("menuitem", "shortcut-list");
+    shortcutListItem.dataset.labelKey = "shortcutList";
+    rootMenu.appendChild(shortcutListItem);
     updateItem = createMenuItem("menuitem", "open-update");
     rootMenu.appendChild(updateItem);
     LANGUAGES.forEach(({ value, label }) => {
@@ -7924,7 +8666,52 @@
     customDialogCancel.type = "button";
     customDialogSave = document.createElement("button");
     customDialogSave.type = "submit";
-    actions.append(customDialogCancel, customDialogSave);
+    customDialogReset = document.createElement("button");
+    customDialogReset.type = "button";
+    customDialogReset.hidden = true;
+    customDialogReset.addEventListener("click", () => {
+      if (!shortcutDialogAction) return;
+      customDialogRecord.textContent = t("shortcutRecord");
+      customDialogInput.value = SHORTCUT_ACTIONS[shortcutDialogAction].defaultBinding;
+      clearCustomDialogSaveError();
+      customDialogInput.removeAttribute("aria-invalid");
+      customDialogInput.focus({ preventScroll: true });
+    });
+    customDialogRecord = document.createElement("button");
+    customDialogRecord.type = "button";
+    customDialogRecord.hidden = true;
+    customDialogRecord.addEventListener("click", () => {
+      shortcutCapturing = true;
+      customDialogLabel.textContent = t("shortcutCapturePrompt");
+      customDialogInput.focus({ preventScroll: true });
+    });
+    customDialogInput.addEventListener("input", () => {
+      if (shortcutDialogAction) customDialogRecord.textContent = t("shortcutRecord");
+    });
+    customDialogInput.addEventListener("blur", stopShortcutCapture);
+    customDialogInput.addEventListener("keydown", (event) => {
+      if (!shortcutCapturing) return;
+      if (event.key === "Tab") {
+        stopShortcutCapture();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        stopShortcutCapture();
+        customDialogRecord.focus({ preventScroll: true });
+        return;
+      }
+      const binding = captureShortcutBinding(event);
+      if (!binding?.code) return;
+      customDialogInput.value = binding.text;
+      customDialogInput.removeAttribute("aria-invalid");
+      clearCustomDialogSaveError();
+      stopShortcutCapture();
+      customDialogRecord.textContent = t("shortcutCaptured", { shortcut: binding.text });
+      customDialogRecord.focus({ preventScroll: true });
+    });
+    actions.append(customDialogCancel, customDialogSave, customDialogReset, customDialogRecord);
     form.append(
       customDialogTitle,
       customDialogLabel,
@@ -8023,9 +8810,6 @@
       "voice-message-keyboard-playback": isVoiceMessageKeyboardPlaybackEnabled(),
       "open-chats-at-first-unread": shouldOpenChatsAtFirstUnread(),
       "status-reading-cleanup": isStatusReadingCleanupEnabled(),
-      "remap-voice-recording": isShortcutRemapEnabled("voice-recording"),
-      "remap-previous-chat": isShortcutRemapEnabled("previous-chat"),
-      "remap-next-chat": isShortcutRemapEnabled("next-chat"),
       "clean-ui": isCleanUiEnabled(),
       "original-dark": isOriginalDarkEnabled()
     };
@@ -8035,7 +8819,10 @@
       getMenuItems(menu).forEach((item) => {
         const labelKey = item.dataset.labelKey;
         const customKey = item.dataset.customKey;
-        if (customKey) {
+        if (item.dataset.shortcutAction) {
+          const binding = getShortcutBinding(item.dataset.shortcutAction);
+          setMenuItemLabel(item, `${t(labelKey)}: ${binding || t("shortcutDisabled")}`);
+        } else if (customKey) {
           const val = getCustomText(customKey);
           const displayVal = val ? t("customValueSet") : t("defaultLabel");
           setMenuItemLabel(item, t(labelKey, { value: displayVal }));
@@ -8051,6 +8838,8 @@
         }
       });
     }
+    const shortcutListItem = getMenuItems(rootMenu).find((item) => item.dataset.action === "shortcut-list");
+    setMenuItemLabel(shortcutListItem, t("shortcutList"));
     setMenuItemLabel(updateItem, t("openUpdate"));
     updateItem.hidden = isCompanionRuntime();
     getMenuItems(languageMenu).forEach((item) => {
@@ -8216,14 +9005,61 @@
       announce(t(copied ? "voiceMessageDiagnosticsCopied" : "voiceMessageDiagnosticsCopyFailed"));
     });
   }
+  function stopShortcutCapture() {
+    shortcutCapturing = false;
+    customDialogInput.readOnly = false;
+    if (shortcutDialogAction) customDialogLabel.textContent = t("shortcutCombination");
+  }
   function restoreCustomDialogFocus() {
+    stopShortcutCapture();
     const target = customDialogInvoker;
     customDialogInvoker = null;
     customDialogKey = "";
+    shortcutDialogAction = "";
     customDialogName = "";
     restoreSettingsFocus(target);
   }
+  function openShortcutDialog(item) {
+    shortcutDialogAction = item.dataset.shortcutAction;
+    customDialogKey = "";
+    customDialogName = t(item.dataset.labelKey);
+    customDialogInvoker = invoker;
+    closeSettingsMenu(true);
+    customDialog.lang = getLanguage();
+    customDialog.dir = "ltr";
+    customDialogTitle.textContent = t("editShortcut", { name: customDialogName });
+    customDialogLabel.textContent = t("shortcutCombination");
+    customDialogHelp.textContent = `${t("shortcutCaptureHelp")} ${t("shortcutInstruction")}`;
+    customDialogCancel.textContent = t("cancel");
+    customDialogSave.textContent = t("save");
+    customDialogReset.textContent = t("shortcutRestoreDefault");
+    customDialogReset.hidden = false;
+    customDialogRecord.hidden = false;
+    customDialogRecord.textContent = t("shortcutRecord");
+    customDialogInput.value = getShortcutBinding(shortcutDialogAction);
+    customDialogInput.removeAttribute("aria-invalid");
+    customDialogError.removeAttribute("role");
+    customDialogError.id = "wa-plus-shortcut-error";
+    customDialogError.lang = getLanguage();
+    customDialogError.dir = "ltr";
+    customDialogError.setAttribute("tabindex", "-1");
+    customDialogTitle.after(customDialogHelp);
+    customDialogInput.setAttribute("aria-describedby", "wa-plus-shortcut-error");
+    clearCustomDialogSaveError();
+    customDialog.showModal();
+    customDialogInput.focus({ preventScroll: true });
+  }
   function openCustomTextDialog(item) {
+    customDialogInput.after(customDialogHelp);
+    customDialogError.id = "wa-plus-custom-text-error";
+    customDialogError.removeAttribute("tabindex");
+    customDialogInput.setAttribute("aria-describedby", "wa-plus-custom-text-help wa-plus-custom-text-error");
+    shortcutDialogAction = "";
+    customDialogReset.hidden = true;
+    customDialogRecord.hidden = true;
+    stopShortcutCapture();
+    customDialogInput.removeAttribute("aria-invalid");
+    if (!isCompanionRuntime()) customDialogError.setAttribute("role", "alert");
     customDialogKey = item.dataset.customKey;
     customDialogName = t(item.dataset.labelKey, { value: "" }).replace(/:\s*$/, "").trim();
     customDialogInvoker = invoker;
@@ -8245,6 +9081,19 @@
     const value = customDialogInput.value;
     const name = customDialogName;
     clearCustomDialogSaveError();
+    if (shortcutDialogAction) {
+      const error = validateShortcutBinding(shortcutDialogAction, value);
+      if (error || !setShortcutBinding(shortcutDialogAction, value)) {
+        customDialogError.textContent = t(error || "saveError");
+        if (error) customDialogInput.setAttribute("aria-invalid", "true");
+        else customDialogInput.removeAttribute("aria-invalid");
+        customDialogError.focus({ preventScroll: true });
+        return;
+      }
+      customDialog.close();
+      announce(t("shortcutSaved", { name }));
+      return;
+    }
     const saved = setCustomText(customDialogKey, value);
     if (!saved) {
       reportCustomDialogSaveError();
@@ -8261,6 +9110,11 @@
   function activateItem(item, keepOpen) {
     const action = item.dataset.action;
     let saved = true;
+    if (action === "shortcut-list") {
+      closeSettingsMenu(true);
+      openShortcutList();
+      return;
+    }
     if (action === "open-update") {
       openUpdatePage();
       return;
@@ -8319,8 +9173,8 @@
       saved = setStatusReadingCleanup(!isStatusReadingCleanupEnabled());
       if (saved) refreshStatusAccessibility();
     } else if (action.startsWith("remap-")) {
-      const name = action.slice("remap-".length);
-      saved = setShortcutRemap(name, !isShortcutRemapEnabled(name));
+      openShortcutDialog(item);
+      return;
     } else if (action === "clean-ui") {
       saved = toggleCleanUiMode(false);
     } else if (action === "original-dark") {
