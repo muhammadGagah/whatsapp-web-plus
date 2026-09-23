@@ -199,7 +199,7 @@ Use these keys to navigate the menu:
 - **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button. `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is off by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so move keyboard focus to the message or use focus mode for this shortcut.
 - **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
 - **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to the end. The script does not pause, seek, or restart playback. WhatsApp then stays on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
-- **Shortcut remapping** enables or disables the additional `Alt+M`, `Alt+Up Arrow`, and `Alt+Down Arrow` shortcuts individually. `Alt+M` is on by default. The two chat-navigation shortcuts are off until you enable them because they can conflict with commands used by some screen readers and other platforms. All three shortcuts trigger WhatsApp's existing commands.
+- **Shortcut remapping** lets you assign or disable shortcuts for recording, previous/next chat, and outgoing calls. See the [shortcut editing instructions](#assigning-shortcuts).
 - **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`. Selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
 - **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually. Select **WhatsApp default** immediately if a call loses audio or develops echo.
 - **Custom language strings** lets users enter the exact WhatsApp text used for unread markers, activity, delivery states, navigation, privacy filtering, and appearance cleanup. The five navigation names control `Alt + Shift + 1` through `5`. See the reference below before changing these fields.
@@ -322,3 +322,69 @@ If copying fails, the diagnostic remains in memory. Restore clipboard access and
 ## License
 
 WhatsApp Web Plus is available under the [MIT License](../LICENSE).
+
+### Reading and copying message text
+
+`Alt+Shift+C` opens a read-only, unwrapped message text field. Up and Down Arrow follow the message's original lines. Long lines scroll horizontally. Choose **Show formatted view** for wrapped visual reading and clickable links. **Copy message** copies the body as plain text, excluding the reader heading and sent time. Original blank lines remain intact.
+
+## Assigning shortcuts
+
+Choose **Shift+F8 > Shortcut remapping**, then select **Record voice message**, **Previous chat**, **Next chat**, **Start voice call**, or **Start video call**. Type a combination such as `Alt+C` or `Alt+V`, then choose **Save**. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Letters refer to physical keyboard positions. Leave the field blank to disable an action. **Restore default** only changes the field. Choose Save to apply or Cancel/Escape to discard. Existing enabled/disabled remaps are preserved. New call shortcuts start unassigned. The recording default is Alt+M. Previous/next defaults are Alt+ArrowUp/Alt+ArrowDown, initially disabled.
+
+Duplicate assignments and fixed script/Companion commands are rejected. Browser, system, NVDA, or extension shortcuts can still take priority. AltGr is not supported. Voice/video calls use the available button in the current conversation header, identified by its icon rather than translated text. No custom language string is required. Unavailable or ambiguous buttons are reported without starting a call.
+
+### Record a shortcut
+
+In Shortcut remapping, select an action and choose **Record shortcut**. NVDA must be in **focus mode** so the script receives your combination. If it is still in browse mode, press **NVDA+Space** before recording. Press a combination such as **Alt+comma**, then choose **Save**. Escape cancels recording. Tab stops recording and moves to the next control. Typing a combination manually is still available. Browser, system, or NVDA commands that intercept the keys cannot be recorded by the script.
+
+## WhatsApp built-in shortcuts
+
+These are the WhatsApp browser shortcuts. Some commands depend on the selected message or current panel.
+
+| Shortcut | Function |
+| --- | --- |
+| `Ctrl+Alt+Shift+U` | Mark as unread |
+| `Ctrl+Alt+Shift+M` | Mute chat |
+| `Ctrl+Alt+Shift+E` | Archive chat |
+| `Ctrl+Alt+Shift+P` | Pin chat |
+| `Ctrl+Alt+/` | Search |
+| `Ctrl+Shift+F` | Search chat |
+| `Ctrl+Alt+N` | New chat |
+| `Ctrl+Alt+Shift+]` | Next chat |
+| `Ctrl+Alt+Shift+[` | Previous chat |
+| `Ctrl+Alt+Shift+L` | Add chat to list |
+| `Escape` | Close chat |
+| `Ctrl+Alt+Shift+N` | New group |
+| `Ctrl+Alt+P` | Profile and About |
+| `Shift+.` | Increase speed of selected voice message |
+| `Shift+,` | Decrease speed of selected voice message |
+| `Ctrl+Alt+,` | Settings |
+| `Ctrl+Alt+E` | Emoji panel |
+| `Ctrl+Alt+G` | GIF panel |
+| `Ctrl+Alt+S` | Sticker panel |
+| `Alt+K` | Extended search |
+| `Ctrl+Alt+L` | Lock app |
+| `Alt+I` | Open chat info |
+| `Ctrl+Shift+B` | Block chat |
+| `Alt+R` | Reply |
+| `Ctrl+Alt+R` | Reply privately |
+| `Ctrl+Alt+D` | Forward |
+| `Alt+8` | Star message |
+| `Alt+A` | Open attachment dropdown |
+| `Ctrl+Alt+Shift+R` | Start PTT recording |
+| `Alt+P` | Pause PTT recording |
+| `Ctrl+Enter` | Send PTT |
+| `Cmd+ArrowUp` | Edit last message |
+
+### Calls
+
+Use these shortcuts while call controls are available. The same key can have a different function in a chat.
+
+| Shortcut | Function |
+| --- | --- |
+| `Ctrl+Alt+V` | Toggle camera |
+| `Ctrl+Alt+M` | Toggle mute |
+| `Ctrl+Alt+R` | Reactions |
+| `Ctrl+Alt+H` | Raise hand |
+| `Ctrl+Alt+S` | Screen share |
+| `Ctrl+Alt+W` | End call |

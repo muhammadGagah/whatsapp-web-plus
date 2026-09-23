@@ -9,3 +9,6 @@ docs/*
 !docs/SIGNED-USERSSCRIPT-UPDATES-ID.md
 *.private.pem
 release-private-key.pem
+
+# Local test and build logs
+*.log
