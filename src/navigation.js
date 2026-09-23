@@ -1,3 +1,4 @@
+import { SHORTCUT_ACTIONS, matchesShortcutBinding } from './shortcut-bindings.js';
 import {
   ALT_T_DOUBLE_PRESS_MS,
   MESSAGE_MEDIA_CONTENT_SELECTOR,
@@ -73,7 +74,7 @@ import {
   getUnreadDividerRegex,
   isolateBidiText,
   isAutomaticReadingEnabled,
-  isShortcutRemapEnabled,
+  getShortcutBinding,
   readSetting,
   setAutomaticReading,
   shouldOpenChatsAtFirstUnread,
@@ -116,10 +117,10 @@ const DELIVERY_STATUS_BY_KEY = Object.freeze({
   deliveryRead: 'Read'
 });
 
-const SHORTCUT_REMAPS = Object.freeze({
-  KeyM: ['voice-recording', 'R', 'KeyR'],
-  ArrowUp: ['previous-chat', '{', 'BracketLeft'],
-  ArrowDown: ['next-chat', '}', 'BracketRight']
+const NATIVE_REMAP_TARGETS = Object.freeze({
+  'voice-recording': ['R', 'KeyR'],
+  'previous-chat': ['{', 'BracketLeft'],
+  'next-chat': ['}', 'BracketRight']
 });
 
 export function cancelPendingFocusRequests() {
@@ -782,9 +783,11 @@ export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSib
   if (communitySectionClose) pendingCommunitySectionClose = null;
   const lostChat = remembered.lastFocusedChatRowNode &&
     (rootEl === remembered.lastFocusedChatRowNode || rootEl.contains?.(remembered.lastFocusedChatRowNode));
+  const lostChatTarget = remembered.lastFocusedChatTarget &&
+    (rootEl === remembered.lastFocusedChatTarget || rootEl.contains?.(remembered.lastFocusedChatTarget));
   const lostMessage = [remembered.lastFocusedMessageNode, remembered.lastFocusedMessageTarget]
     .some(node => node && (rootEl === node || rootEl.contains?.(node)));
-  if (!communityClose && !communitySectionClose && !lostChat && !lostMessage) return;
+  if (!communityClose && !communitySectionClose && !lostChat && !lostChatTarget && !lostMessage) return;
 
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   schedule(() => {
@@ -836,7 +839,25 @@ export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSib
     }
     if (getActiveModal()) return;
     if (document.activeElement !== document.body) return;
-    if (lostChat) {
+    if (lostChatTarget && !lostChat) {
+      // A retained row can lose focus when WhatsApp replaces its inner control.
+      // Unlike an explicit shortcut, automatic recovery must never choose a fallback chat.
+      const canRecover = () => isFocusRequestCurrent(request) && !getActiveModal() &&
+        document.activeElement === document.body && document.hasFocus?.() !== false &&
+        !getActiveNonChatTabLabelKey() &&
+        remembered.lastFocusedChatContainer?.isConnected &&
+        document.querySelector(SELECTORS.chatListInSide) === remembered.lastFocusedChatContainer &&
+        getRememberedFocus().lastFocusedChatTarget === remembered.lastFocusedChatTarget;
+      const tryRecover = attempt => {
+        if (!canRecover()) return;
+        const retry = () => {
+          if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryRecover(attempt + 1));
+        };
+        const row = getPreferredChatRow(getChatListRows());
+        if (!row || !focusChatRow(row, retry, canRecover)) retry();
+      };
+      tryRecover(1);
+    } else if (lostChat) {
       focusChatListShortcut(document.body);
     } else {
       const messageContainer = document.querySelector(SELECTORS.conversationMessages);
@@ -1427,24 +1448,41 @@ function handleAltTShortcut() {
   announceChatHeaderShortcut();
 }
 
-function remapWhatsAppShortcut(e) {
-  const remap = SHORTCUT_REMAPS[e.code];
-  if (!remap || !isShortcutRemapEnabled(remap[0])) return false;
+let dispatchingNativeRemap = false;
 
+function remapWhatsAppShortcut(e) {
+  if (dispatchingNativeRemap) return false;
+  const actions = Object.keys(SHORTCUT_ACTIONS).filter(name =>
+    matchesShortcutBinding(e, getShortcutBinding(name)));
+  if (actions.length !== 1) return false;
+  const action = actions[0];
+  if (action === 'voice-call' || action === 'video-call') {
+    const main = document.querySelector(SELECTORS.main);
+    if (!isChatMainActive(main)) return false;
+    const header = main.querySelector('header');
+    const iconName = action === 'voice-call' ? 'ic-call' : 'ic-videocam';
+    const buttons = Array.from(header?.querySelectorAll('button') || []).filter(button =>
+      isVisibleCallControl(button) && button.querySelector('svg title')?.textContent?.trim() === iconName);
+    e.preventDefault();
+    if (buttons.length !== 1) announce(t('outgoingCallUnavailable'));
+    else buttons[0].click();
+    return true;
+  }
   const target = e.target?.dispatchEvent ? e.target : (document.activeElement || document.body);
   if (!target?.dispatchEvent || typeof KeyboardEvent !== 'function') return false;
-
-  if (remap[0] === 'voice-recording') armNextVoiceMessageCapture();
+  if (action === 'voice-recording') armNextVoiceMessageCapture();
+  const [key, code] = NATIVE_REMAP_TARGETS[action];
   e.preventDefault();
-  target.dispatchEvent(new KeyboardEvent('keydown', {
-    key: remap[1],
-    code: remap[2],
-    altKey: true,
-    ctrlKey: true,
-    shiftKey: true,
-    bubbles: true,
-    cancelable: true
-  }));
+  // Let WhatsApp receive native events without routing them into another remap.
+  dispatchingNativeRemap = true;
+  try {
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      key, code, altKey: true, ctrlKey: true, shiftKey: true,
+      bubbles: true, cancelable: true
+    }));
+  } finally {
+    dispatchingNativeRemap = false;
+  }
   return true;
 }
 
@@ -1503,7 +1541,6 @@ function handleNavShortcut(e) {
 
 function handleAltShortcut(e) {
   if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return false;
-  if (remapWhatsAppShortcut(e)) return true;
 
   const shortcuts = {
     Digit1: handleFocusChatListShortcut,
@@ -1665,5 +1702,5 @@ export function handleShortcuts(e) {
   }
   if (handleModalMediaShortcut(e, activeModal)) return;
   if (e.repeat || e.metaKey || e.getModifierState('AltGraph') || activeModal) return;
-  if (handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
+  if (remapWhatsAppShortcut(e) || handleNavShortcut(e) || handleAltShortcut(e)) e.stopImmediatePropagation();
 }

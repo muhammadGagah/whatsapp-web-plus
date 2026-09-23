@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.83
+// @version      2.6.84
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start

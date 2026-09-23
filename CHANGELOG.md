@@ -1,17 +1,32 @@
 # Changelog
 
-This file records notable user-facing changes to WhatsApp Web Plus. Entries for versions 2.6.63 through 2.6.66 are based on merged pull requests, version 2.6.71 is based on its Git history, and versions 2.6.72 through 2.6.83 reflect the corresponding source in `src/`.
+## 2.6.84 - 2026-09-23
 
-## 2.6.83 - 2026-09-21
+### Added
+
+- Add a Shortcut list to the Shift+F8 menu, organized by function. Include the default script shortcuts and WhatsApp built-in shortcuts for browsers and the WebView2 app, including call controls.
+- Allow users to assign, disable, and restore shortcuts for voice-message recording and previous or next chat navigation. Add optional shortcuts to start voice and video calls.
+- Record shortcut combinations directly, including punctuation keys such as Alt+comma. Keep manual entry available and apply changes only after Save. Explain how NVDA users can switch to focus mode before recording.
+
+### Improved
+
+- Open Alt+Shift+C directly at a read-only message field without visual line wrapping. Keep a formatted view for links and lists, and preserve authored line breaks and blank lines.
+- Copy only the message text without reader headings, timestamps, or added clipboard formatting.
+- Show shortcut instructions above the input without repeating the entire help text when it receives focus.
+- Attempt to recover focus when WhatsApp replaces a control inside the remembered chat row. Preserve newer user navigation and existing Alt+1 behavior.
 
 ### Fixed
 
-- Fixed premature “Media player is still open” announcements after `Alt+0`. The script now allows up to 1.5 seconds for dismissal, avoids duplicate close clicks, and preserves newer focus requests and modal focus boundaries.
-- Fixed `Ctrl+Alt+A` and `Ctrl+Alt+D` for incoming video calls by recognizing WhatsApp's incoming-video container. The camera toggle is not mistaken for Accept, and ambiguous or unavailable controls remain untouched.
+- Prevent recursive shortcut dispatch and reject remaps that conflict with native chat navigation, including unsafe saved bindings.
+- Correct incoming video-call acceptance and rejection without mistaking the camera toggle for Accept.
+- Avoid premature media-player close failures and duplicate close clicks after Alt+0.
+- Fix the Shortcut list menu label and update it when the language changes.
+- Preserve message whitespace without adding spaces or blank lines from HTML layout.
 
 ### Documentation
 
-- Added English and Indonesian signed-update publishing guides and release command references under `docs/`, with configurable example paths and public-download verification steps. Moved the existing signing documents from Companion to the script repository.
+- Align shortcut tables in the README and reading window, including separate browser and WebView2 combinations.
+- Add English and Indonesian signed-update publishing guides with public-download verification steps.
 
 ## 2.6.82 - 2026-09-19
 

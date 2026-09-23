@@ -1,3 +1,5 @@
+import { openShortcutList } from './shortcut-list.js';
+import { SHORTCUT_ACTIONS, captureShortcutBinding } from './shortcut-bindings.js';
 import { IS_DEBUG_BUILD, SELECTORS } from './config.js';
 import {
   getAudioExperimentProfile,
@@ -31,7 +33,8 @@ import {
   isSenderDeviceAnnouncementEnabled,
   isUnreadChatTotalAnnouncementEnabled,
   isVoiceMessageKeyboardPlaybackEnabled,
-  isShortcutRemapEnabled,
+  getShortcutBinding,
+  validateShortcutBinding,
   shouldOpenChatsAtFirstUnread,
   LANGUAGES,
   setAnnouncementReduction,
@@ -42,7 +45,7 @@ import {
   setSenderDeviceAnnouncement,
   setUnreadChatTotalAnnouncement,
   setVoiceMessageKeyboardPlayback,
-  setShortcutRemap,
+  setShortcutBinding,
   t
 } from './settings-state.js';
 import {
@@ -102,6 +105,10 @@ let customDialogSave = null;
 let customDialogInvoker = null;
 let customDialogKey = '';
 let customDialogName = '';
+let shortcutDialogAction = '';
+let shortcutCapturing = false;
+let customDialogRecord;
+let customDialogReset = null;
 
 function createMenuItem(role, action) {
   const item = document.createElement('button');
@@ -253,6 +260,7 @@ function createMenu() {
       font: inherit;
     }
     .wa-plus-custom-text-dialog input:focus,
+    .wa-plus-custom-text-error:focus,
     .wa-plus-custom-text-dialog button:focus {
       outline: 2px solid Highlight;
       outline-offset: 2px;
@@ -260,10 +268,13 @@ function createMenu() {
     .wa-plus-custom-text-dialog-actions {
       display: flex;
       justify-content: flex-end;
+      flex-wrap: wrap;
       gap: 0.5rem;
       margin-top: 1rem;
     }
     .wa-plus-custom-text-dialog button {
+      max-width: 100%;
+      overflow-wrap: anywhere;
       min-height: 2.75rem;
       padding: 0.5rem 1rem;
       border: 1px solid ButtonBorder;
@@ -378,15 +389,13 @@ function createMenu() {
   statusReadingItem.dataset.labelKey = 'statusReadingCleanup';
   accessibility.menu.appendChild(statusReadingItem);
 
-  [
-    ['remapVoiceRecording', 'remap-voice-recording'],
-    ['remapPreviousChat', 'remap-previous-chat'],
-    ['remapNextChat', 'remap-next-chat']
-  ].forEach(([labelKey, action]) => {
-    const item = createMenuItem('menuitemcheckbox', action);
-    item.dataset.labelKey = labelKey;
+  for (const [name, definition] of Object.entries(SHORTCUT_ACTIONS)) {
+    const item = createMenuItem('menuitem', `remap-${name}`);
+    item.dataset.labelKey = definition.label;
+    item.dataset.shortcutAction = name;
+    item.setAttribute('aria-haspopup', 'dialog');
     keyboardShortcuts.menu.appendChild(item);
-  });
+  }
 
   [
     ['cleanUi', 'clean-ui'],
@@ -434,6 +443,10 @@ function createMenu() {
     item.setAttribute('aria-haspopup', 'dialog');
     customLanguageStrings.menu.appendChild(item);
   });
+
+  const shortcutListItem = createMenuItem('menuitem', 'shortcut-list');
+  shortcutListItem.dataset.labelKey = 'shortcutList';
+  rootMenu.appendChild(shortcutListItem);
 
   updateItem = createMenuItem('menuitem', 'open-update');
   rootMenu.appendChild(updateItem);
@@ -488,7 +501,49 @@ function createMenu() {
   customDialogCancel.type = 'button';
   customDialogSave = document.createElement('button');
   customDialogSave.type = 'submit';
-  actions.append(customDialogCancel, customDialogSave);
+  customDialogReset = document.createElement('button');
+  customDialogReset.type = 'button';
+  customDialogReset.hidden = true;
+  customDialogReset.addEventListener('click', () => {
+    if (!shortcutDialogAction) return;
+    customDialogRecord.textContent = t('shortcutRecord');
+    customDialogInput.value = SHORTCUT_ACTIONS[shortcutDialogAction].defaultBinding;
+    clearCustomDialogSaveError();
+    customDialogInput.removeAttribute('aria-invalid');
+    customDialogInput.focus({ preventScroll: true });
+  });
+  customDialogRecord = document.createElement('button');
+  customDialogRecord.type = 'button';
+  customDialogRecord.hidden = true;
+  customDialogRecord.addEventListener('click', () => {
+    shortcutCapturing = true;
+    customDialogLabel.textContent = t('shortcutCapturePrompt');
+    customDialogInput.focus({ preventScroll: true });
+  });
+  customDialogInput.addEventListener('input', () => {
+    if (shortcutDialogAction) customDialogRecord.textContent = t('shortcutRecord');
+  });
+  customDialogInput.addEventListener('blur', stopShortcutCapture);
+  customDialogInput.addEventListener('keydown', event => {
+    if (!shortcutCapturing) return;
+    if (event.key === 'Tab') { stopShortcutCapture(); return; }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      stopShortcutCapture();
+      customDialogRecord.focus({ preventScroll: true });
+      return;
+    }
+    const binding = captureShortcutBinding(event);
+    if (!binding?.code) return;
+    customDialogInput.value = binding.text;
+    customDialogInput.removeAttribute('aria-invalid');
+    clearCustomDialogSaveError();
+    stopShortcutCapture();
+    customDialogRecord.textContent = t('shortcutCaptured', { shortcut: binding.text });
+    customDialogRecord.focus({ preventScroll: true });
+  });
+  actions.append(customDialogCancel, customDialogSave, customDialogReset, customDialogRecord);
   form.append(
     customDialogTitle,
     customDialogLabel,
@@ -598,9 +653,6 @@ function updateMenu() {
     'voice-message-keyboard-playback': isVoiceMessageKeyboardPlaybackEnabled(),
     'open-chats-at-first-unread': shouldOpenChatsAtFirstUnread(),
     'status-reading-cleanup': isStatusReadingCleanupEnabled(),
-    'remap-voice-recording': isShortcutRemapEnabled('voice-recording'),
-    'remap-previous-chat': isShortcutRemapEnabled('previous-chat'),
-    'remap-next-chat': isShortcutRemapEnabled('next-chat'),
     'clean-ui': isCleanUiEnabled(),
     'original-dark': isOriginalDarkEnabled()
   };
@@ -610,7 +662,10 @@ function updateMenu() {
     getMenuItems(menu).forEach(item => {
       const labelKey = item.dataset.labelKey;
       const customKey = item.dataset.customKey;
-      if (customKey) {
+      if (item.dataset.shortcutAction) {
+        const binding = getShortcutBinding(item.dataset.shortcutAction);
+        setMenuItemLabel(item, `${t(labelKey)}: ${binding || t('shortcutDisabled')}`);
+      } else if (customKey) {
         const val = getCustomText(customKey);
         const displayVal = val ? t('customValueSet') : t('defaultLabel');
         setMenuItemLabel(item, t(labelKey, { value: displayVal }));
@@ -626,6 +681,8 @@ function updateMenu() {
       }
     });
   }
+  const shortcutListItem = getMenuItems(rootMenu).find(item => item.dataset.action === 'shortcut-list');
+  setMenuItemLabel(shortcutListItem, t('shortcutList'));
   setMenuItemLabel(updateItem, t('openUpdate'));
   updateItem.hidden = isCompanionRuntime();
   getMenuItems(languageMenu).forEach(item => {
@@ -807,15 +864,64 @@ async function copyFocusedVoiceMessageDiagnostics(target) {
   });
 }
 
+function stopShortcutCapture() {
+  shortcutCapturing = false;
+  customDialogInput.readOnly = false;
+  if (shortcutDialogAction) customDialogLabel.textContent = t('shortcutCombination');
+}
+
 function restoreCustomDialogFocus() {
+  stopShortcutCapture();
   const target = customDialogInvoker;
   customDialogInvoker = null;
   customDialogKey = '';
+  shortcutDialogAction = '';
   customDialogName = '';
   restoreSettingsFocus(target);
 }
 
+function openShortcutDialog(item) {
+  shortcutDialogAction = item.dataset.shortcutAction;
+  customDialogKey = '';
+  customDialogName = t(item.dataset.labelKey);
+  customDialogInvoker = invoker;
+  closeSettingsMenu(true);
+  customDialog.lang = getLanguage();
+  customDialog.dir = 'ltr';
+  customDialogTitle.textContent = t('editShortcut', { name: customDialogName });
+  customDialogLabel.textContent = t('shortcutCombination');
+  customDialogHelp.textContent = `${t('shortcutCaptureHelp')} ${t('shortcutInstruction')}`;
+  customDialogCancel.textContent = t('cancel');
+  customDialogSave.textContent = t('save');
+  customDialogReset.textContent = t('shortcutRestoreDefault');
+  customDialogReset.hidden = false;
+  customDialogRecord.hidden = false;
+  customDialogRecord.textContent = t('shortcutRecord');
+  customDialogInput.value = getShortcutBinding(shortcutDialogAction);
+  customDialogInput.removeAttribute('aria-invalid');
+  customDialogError.removeAttribute('role');
+  customDialogError.id = 'wa-plus-shortcut-error';
+  customDialogError.lang = getLanguage();
+  customDialogError.dir = 'ltr';
+  customDialogError.setAttribute('tabindex', '-1');
+  customDialogTitle.after(customDialogHelp);
+  customDialogInput.setAttribute('aria-describedby', 'wa-plus-shortcut-error');
+  clearCustomDialogSaveError();
+  customDialog.showModal();
+  customDialogInput.focus({ preventScroll: true });
+}
+
 function openCustomTextDialog(item) {
+  customDialogInput.after(customDialogHelp);
+  customDialogError.id = 'wa-plus-custom-text-error';
+  customDialogError.removeAttribute('tabindex');
+  customDialogInput.setAttribute('aria-describedby', 'wa-plus-custom-text-help wa-plus-custom-text-error');
+  shortcutDialogAction = '';
+  customDialogReset.hidden = true;
+  customDialogRecord.hidden = true;
+  stopShortcutCapture();
+  customDialogInput.removeAttribute('aria-invalid');
+  if (!isCompanionRuntime()) customDialogError.setAttribute('role', 'alert');
   customDialogKey = item.dataset.customKey;
   customDialogName = t(item.dataset.labelKey, { value: '' }).replace(/:\s*$/, '').trim();
   customDialogInvoker = invoker;
@@ -839,6 +945,19 @@ function saveCustomText(event) {
   const value = customDialogInput.value;
   const name = customDialogName;
   clearCustomDialogSaveError();
+  if (shortcutDialogAction) {
+    const error = validateShortcutBinding(shortcutDialogAction, value);
+    if (error || !setShortcutBinding(shortcutDialogAction, value)) {
+      customDialogError.textContent = t(error || 'saveError');
+      if (error) customDialogInput.setAttribute('aria-invalid', 'true');
+      else customDialogInput.removeAttribute('aria-invalid');
+      customDialogError.focus({ preventScroll: true });
+      return;
+    }
+    customDialog.close();
+    announce(t('shortcutSaved', { name }));
+    return;
+  }
   const saved = setCustomText(customDialogKey, value);
   if (!saved) {
     reportCustomDialogSaveError();
@@ -860,6 +979,11 @@ function activateItem(item, keepOpen) {
   const action = item.dataset.action;
   let saved = true;
 
+  if (action === 'shortcut-list') {
+    closeSettingsMenu(true);
+    openShortcutList();
+    return;
+  }
   if (action === 'open-update') {
     openUpdatePage();
     return;
@@ -918,8 +1042,8 @@ function activateItem(item, keepOpen) {
     saved = setStatusReadingCleanup(!isStatusReadingCleanupEnabled());
     if (saved) refreshStatusAccessibility();
   } else if (action.startsWith('remap-')) {
-    const name = action.slice('remap-'.length);
-    saved = setShortcutRemap(name, !isShortcutRemapEnabled(name));
+    openShortcutDialog(item);
+    return;
   } else if (action === 'clean-ui') {
     saved = toggleCleanUiMode(false);
   } else if (action === 'original-dark') {

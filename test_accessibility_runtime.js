@@ -61,7 +61,7 @@ const source = originalSource.replace('function handleMessageReaderShortcut(even
         isUnreadChatTotalStatus, refreshUnreadChatTotal,
         isUnreadChatTotalAnnouncementEnabled, setUnreadChatTotalAnnouncement,
         isVoiceMessageKeyboardPlaybackEnabled, setVoiceMessageKeyboardPlayback,
-        setOpenChatsAtFirstUnread, setShortcutRemap,
+        setOpenChatsAtFirstUnread, setShortcutRemap, setShortcutBinding,
         appendTestMessages(messages) { announcePassiveMessages(messages, passiveAnnouncementGeneration); },
         getCompanionBridge() { return globalThis.__whatsappWebPlusCompanionBridge; },
         getChatPulseEnabled() { return isAutomaticReadingEnabled(); },
@@ -2151,8 +2151,8 @@ assert.equal(finalReaderDocument, openedReaderWindows[0].initialDocument,
 assert.equal(finalReaderDocument.documentElement.getAttribute('lang'), 'en');
 assert.equal(finalReaderDocument.title, 'Message - WhatsApp Web Plus');
 assert.equal(collectReaderElements(finalReaderDocument.body, 'main').length, 1);
-assert.equal(collectReaderElements(finalReaderDocument.body, 'h1').length, 1);
-assert.equal(collectReaderElements(finalReaderDocument.body, 'h1')[0].textContent, 'Message');
+assert.equal(collectReaderElements(finalReaderDocument.body, 'h1').length, 0);
+assert.equal(collectReaderElements(finalReaderDocument.body, 'label').length, 0);
 assert.equal(collectReaderElements(finalReaderDocument.body, 'article').length, 1);
 const cleanReaderLinks = collectReaderElements(finalReaderDocument.body, 'a');
 assert.equal(cleanReaderLinks.length, 1);
@@ -2163,7 +2163,7 @@ assert.equal(cleanReaderLinks[0].getAttribute('referrerpolicy'), 'no-referrer');
 assert.equal(collectReaderElements(finalReaderDocument.body, 'time').length, 0,
     'localized WhatsApp timestamps are not mislabeled as machine-readable time values');
 const cleanReaderArticle = collectReaderElements(finalReaderDocument.body, 'article')[0];
-assert.equal(cleanReaderArticle.getAttribute('aria-labelledby'), 'message-reader-heading');
+assert.equal(cleanReaderArticle.getAttribute('aria-label'), 'Message');
 const cleanReaderBody = collectReaderElements(finalReaderDocument.body, 'div')
     .find(element => element.getAttribute('class') === 'message-reader-body');
 assert.equal(cleanReaderBody.getAttribute('dir'), 'auto');
@@ -2172,13 +2172,26 @@ assert.equal(cleanReaderArticle.getAttribute('dir'), null,
 assert.match(collectReaderText(finalReaderDocument.body), /Read the documentation/);
 assert.match(collectReaderText(finalReaderDocument.body), /10:42, 8\/24\/2026/);
 assert.match(collectReaderText(finalReaderDocument.body), /\u{1F680}/u);
-const cleanReaderCloseButtons = collectReaderElements(finalReaderDocument.body, 'button');
+const cleanReaderButtons = collectReaderElements(finalReaderDocument.body, 'button');
+assert.deepEqual(cleanReaderButtons.map(button => button.textContent),
+    ['Show formatted view', 'Copy message', 'Close reader']);
+const cleanReaderCloseButtons = cleanReaderButtons
+    .filter(button => button.getAttribute('id') === 'message-reader-close');
 assert.equal(cleanReaderCloseButtons.length, 1);
 assert.equal(cleanReaderCloseButtons[0].getAttribute('type'), 'button');
 assert.equal(cleanReaderCloseButtons[0].textContent, 'Close reader');
+const cleanReaderText = collectReaderElements(finalReaderDocument.body, 'textarea')[0];
+assert.equal(cleanReaderText.getAttribute('wrap'), 'off');
+assert.equal(cleanReaderText.getAttribute('readonly'), '');
+assert.equal(cleanReaderText.getAttribute('aria-label'), 'Message');
+assert.equal(cleanReaderText.getAttribute('aria-describedby'), null);
+assert.equal(cleanReaderArticle.hidden, true);
+assert.match(cleanReaderText.value, /Read the documentation/);
+assert.match(cleanReaderText.value, /https:\/\/example.com\/docs/);
+assert.doesNotMatch(cleanReaderText.value, /Close reader|Sent:|10:42, 8\/24\/2026/);
 const cleanReaderMain = collectReaderElements(finalReaderDocument.body, 'main')[0];
 assert.deepEqual(cleanReaderMain.children.map(element => element.tagName),
-    ['H1', 'DIV', 'BUTTON'],
+    ['DIV', 'BUTTON'],
     'the Close reader button is the last item after the message content');
 assert.equal(cleanReaderMain.children.at(-1), cleanReaderCloseButtons[0]);
 cleanReaderCloseButtons[0].click();
@@ -2541,6 +2554,42 @@ sandbox.window.getComputedStyle = () => ({
 });
 assert.equal(flattenSpacing(runtime.getMessageReaderSnapshot(messageCell).runs), 'First\nSecond',
     'ordinary HTML indentation does not create an authored blank line');
+// The reader uses pre-wrap, so collapse source HTML whitespace before exporting
+// it. Preserve authored spacing when the source itself preserves whitespace.
+function setInlineReaderSpacing(parts, whiteSpace) {
+    for (const child of [...spacingBody.children]) spacingBody.removeChild(child);
+    for (const text of parts) {
+        const span = new Element('span');
+        span.appendChild(document.createTextNode(text));
+        spacingBody.appendChild(span);
+    }
+    sandbox.window.getComputedStyle = () => ({
+        display: 'inline', visibility: 'visible', whiteSpace
+    });
+    return flattenSpacing(runtime.getMessageReaderSnapshot(messageCell).runs);
+}
+for (const whiteSpace of ['normal', 'nowrap']) {
+    assert.equal(setInlineReaderSpacing(['Info lengkap\n    dan\t beberapa  detail'], whiteSpace),
+        'Info lengkap dan beberapa detail', `${whiteSpace} collapses inline HTML indentation`);
+    assert.equal(setInlineReaderSpacing(['Info lengkap ', ' \n dan ', '\t beberapa detail'], whiteSpace),
+        'Info lengkap dan beberapa detail', `${whiteSpace} collapses spaces across adjacent inline spans`);
+    assert.equal(setInlineReaderSpacing(['Keep\u00a0\u00a0nonbreaking spaces'], whiteSpace),
+        'Keep\u00a0\u00a0nonbreaking spaces', `${whiteSpace} preserves nonbreaking spaces`);
+}
+assert.equal(setInlineReaderSpacing(['First  line \r\n  \n Second\t line'], 'pre-line'),
+    'First line\n\nSecond line', 'pre-line collapses horizontal spacing while preserving blank lines');
+assert.equal(setInlineReaderSpacing(['First ', '\n', '  Second ', '  line'], 'pre-line'),
+    'First\nSecond line', 'pre-line collapses horizontal spacing across inline nodes around a newline');
+for (const whiteSpace of ['pre', 'pre-wrap', 'break-spaces']) {
+    const authoredParts = ['Info lengkap ', ' dan\t beberapa\n\n  detail'];
+    assert.equal(setInlineReaderSpacing(authoredParts, whiteSpace), authoredParts.join(''),
+        `${whiteSpace} preserves authored spaces, tabs and blank lines across spans`);
+}
+setInlineReaderSpacing(['First'], 'normal');
+spacingBody.appendChild(new Element('br'));
+spacingBody.appendChild(document.createTextNode('Second'));
+assert.equal(flattenSpacing(runtime.getMessageReaderSnapshot(messageCell).runs), 'First\nSecond',
+    'an explicit br remains a line break even when source whitespace collapses');
 delete sandbox.window.getComputedStyle;
 messageCell.queryAllHandler = normalReaderQueryAll;
 readerMetadata.removeChild(spacingBody);
@@ -3813,6 +3862,75 @@ assert.equal(runtime.applyChatRowNativeMask(secondShortcutChat.row), false);
 assert.equal(secondShortcutChat.rowActivator.getAttribute('role'), 'section',
     'disabling announcement reduction restores WhatsApp\'s native section role');
 assert.equal(secondShortcutChat.gridcell.getAttribute('role'), 'gridcell');
+
+// Replacing a focused child must recover without invoking Alt+1 or selecting a fallback.
+const savedRecoveryList = selectorResults.get(runtime.SELECTORS.chatListInSide);
+const savedRecoveryRows = nativeShortcutList.queryAllHandler;
+function setupChatChildRemoval(wrapped = false) {
+    runtime.clearRememberedChatRow();
+    scheduledFrames.length = 0;
+    const chat = createShortcutChatRow('Retained recovery chat', false, 80);
+    nativeShortcutList.appendChild(chat.row);
+    nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row, chat.row];
+    selectorResults.set(runtime.SELECTORS.chatListInSide, nativeShortcutList);
+    document.activeElement = chat.rowActivator;
+    runtime.rememberFocusedRow(chat.rowActivator);
+    const oldTarget = chat.rowActivator;
+    chat.gridcell.removeChild(oldTarget);
+    oldTarget.isConnected = false;
+    const replacement = new Element();
+    replacement.setAttribute('tabindex', '-1');
+    replacement.closestHandler = oldTarget.closestHandler;
+    chat.gridcell.appendChild(replacement);
+    chat.gridcell.queryHandler = selector => selector.startsWith(':scope > [tabindex]') ? replacement : null;
+    const removed = wrapped ? new Element() : oldTarget;
+    if (wrapped) removed.appendChild(oldTarget);
+    document.activeElement = document.body;
+    return { chat, oldTarget, replacement, removed };
+}
+for (const wrapped of [false, true]) {
+    const fixture = setupChatChildRemoval(wrapped);
+    runtime.recoverFocusAfterRemoval(fixture.removed);
+    drainScheduledFrames();
+    assert.equal(document.activeElement, fixture.replacement, 'recover focused child or wrapper in retained chat');
+    assert.equal(nativeShortcutList.scrollTop, 217, 'recovery preserves list scroll');
+}
+for (const interrupt of ['focus', 'focusThenBody', 'input', 'background', 'route', 'pointer']) {
+    const fixture = setupChatChildRemoval();
+    runtime.recoverFocusAfterRemoval(fixture.removed);
+    scheduledFrames.shift()(); // Recovery has scheduled the delayed focus commit.
+    const outside = new Element();
+    if (interrupt.startsWith('focus')) {
+        document.activeElement = outside;
+        runtime.rememberFocusedRow(outside);
+        if (interrupt === 'focusThenBody') document.activeElement = document.body;
+    } else if (interrupt === 'input') runtime.cancelPendingFocusRequests();
+    else if (interrupt === 'background') document.hasFocus = () => false;
+    else if (interrupt === 'route') selectorResults.set(runtime.SELECTORS.chatListInSide, new Element());
+    else runtime.rememberFocusedRow(firstShortcutChat.rowActivator, 'pointer');
+    const expected = document.activeElement;
+    drainScheduledFrames();
+    assert.equal(document.activeElement, expected, `cancel child recovery after ${interrupt}`);
+    delete document.hasFocus;
+}
+const missingRecoveryChat = setupChatChildRemoval();
+nativeShortcutList.queryAllHandler = () => [firstShortcutChat.row];
+runtime.recoverFocusAfterRemoval(missingRecoveryChat.removed);
+drainScheduledFrames();
+assert.equal(document.activeElement, document.body,
+    'automatic recovery never falls back to the first or selected chat when the remembered chat is missing');
+
+const unrelatedRemoval = setupChatChildRemoval();
+runtime.recoverFocusAfterRemoval(unrelatedRemoval.chat.cellFrame);
+assert.equal(scheduledFrames.length, 0, 'unrelated descendant removal cannot trigger recovery');
+runtime.rememberFocusedRow(unrelatedRemoval.replacement, 'pointer');
+assert.equal(runtime.getRememberedFocus().lastFocusedChatTarget, unrelatedRemoval.oldTarget,
+    'pointer-only bookkeeping does not replace actual focused target');
+runtime.clearRememberedChatRow();
+assert.equal(runtime.getRememberedFocus().lastFocusedChatTarget, null);
+nativeShortcutList.queryAllHandler = savedRecoveryRows;
+if (savedRecoveryList) selectorResults.set(runtime.SELECTORS.chatListInSide, savedRecoveryList);
+else selectorResults.delete(runtime.SELECTORS.chatListInSide);
 
 const nativeShortcutRows = runtime.getChatListRows();
 assert.equal(nativeShortcutRows.length, 2);
@@ -5103,10 +5221,6 @@ assert.equal(event.prevented, true);
 assert.equal(remapTarget.dispatchedEvents[0].code, 'KeyR');
 assert.equal(remapTarget.dispatchedEvents[0].ctrlKey, true);
 assert.equal(remapTarget.dispatchedEvents[0].shiftKey, true);
-assert.match(
-    originalSource,
-    /if \(remap\[0\] === ["']voice-recording["']\) armNextVoiceMessageCapture\(\);\s+e\.preventDefault\(\);\s+target\.dispatchEvent/
-);
 assert.match(originalSource, /addEventListener\(["']keydown["'], handleVoiceCaptureActivation, true\)/);
 assert.equal(runtime.setShortcutRemap('previous-chat', true), true);
 assert.equal(runtime.setShortcutRemap('next-chat', true), true);
@@ -5126,6 +5240,71 @@ assert.deepEqual(
         { key: '}', code: 'BracketRight', altKey: true, ctrlKey: true, shiftKey: true }
     ]
 );
+
+const reentryCount = remapTarget.dispatchedEvents.length;
+remapTarget.dispatchHandler = dispatched => {
+    assert.ok(remapTarget.dispatchedEvents.length <= reentryCount + 1, 'native remap must not recurse');
+    runtime.handleShortcuts(makeEvent({ ...dispatched, target: remapTarget }));
+};
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowDown', target: remapTarget }));
+assert.equal(remapTarget.dispatchedEvents.length, reentryCount + 1);
+const dispatchFailure = new Error('dispatch failure');
+remapTarget.dispatchHandler = () => { throw dispatchFailure; };
+assert.throws(() => runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowDown', target: remapTarget })), error => error === dispatchFailure);
+remapTarget.dispatchHandler = null;
+const afterFailure = remapTarget.dispatchedEvents.length;
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowDown', target: remapTarget }));
+assert.equal(remapTarget.dispatchedEvents.length, afterFailure + 1, 'guard clears after dispatch failure');
+
+// User assignments dispatch exact modifiers and identify call controls by header icons, not language.
+assert.equal(runtime.setShortcutBinding('voice-recording', 'Ctrl+Shift+M'), true);
+const previousDispatchCount = remapTarget.dispatchedEvents.length;
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyM', target: remapTarget }));
+assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount, 'old binding stops working after reassignment');
+runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyM', target: remapTarget }));
+assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount + 1);
+assert.equal(remapTarget.dispatchedEvents.at(-1).code, 'KeyR');
+assert.equal(runtime.setShortcutBinding('voice-recording', ''), true);
+runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyM', target: remapTarget }));
+assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount + 1);
+statusNavButton.setAttribute('aria-pressed', 'false');
+const savedCallMain = selectorResults.get(runtime.SELECTORS.main);
+const outgoingMain = new Element();
+const outgoingHeader = new Element();
+const outgoingVoice = new Element('button');
+const outgoingVideo = new Element('button');
+outgoingVoice.setAttribute('aria-label', 'Appel vocal');
+outgoingVideo.setAttribute('aria-label', 'Videollamada');
+outgoingVoice.queryHandler = selector => selector === 'svg title' ? { textContent: 'ic-call' } : null;
+outgoingVideo.queryHandler = selector => selector === 'svg title' ? { textContent: 'ic-videocam' } : null;
+outgoingHeader.queryAllHandler = () => [outgoingVideo, outgoingVoice];
+outgoingMain.queryHandler = selector => selector === 'header' ? outgoingHeader
+  : selector.includes('footer div') ? new Element() : null;
+selectorResults.set(runtime.SELECTORS.main, outgoingMain);
+assert.equal(runtime.setShortcutBinding('voice-call', 'Alt+C'), true);
+assert.equal(runtime.setShortcutBinding('video-call', 'Alt+V'), true);
+for (const [code, button] of [['KeyC', outgoingVoice], ['KeyV', outgoingVideo]]) {
+  const callEvent = makeEvent({ altKey: true, code });
+  runtime.handleShortcuts(callEvent);
+  assert.equal(button.clickCalls, 1);
+  assert.equal(callEvent.prevented, true);
+  assert.equal(callEvent.immediateStopped, true);
+  for (const overrides of [{ repeat: true }, { isComposing: true }, { ctrlKey: true },
+    { getModifierState: key => key === 'AltGraph' }]) {
+    runtime.handleShortcuts(makeEvent({ altKey: true, code, ...overrides }));
+  }
+  assert.equal(button.clickCalls, 1, 'repeat/composition/AltGraph/wrong modifiers cannot call');
+}
+outgoingVoice.setAttribute('aria-disabled', 'true');
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyC' }));
+assert.equal(outgoingVoice.clickCalls, 1, 'disabled calls do not activate');
+outgoingHeader.queryAllHandler = () => [outgoingVideo, outgoingVideo];
+runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyV' }));
+assert.equal(outgoingVideo.clickCalls, 1, 'ambiguous header calls do not activate');
+selectorResults.set(runtime.SELECTORS.main, savedCallMain);
+runtime.setShortcutBinding('voice-call', '');
+runtime.setShortcutBinding('video-call', '');
+runtime.setShortcutBinding('voice-recording', 'Alt+M');
 
 runtime.discardAllPassiveAnnouncements();
 runtime.setStatusTracking(true);

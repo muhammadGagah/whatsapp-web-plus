@@ -261,6 +261,41 @@ assert.equal(settings.isShortcutRemapEnabled('voice-recording'), false);
 assert.equal(values.get('wa-plus-remap-voice-recording'), 'false');
 assert.equal(settings.setShortcutRemap('unknown', false), false);
 
+assert.equal(settings.getShortcutBinding('voice-call'), '');
+assert.equal(settings.setShortcutBinding('voice-call', ' alt + c '), true);
+assert.equal(settings.getShortcutBinding('voice-call'), 'Alt+C');
+assert.equal(settings.validateShortcutBinding('video-call', 'Alt+C'), 'shortcutConflict');
+for (const binding of ['Ctrl+Alt+Shift+[', 'Ctrl+Alt+Shift+]', 'Ctrl+-', 'Ctrl+=', 'Ctrl+Shift+-', 'Ctrl+Shift+=', 'Alt+Shift+N', 'Alt+Shift+L', 'Alt+Shift+7', 'Alt+Shift+8', 'Alt+Shift+9', 'Ctrl+R', 'Ctrl+S', 'Ctrl+U', 'Ctrl+Shift+R', 'Alt+Shift+C', 'Alt+F10', 'Alt+1', 'Ctrl+C', 'Ctrl+Alt+A', 'Ctrl+Alt+Shift+R']) {
+  assert.equal(settings.validateShortcutBinding('video-call', binding), 'shortcutReserved', binding);
+}
+
+for (const binding of ['Ctrl+Alt+Shift+[', 'Ctrl+Alt+Shift+]']) {
+  for (const action of ['voice-recording', 'previous-chat', 'next-chat', 'voice-call', 'video-call']) {
+    assert.equal(settings.setShortcutBinding(action, binding), false);
+  }
+}
+for (const binding of ['C', 'Shift+C', 'Alt+Tab', 'Alt+Enter', 'Meta+C', 'Alt+Alt+C', 'Ctrl+', 'Alt+Shift']) {
+  assert.equal(settings.validateShortcutBinding('video-call', binding), 'shortcutInvalid', binding);
+}
+assert.equal(settings.setShortcutBinding('video-call', 'Alt+V'), true);
+assert.equal(settings.setShortcutBinding('next-chat', 'Ctrl+Alt+F8'), true);
+const reloadContext = { ...context };
+reloadContext.globalThis = reloadContext;
+vm.runInNewContext(result.outputFiles[0].text, reloadContext);
+assert.equal(reloadContext.SettingsState.getShortcutBinding('voice-call'), 'Alt+C');
+assert.equal(reloadContext.SettingsState.getShortcutBinding('next-chat'), 'Ctrl+Alt+F8');
+assert.equal(reloadContext.SettingsState.getShortcutBinding('voice-recording'), '', 'legacy disabled setting survives migration');
+const savedBindingData = values.get('wa-plus-shortcut-bindings');
+values.set('wa-plus-shortcut-bindings', JSON.stringify({ 'next-chat': 'Ctrl+Alt+Shift+]', 'previous-chat': 'Ctrl+Alt+Shift+[' }));
+const legacyUnsafeContext = { ...context };
+legacyUnsafeContext.globalThis = legacyUnsafeContext;
+vm.runInNewContext(result.outputFiles[0].text, legacyUnsafeContext);
+assert.notEqual(legacyUnsafeContext.SettingsState.getShortcutBinding('next-chat'), 'Ctrl+Alt+Shift+]');
+assert.notEqual(legacyUnsafeContext.SettingsState.getShortcutBinding('previous-chat'), 'Ctrl+Alt+Shift+[');
+values.set('wa-plus-shortcut-bindings', savedBindingData);
+assert.equal(settings.setShortcutBinding('video-call', ''), true);
+assert.equal(settings.getShortcutBinding('video-call'), '');
+
 context.localStorage.setItem = () => { throw new Error('storage denied'); };
 assert.equal(settings.setLanguage('en'), false);
 assert.equal(settings.getLanguage(), 'id');
@@ -277,4 +312,6 @@ assert.equal(settings.shouldOpenChatsAtFirstUnread(), true);
 assert.equal(settings.setShortcutRemap('previous-chat', true), false);
 assert.equal(settings.isShortcutRemapEnabled('previous-chat'), false);
 
+assert.equal(settings.setShortcutBinding('voice-call', 'Alt+V'), false);
+assert.equal(settings.getShortcutBinding('voice-call'), 'Alt+C');
 console.log('settings state checks passed');

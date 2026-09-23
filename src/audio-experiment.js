@@ -231,7 +231,7 @@ function handleVoiceCaptureActivation(event) {
 function installVoiceCaptureArming() {
   const hostWindow = globalThis.window;
   if (armingListenersInstalled || typeof hostWindow?.addEventListener !== 'function') return;
-  // Capture native activation before WhatsApp requests the stream. Alt+M also arms before dispatch.
+  // Arm capture before WhatsApp requests the microphone stream.
   hostWindow.addEventListener('click', handleVoiceCaptureActivation, true);
   hostWindow.addEventListener('keydown', handleVoiceCaptureActivation, true);
   armingListenersInstalled = true;

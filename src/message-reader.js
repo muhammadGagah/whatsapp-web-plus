@@ -152,6 +152,60 @@ function appendReaderRuns(documentRef, parent, runs) {
   }
 }
 
+export function serializeMessageReaderRuns(runs) {
+  let text = '';
+  const lists = [];
+  const boundary = () => { if (text && !text.endsWith('\n')) text += '\n'; };
+  for (const run of runs || []) {
+    if (run.type === 'break') text += '\n';
+    else if (run.type === 'listStart') {
+      boundary();
+      lists.push({ ordered: run.ordered, next: 1 });
+    } else if (run.type === 'listEnd') lists.pop();
+    else if (run.type === 'listItemStart') {
+      boundary();
+      const list = lists[lists.length - 1];
+      text += '  '.repeat(Math.max(0, lists.length - 1));
+      text += list?.ordered ? `${list.next++}. ` : '- ';
+    } else if (run.type === 'listItemEnd') boundary();
+    else if (run.type === 'link') {
+      const visible = run.text || run.href || '';
+      text += visible;
+      if (!getSafeMessageReaderUrl(run.href)) text += ` (${t('messageReaderUnsafeLink')})`;
+      else if (run.href && visible !== run.href) text += ` (${run.href})`;
+    } else text += run.text || '';
+  }
+  return text.replace(/\r\n?/g, '\n');
+}
+
+export async function copyMessageReaderText(readerWindow, text) {
+  const documentRef = readerWindow.document;
+  try {
+    if (readerWindow.navigator?.clipboard?.writeText) {
+      await readerWindow.navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  // The legacy copy event supplies plain text without selecting or focusing
+  // a temporary control, so the reader's caret and keyboard focus stay put.
+  if (!documentRef.execCommand || !documentRef.addEventListener) return false;
+  let supplied = false;
+  const onCopy = event => {
+    if (!event.clipboardData) return;
+    event.clipboardData.setData('text/plain', text);
+    event.preventDefault();
+    supplied = true;
+  };
+  documentRef.addEventListener('copy', onCopy);
+  try {
+    return documentRef.execCommand('copy') === true && supplied;
+  } catch {
+    return false;
+  } finally {
+    documentRef.removeEventListener('copy', onCopy);
+  }
+}
+
 const readerEscapeDocuments = new WeakSet();
 
 function closeReaderWindow(readerWindow) {
@@ -188,7 +242,6 @@ function installCurrentReaderEscapeHandler(readerWindow) {
 
 function createReaderView(documentRef, {
   titleKey = 'messageReaderDocumentTitle',
-  headingKey = 'messageReaderHeading',
   readerWindow = null
 } = {}) {
   const language = getSupportedLanguage(getLanguage()) || 'en';
@@ -232,7 +285,6 @@ function createReaderView(documentRef, {
       padding-block: 1.5rem 3rem;
       padding-inline: clamp(1rem, 4vw, 3rem);
     }
-    h1 { font-size: 1.5rem; line-height: 1.3; margin-block: 0 1.5rem; }
     button {
       margin-block: 1.5rem 0;
       padding: 0.55rem 0.85rem;
@@ -247,15 +299,17 @@ function createReaderView(documentRef, {
     .message-reader-body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .message-reader-time { margin-block-start: 1.5rem; }
     a { color: LinkText; text-decoration: underline; text-underline-offset: 0.15em; }
-    a:focus-visible, button:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+    textarea {
+      display: block; inline-size: 100%; min-block-size: 55vh;
+      white-space: pre; overflow: auto; font: inherit;
+      background: Canvas; color: CanvasText; border: 1px solid CanvasText;
+    }
+    [hidden] { display: none !important; }
+    a:focus-visible, button:focus-visible, textarea:focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
   `;
   documentRef.head.appendChild(style);
 
   const main = documentRef.createElement('main');
-  const heading = documentRef.createElement('h1');
-  heading.setAttribute('id', 'message-reader-heading');
-  heading.textContent = t(headingKey);
-  main.appendChild(heading);
 
   const closeButton = documentRef.createElement('button');
   closeButton.setAttribute('type', 'button');
@@ -267,7 +321,7 @@ function createReaderView(documentRef, {
   main.appendChild(content);
   main.appendChild(closeButton);
   documentRef.body.appendChild(main);
-  return { documentRef, content };
+  return { documentRef, content, readerWindow };
 }
 
 function renderReaderWindow(readerWindow, render, viewOptions = {}) {
@@ -289,13 +343,61 @@ function renderReaderState(view, key) {
 
 function renderReaderSnapshot(view, snapshot) {
   clearNode(view.content);
+  const plainText = serializeMessageReaderRuns(snapshot.runs);
+  const plainView = view.documentRef.createElement('div');
+  const textArea = view.documentRef.createElement('textarea');
+  textArea.setAttribute('id', 'message-reader-text');
+  textArea.setAttribute('readonly', '');
+  textArea.setAttribute('wrap', 'off');
+  textArea.setAttribute('dir', 'auto');
+  textArea.setAttribute('aria-label', t('messageReaderHeading'));
+  textArea.value = plainText;
+  plainView.appendChild(textArea);
+  view.content.appendChild(plainView);
   const article = view.documentRef.createElement('article');
-  article.setAttribute('aria-labelledby', 'message-reader-heading');
+  article.hidden = true;
+  article.setAttribute('id', 'message-reader-formatted');
+  article.setAttribute('tabindex', '-1');
+  article.setAttribute('aria-label', t('messageReaderHeading'));
   const body = view.documentRef.createElement('div');
   body.setAttribute('class', 'message-reader-body');
   body.setAttribute('dir', 'auto');
   appendReaderRuns(view.documentRef, body, snapshot.runs);
   article.appendChild(body);
+
+  const toggle = view.documentRef.createElement('button');
+  toggle.setAttribute('type', 'button');
+  toggle.setAttribute('aria-controls', 'message-reader-formatted');
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.textContent = t('messageReaderShowFormatted');
+  toggle.onclick = () => {
+    const formatted = article.hidden;
+    article.hidden = !formatted;
+    plainView.hidden = formatted;
+    toggle.setAttribute('aria-expanded', String(formatted));
+    toggle.textContent = t(formatted ? 'messageReaderShowText' : 'messageReaderShowFormatted');
+    if (formatted) article.focus?.();
+    else textArea.focus?.();
+  };
+  const copy = view.documentRef.createElement('button');
+  copy.setAttribute('type', 'button');
+  copy.textContent = t('messageReaderCopy');
+  const status = view.documentRef.createElement('div');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.setAttribute('aria-atomic', 'true');
+  let copying = false;
+  copy.onclick = async () => {
+    if (copying) return;
+    copying = true;
+    status.textContent = '';
+    const success = await copyMessageReaderText(view.readerWindow, plainText);
+    status.textContent = t(success ? 'messageReaderCopied' : 'messageReaderCopyFailed');
+    copying = false;
+  };
+  view.content.appendChild(toggle);
+  view.content.appendChild(copy);
+  view.content.appendChild(status);
 
   const timeParagraph = view.documentRef.createElement('p');
   timeParagraph.setAttribute('class', 'message-reader-time');
@@ -308,8 +410,14 @@ function renderReaderSnapshot(view, snapshot) {
   } else {
     timeParagraph.textContent = t('messageReaderTimeUnavailable');
   }
-  article.appendChild(timeParagraph);
   view.content.appendChild(article);
+  view.content.appendChild(timeParagraph);
+  // Only focus the new text view while this reader tab still has focus.
+  // Expansion can finish after the user has already switched back to WhatsApp.
+  if (view.documentRef.hasFocus?.()) {
+    textArea.focus?.();
+    textArea.setSelectionRange?.(0, 0);
+  }
 }
 
 function consumeShortcut(event) {
@@ -333,8 +441,7 @@ function finishExpansion(request, snapshot = null) {
       if (snapshot) renderReaderSnapshot(view, snapshot);
       else renderReaderState(view, 'messageReaderExpansionFailed');
     }, snapshot ? {} : {
-      titleKey: 'messageReaderFailureDocumentTitle',
-      headingKey: 'messageReaderFailureHeading'
+      titleKey: 'messageReaderFailureDocumentTitle'
     });
   } catch {}
   return true;
@@ -413,8 +520,7 @@ export function handleMessageReaderShortcut(event) {
       if (source.readMoreButton) renderReaderState(initialView, 'messageReaderLoading');
       else renderReaderSnapshot(initialView, source.snapshot);
     }, source.readMoreButton ? {
-      titleKey: 'messageReaderLoadingDocumentTitle',
-      headingKey: 'messageReaderLoadingHeading'
+      titleKey: 'messageReaderLoadingDocumentTitle'
     } : {});
   } catch {
     readerWindow.close?.();

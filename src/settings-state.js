@@ -1,3 +1,4 @@
+import { SHORTCUT_ACTIONS, parseShortcutBinding, isReservedShortcut } from './shortcut-bindings.js';
 import { SELECTORS, STORAGE_KEYS } from './config.js';
 import en from './locales/en.js';
 import id from './locales/id.js';
@@ -86,6 +87,40 @@ const shortcutRemaps = {
   'previous-chat': readSetting(STORAGE_KEYS.remapPreviousChat, 'false') === 'true',
   'next-chat': readSetting(STORAGE_KEYS.remapNextChat, 'false') === 'true'
 };
+
+let shortcutBindings = {};
+try {
+  const stored = JSON.parse(readSetting(STORAGE_KEYS.shortcutBindings, '{}'));
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+    for (const name of Object.keys(SHORTCUT_ACTIONS)) {
+      const parsed = parseShortcutBinding(stored[name]);
+      if (parsed && !isReservedShortcut(parsed)) shortcutBindings[name] = parsed.text;
+    }
+  }
+} catch {}
+
+export function getShortcutBinding(name) {
+  if (!Object.hasOwn(SHORTCUT_ACTIONS, name)) return '';
+  return Object.hasOwn(shortcutBindings, name) ? shortcutBindings[name]
+    : shortcutRemaps[name] ? SHORTCUT_ACTIONS[name].defaultBinding : '';
+}
+
+export function validateShortcutBinding(name, value) {
+  const parsed = parseShortcutBinding(value);
+  if (!Object.hasOwn(SHORTCUT_ACTIONS, name) || !parsed) return 'shortcutInvalid';
+  if (isReservedShortcut(parsed)) return 'shortcutReserved';
+  if (parsed.text && Object.keys(SHORTCUT_ACTIONS).some(other =>
+    other !== name && getShortcutBinding(other) === parsed.text)) return 'shortcutConflict';
+  return '';
+}
+
+export function setShortcutBinding(name, value) {
+  if (validateShortcutBinding(name, value)) return false;
+  const next = { ...shortcutBindings, [name]: parseShortcutBinding(value).text };
+  if (!writeSetting(STORAGE_KEYS.shortcutBindings, JSON.stringify(next))) return false;
+  shortcutBindings = next;
+  return true;
+}
 
 const messages = Object.freeze({ en, id });
 const regexCache = new Map();
@@ -482,10 +517,13 @@ export function setOpenChatsAtFirstUnread(value) {
 }
 
 export function isShortcutRemapEnabled(name) {
-  return shortcutRemaps[name] === true;
+  return !!getShortcutBinding(name);
 }
 
 export function setShortcutRemap(name, value) {
+  if (Object.hasOwn(shortcutBindings, name)) {
+    return setShortcutBinding(name, value ? SHORTCUT_ACTIONS[name].defaultBinding : '');
+  }
   const storageKey = shortcutRemapStorageKeys[name];
   if (!storageKey) return false;
   const nextValue = !!value;
