@@ -16,6 +16,8 @@ const source = originalSource.replace('function handleMessageReaderShortcut(even
         SELECTORS, OWNERS, applyOwnedAttribute, applyOwnedMessageRole, releaseOwnedAttribute, releaseOwnedWithin,
         isMetaAIReply, applyMetaAIMessageName,
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
+        getCurrentChatContext, consumeUnreadTarget, isChatAtLatestMessages,
+        getPulseHistorySize() { return [chatPulseSeenIds.size, chatPulseStatuses.size]; },
         scheduleChatPulseSync, toggleChatPulse, followChatPulseTail,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
         queuePassiveAnnouncements, discardPassiveAnnouncements, discardAllPassiveAnnouncements,
@@ -5000,7 +5002,7 @@ assert.equal(document.activeElement, cachedMessage);
 assert.equal(cachedRow.scrollIntoViewCalls, 1);
 assert.equal(runtime.findUnreadMessageTarget(latestMessageContainer), null);
 assert.deepEqual(
-    Array.from(runtime.reconcileChatPulseEntries('Cached chat', [
+    Array.from(runtime.reconcileChatPulseEntries(runtime.getCurrentChatContext(), [
         { id: 'cached-id', summary: 'First old unread message', status: '' },
         { id: 'second-old-unread', summary: 'Second old unread message', status: '' },
         { id: 'new-message', summary: 'Only this new message', status: '' }
@@ -5842,5 +5844,55 @@ document.hidden = false;
 runtime.followChatPulseTail(followContainer, '', 'next-tail');
 runtime.followChatPulseTail(followContainer, 'next-tail', 'next-tail');
 assert.equal(nextTail.scrollIntoViewCalls, 1, 'initial history and receipts must not trigger scrolling');
+
+runtime.setChatPulseBaseline('removed-tail', [pulseEntry('deleted', 'Old', '')]);
+assert.deepEqual(Array.from(runtime.reconcileChatPulseEntries('removed-tail', [
+    pulseEntry('replacement', 'Already visible', '')
+], { atLatest: true })), []);
+assert.deepEqual(reconcilePulse('removed-tail', [
+    pulseEntry('replacement', 'Already visible', ''), pulseEntry('after-delete', 'New after deletion', '')
+]), ['New after deletion']);
+runtime.setChatPulseBaseline('bounded', [pulseEntry('bounded-0', 'Old', '')]);
+for (let i = 1; i <= 10000; i++) {
+    assert.deepEqual(reconcilePulse('bounded', [
+        pulseEntry(`bounded-${i - 1}`, 'Old', ''), pulseEntry(`bounded-${i}`, 'New', '')
+    ]), ['New']);
+}
+assert.ok(runtime.getPulseHistorySize().every(size => size <= 2048));
+
+const contextMain = new Element(), contextHeader = new Element(), contextTitle = new Element();
+const contextContainer = new Element(), contextMessage = new Element();
+contextTitle.textContent = 'Same display name';
+contextMain.queryHandler = selector => selector === 'header' ? contextHeader : contextContainer;
+contextHeader.queryHandler = () => contextTitle;
+contextContainer.queryHandler = () => contextMessage;
+selectorResults.set(runtime.SELECTORS.main, contextMain);
+contextMessage.setAttribute('data-id', 'false_chat-a@g.us_first');
+const chatContextA = runtime.getCurrentChatContext();
+runtime.consumeUnreadTarget();
+runtime.setChatPulseBaseline(chatContextA, [pulseEntry('A-last', 'Old A', '')]);
+contextMessage.setAttribute('data-id', 'false_chat-b@g.us_first');
+const chatContextB = runtime.getCurrentChatContext();
+assert.notEqual(chatContextA, chatContextB, 'identical titles must not merge different chat JIDs');
+assert.deepEqual(reconcilePulse(chatContextB, [pulseEntry('B-last', 'Old B', '')]), []);
+assert.deepEqual(reconcilePulse(chatContextB, [
+    pulseEntry('B-last', 'Old B', ''), pulseEntry('B-new', 'New B', '')
+]), ['New B']);
+runtime.setUnreadTarget({ chatTitle: 'Same display name', chatContext: chatContextB, messageId: 'B-unread' });
+assert.equal(runtime.findUnreadMessageTarget(contextContainer), contextMessage);
+contextMessage.setAttribute('data-id', 'true_chat-b@g.us_later');
+assert.equal(runtime.getCurrentChatContext(), chatContextB, 'scrolling within a chat keeps its identity');
+const historyViewport = new Element();
+contextMain.queryHandler = selector => selector === 'header' ? contextHeader
+    : selector === runtime.SELECTORS.conversationMessages ? contextContainer : null;
+contextContainer.clientHeight = contextContainer.scrollHeight = 600;
+contextContainer.parentElement = historyViewport;
+historyViewport.parentElement = contextMain;
+historyViewport.clientHeight = 300;
+historyViewport.scrollHeight = 1000;
+historyViewport.scrollTop = 200;
+assert.equal(runtime.isChatAtLatestMessages(), false, 'inner list size is not the scroll position');
+historyViewport.scrollTop = 700;
+assert.equal(runtime.isChatAtLatestMessages(), true);
 
 console.log('accessibility runtime checks passed');

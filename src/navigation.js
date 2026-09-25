@@ -1,4 +1,5 @@
 import { SHORTCUT_ACTIONS, matchesShortcutBinding } from './shortcut-bindings.js';
+import { getChatContextKey } from './chat-context.js';
 import {
   ALT_T_DOUBLE_PRESS_MS,
   MESSAGE_MEDIA_CONTENT_SELECTOR,
@@ -94,14 +95,15 @@ let lastTypingChatTitle = '';
 let statusInterval = null;
 let lastTPressTime = 0;
 let unreadTarget = null;
-let consumedUnreadChatTitle = '';
+let consumedUnreadChatContext = '';
 let isStatusTracking = readSetting(STORAGE_KEYS.chatActivity, 'false') === 'true';
-let chatPulseChatTitle = '';
+let chatPulseContext = '';
 let chatPulseTailId = '';
 let chatPulseSeenIds = new Set();
 let chatPulseStatuses = new Map();
 let chatPulsePendingIds = new Set();
 let chatPulseSyncTimer = null;
+const CHAT_PULSE_HISTORY_LIMIT = 2048;
 let passiveAnnouncementTimer = null;
 let passiveAnnouncements = [];
 let passiveAnnouncementGeneration = 0;
@@ -238,15 +240,57 @@ export function getChatPulseEntries() {
 }
 
 export function setChatPulseBaseline(chatTitle, entries) {
-  chatPulseChatTitle = chatTitle;
+  chatPulseContext = chatTitle;
   chatPulseTailId = entries.length ? entries[entries.length - 1].id : '';
   chatPulseSeenIds = new Set(entries.map(entry => entry.id));
   chatPulseStatuses = new Map(entries.map(entry => [entry.id, entry.status]));
   chatPulsePendingIds.clear();
+  pruneChatPulseHistory(entries);
 }
 
 export function captureChatPulseBaseline() {
-  setChatPulseBaseline(getCurrentChatTitle(), getChatPulseEntries());
+  setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries());
+}
+
+export function getCurrentChatContext() {
+  return getChatContextKey(document.querySelector(SELECTORS.main), getCurrentChatTitle());
+}
+
+function pruneChatPulseHistory(entries) {
+  const visible = new Set(entries.map(entry => entry.id));
+  for (const id of chatPulsePendingIds) {
+    if (!visible.has(id)) chatPulsePendingIds.delete(id);
+  }
+  // Map insertion order retains a bounded recent history in addition to the
+  // currently mounted window. Never evict a visible receipt or pending row.
+  for (const id of chatPulseSeenIds) {
+    if (chatPulseSeenIds.size <= Math.max(CHAT_PULSE_HISTORY_LIMIT, visible.size)) break;
+    if (visible.has(id) || id === chatPulseTailId) continue;
+    chatPulseSeenIds.delete(id);
+    chatPulseStatuses.delete(id);
+  }
+}
+
+function isChatAtLatestMessages() {
+  const main = document.querySelector(SELECTORS.main);
+  const container = main?.querySelector(SELECTORS.conversationMessages);
+  if (!container || container.clientHeight <= 0) return false;
+  if (isRenderedElement(main.querySelector(getScrollToBottomSelector()))) return false;
+  let viewport = container;
+  // Some layouts put the message list inside the actual scroll viewport.
+  // A non-scrolling inner list must not turn older history into a live tail.
+  for (let node = container; node && node !== main; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight ||
+      /^(auto|scroll)$/.test(window.getComputedStyle?.(node)?.overflowY || '')) {
+      viewport = node;
+      break;
+    }
+  }
+  if (viewport.clientHeight <= 0) return false;
+  if (window.getComputedStyle?.(viewport)?.flexDirection === 'column-reverse') {
+    return Math.abs(viewport.scrollTop) <= 4;
+  }
+  return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 4;
 }
 
 function schedulePassiveAnnouncements() {
@@ -301,8 +345,8 @@ export function discardAllPassiveAnnouncements() {
   invalidatePassiveAnnouncements();
 }
 
-export function reconcileChatPulseEntries(chatTitle, entries) {
-  if (chatTitle !== chatPulseChatTitle) {
+export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false } = {}) {
+  if (chatTitle !== chatPulseContext) {
     passiveAnnouncementGeneration++;
     invalidatePassiveAnnouncements();
     discardPassiveAnnouncements('pulse');
@@ -315,6 +359,13 @@ export function reconcileChatPulseEntries(chatTitle, entries) {
     ? entries.findIndex(entry => entry.id === chatPulseTailId)
     : -1;
   const canDetectAppend = (!chatPulseTailId && chatPulseSeenIds.size === 0) || tailIndex >= 0;
+  if (!canDetectAppend && atLatest && !chatPulsePendingIds.size) {
+    // A deleted/virtualized anchor must not silence this chat indefinitely.
+    // Rebase only at the current end; viewing older history is not evidence
+    // that those rows are new messages.
+    setChatPulseBaseline(chatTitle, entries);
+    return [];
+  }
   const appendedCandidates = canDetectAppend
     ? entries.slice(tailIndex + 1).filter(entry => !chatPulseSeenIds.has(entry.id))
     : [];
@@ -353,6 +404,7 @@ export function reconcileChatPulseEntries(chatTitle, entries) {
   });
 
   if (newEntries.length) chatPulseTailId = newEntries[newEntries.length - 1].id;
+  pruneChatPulseHistory(entries);
 
   receiptCounts.forEach((count, status) => {
     const translatedStatus = translateDeliveryStatus(status);
@@ -378,11 +430,12 @@ function followChatPulseTail(container, previousTailId, nextTailId) {
 
 export function syncChatPulse() {
   if (!isAutomaticReadingEnabled()) return;
-  const chatTitle = getCurrentChatTitle();
-  const previousTailId = chatTitle === chatPulseChatTitle ? chatPulseTailId : '';
+  const chatTitle = getCurrentChatContext();
+  const previousTailId = chatTitle === chatPulseContext ? chatPulseTailId : '';
   queuePassiveAnnouncements('pulse', reconcileChatPulseEntries(
     chatTitle,
-    getChatPulseEntries()
+    getChatPulseEntries(),
+    { atLatest: isChatAtLatestMessages() }
   ));
   followChatPulseTail(
     document.querySelector(SELECTORS.conversationMessages), previousTailId, chatPulseTailId
@@ -408,7 +461,7 @@ export function toggleChatPulse(announceChange = true) {
   else {
     if (chatPulseSyncTimer !== null) clearTimeout(chatPulseSyncTimer);
     chatPulseSyncTimer = null;
-    chatPulseChatTitle = '';
+    chatPulseContext = '';
     chatPulseTailId = '';
     chatPulseSeenIds.clear();
     chatPulseStatuses.clear();
@@ -459,9 +512,11 @@ export function captureNextRowId(dividerEl) {
   const row = getNextMessageRow(dividerEl, messageContainer);
   const message = row && row.querySelector('[data-id]');
   const chatTitle = getCurrentChatTitle();
-  if (!message || !chatTitle || chatTitle === consumedUnreadChatTitle) return;
+  const chatContext = getCurrentChatContext();
+  if (!message || !chatTitle || chatContext === consumedUnreadChatContext) return;
   unreadTarget = {
     chatTitle,
+    chatContext,
     messageId: message.getAttribute('data-id'),
     scrollTop: messageContainer.scrollTop,
     dividerEl
@@ -475,7 +530,7 @@ export function isShortUnreadText(text) {
 
 export function maybeCaptureUnreadDivider(node) {
   if (!node.closest || !node.closest(SELECTORS.conversationMessages)) return;
-  if (getCurrentChatTitle() === consumedUnreadChatTitle) return;
+  if (getCurrentChatContext() === consumedUnreadChatContext) return;
   const candidates = node.matches && node.matches('div, span') ? [node] : [];
   if (node.querySelectorAll) candidates.push(...node.querySelectorAll('div, span'));
   for (let i = 0; i < candidates.length; i++) {
@@ -491,21 +546,23 @@ export function maybeCaptureUnreadDivider(node) {
 
 export function reconcileUnreadTarget() {
   const currentChatTitle = getCurrentChatTitle();
-  if (consumedUnreadChatTitle && consumedUnreadChatTitle !== currentChatTitle) {
-    consumedUnreadChatTitle = '';
+  const currentChatContext = getCurrentChatContext();
+  if (consumedUnreadChatContext && consumedUnreadChatContext !== currentChatContext) {
+    consumedUnreadChatContext = '';
   }
   if (!unreadTarget) return;
   const dividerRemoved = unreadTarget.dividerEl && (
     !unreadTarget.dividerEl.isConnected ||
     !isShortUnreadText(unreadTarget.dividerEl.textContent || '')
   );
-  if (unreadTarget.chatTitle !== currentChatTitle || dividerRemoved) unreadTarget = null;
+  if (unreadTarget.chatTitle !== currentChatTitle ||
+    (unreadTarget.chatContext && unreadTarget.chatContext !== currentChatContext) || dividerRemoved) unreadTarget = null;
 }
 
 function consumeUnreadTarget() {
-  const chatTitle = getCurrentChatTitle();
+  const chatTitle = getCurrentChatContext();
   unreadTarget = null;
-  if (chatTitle) consumedUnreadChatTitle = chatTitle;
+  if (chatTitle) consumedUnreadChatContext = chatTitle;
   if (!isAutomaticReadingEnabled()) return;
   discardPassiveAnnouncements('pulse');
   setChatPulseBaseline(chatTitle, getChatPulseEntries());
@@ -863,7 +920,8 @@ export function recoverFocusAfterRemoval(rootEl, nextSibling = null, previousSib
       const messageContainer = document.querySelector(SELECTORS.conversationMessages);
       // The removal belongs to the old conversation, not a newly rendered route.
       if (!messageContainer || messageContainer !== remembered.lastFocusedMessageContainer ||
-        getCurrentChatTitle() !== remembered.lastFocusedMessageChatTitle) return;
+        getCurrentChatTitle() !== remembered.lastFocusedMessageChatTitle ||
+        getCurrentChatContext() !== remembered.lastFocusedMessageChatContext) return;
       const rememberedRow = remembered.lastFocusedMessageNode;
       const currentMessageId = rememberedRow?.getAttribute('data-id') ||
         rememberedRow?.querySelector('[data-id]')?.getAttribute('data-id') || '';
@@ -1229,7 +1287,7 @@ export function focusLastMessageShortcut() {
 
 export function findUnreadMessageTarget(messageContainer) {
   reconcileUnreadTarget();
-  if (consumedUnreadChatTitle && consumedUnreadChatTitle === getCurrentChatTitle()) return null;
+  if (consumedUnreadChatContext && consumedUnreadChatContext === getCurrentChatContext()) return null;
   if (unreadTarget) {
     if (!unreadTarget.chatTitle || unreadTarget.chatTitle !== getCurrentChatTitle()) {
       unreadTarget = null;

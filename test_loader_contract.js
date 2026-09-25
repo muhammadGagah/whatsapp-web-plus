@@ -82,8 +82,9 @@ function makeContext() {
 }
 
 const source = fs.readFileSync('whatsapp_web_plus.user.js', 'utf8');
-const bridgeTestSource = `${fs.readFileSync('src/companion-bridge.js', 'utf8')
-  .replace(/^export\s+/gm, '')}
+const bridgeTestSource = `const SELECTORS = { conversationMessages: '[data-testid="conversation-panel-messages"]' };
+${['chat-context.js', 'companion-bridge.js'].map(name => fs.readFileSync(`src/${name}`, 'utf8')
+  .replace(/^import .*;\r?\n/gm, '').replace(/^export\s+/gm, '')).join('\n')}
 globalThis.__bridgeTestApi = {
   ensureCompanionBridge,
   publishCompanionAnnouncement,
@@ -194,6 +195,19 @@ assert.equal(chatChanged.invalidated, true);
 assert.equal(chatChanged.lastInvalidation, 'chat-context-changed');
 assert.equal(chatChanged.entries.length, 0);
 assert.notEqual(chatChanged.context, fallbackInitial.context);
+// The same main node and display title can represent two different chats.
+let bridgeMessageId = 'false_first@g.us_one';
+const bridgeMessage = { getAttribute: () => bridgeMessageId };
+const bridgeMessages = { querySelector: () => bridgeMessage };
+firstMain.querySelector = selector => selector.includes('conversation-panel-messages')
+  ? bridgeMessages : titleElement;
+const firstNamedChat = fallbackBridge.readSince(0, 0);
+fallbackBridge.publish({ source: 'message-log', text: 'Must stay in first chat' });
+bridgeMessageId = 'false_second@g.us_two';
+const secondNamedChat = fallbackBridge.readSince(0, firstNamedChat.generation);
+assert.equal(secondNamedChat.lastInvalidation, 'chat-context-changed');
+assert.notEqual(secondNamedChat.context, firstNamedChat.context);
+assert.equal(secondNamedChat.entries.length, 0);
 bridgeStorage.set('wa-plus-language', 'id');
 const languageChanged = fallbackBridge.readSince(chatChanged.latestSequence, chatChanged.generation);
 assert.equal(languageChanged.invalidated, true);

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.6.85 - 2026-09-25
+
+### Fixed
+
+- Treat custom participant labels as literal text when masking identities.
+- Separate message, unread, reader, focus-recovery, and Companion bridge state for chats with identical names.
+- Recover automatic reading after its last-message anchor disappears at the end of a conversation, without announcing older history.
+- Bound retained message IDs and delivery statuses during long sessions.
+
+### Tests
+
+- Keep the shortcut-list test independent of sibling Companion documentation.
+
 ## 2.6.84 - 2026-09-23
 
 ### Added

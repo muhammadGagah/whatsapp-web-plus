@@ -52,12 +52,8 @@ for (const language of ['en', 'id']) {
     const browserReadme = fs.readFileSync('README.md', 'utf8');
     nativeRows(context.getShortcutListRuns()).forEach(row => assert.ok(browserReadme.includes(row), row));
   }
-  const companionReadmePath = language === 'en'
-    ? '../whatsapp-web-plus-companion/readme.md' : '../whatsapp-web-plus-companion/addon/doc/id/readme.md';
-  if (fs.existsSync(companionReadmePath)) {
-    const companionReadme = fs.readFileSync(companionReadmePath, 'utf8');
-    nativeRows(entry.reader.runs).forEach(row => assert.ok(companionReadme.includes(row), row));
-  }
+  // The native reader contract is tested above. The Companion README is an
+  // independent, introductory guide, not a copy of every userscript shortcut.
   assert.ok(browserText.includes('Ctrl+Alt+G'));
   const makeElement = tag => ({ tag, children: [], textContent: '', appendChild(child) { this.children.push(child); },
     addEventListener() {}, querySelector(tag) { return this.children.find(child => child.tag === tag); } });

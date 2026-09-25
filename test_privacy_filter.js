@@ -1076,4 +1076,13 @@ for (const initialHidden of [null, 'false']) {
     assert.equal(hasPrivacyState(viewOncePhoneAuthor, 'aria-hidden'), false);
 }
 
+setPrivacy(true);
+for (const prefix of ['(', '[', '.', '*', '$&']) {
+    sandbox.__privacyTest.setCustomText('participant-prefix', prefix);
+    assert.equal(clean('Alice', 'identity'), 'Alice');
+    assert.equal(clean('Call +62 812-3456-7890', 'identity'), `Call ${prefix}`);
+    assert.equal(clean('Call https://wa.me/6281234567890', 'identity'), `Call ${prefix}`);
+}
+sandbox.__privacyTest.setCustomText('participant-prefix', '');
+
 console.log('privacy filter checks passed');

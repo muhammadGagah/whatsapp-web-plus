@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { webcrypto } = require('node:crypto');
 
-const code = ['companion-bridge.js', 'message-reader.js'].map(name =>
+const code = ['chat-context.js', 'companion-bridge.js', 'message-reader.js'].map(name =>
   fs.readFileSync(`src/${name}`, 'utf8')
     .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm, '')
     .replace(/^export /gm, '')
@@ -24,8 +24,10 @@ function fixture() {
   let onClick = () => {};
   let clicks = 0;
   let opens = 0;
-  const main = { querySelector: () => ({ textContent: title, getAttribute: () => title }) };
+  const titleNode = { get textContent() { return title; }, getAttribute: () => title };
+  const main = { querySelector: () => titleNode };
   const context = {
+    SELECTORS: { conversationMessages: '[data-testid="conversation-panel-messages"]' },
     crypto: webcrypto, URL, location: { href: 'https://web.whatsapp.com/' },
     __whatsappWebPlusBundleHash: 'a'.repeat(64),
     document: { querySelector: () => main, documentElement: { lang: 'en' } },

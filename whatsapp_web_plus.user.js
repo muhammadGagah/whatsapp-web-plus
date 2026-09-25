@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.84
+// @version      2.6.85
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.84",
+    scriptVersion: "2.6.85",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.84";
+  var SCRIPT_VERSION = "2.6.85";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -1831,9 +1831,9 @@
     const hadUnknownPrefix = getUnknownContactRegex().test(text);
     const hadParticipantPrefix = getParticipantPrefixRegex().test(text);
     if (hadParticipantPrefix) {
-      return removePhonesOutsideWebUrls(text.replace(PHONE_URL_RE, participant));
+      return removePhonesOutsideWebUrls(text.replace(PHONE_URL_RE, () => participant));
     }
-    text = text.replace(PHONE_URL_RE, hadUnknownPrefix ? "" : participant);
+    text = text.replace(PHONE_URL_RE, () => hadUnknownPrefix ? "" : participant);
     if (hadUnknownPrefix || hadParticipantPrefix) {
       text = text.replace(getUnknownContactRegex(), "").trim();
       text = text.replace(getParticipantPrefixRegex(), "").trim();
@@ -1846,7 +1846,8 @@
     } else {
       text = replacePhonesOutsideWebUrls(text, el);
     }
-    text = text.replace(new RegExp(`(?:${participant})(?:\\s+${participant})+`, "gi"), participant);
+    const literalParticipant = escapeRegExp(participant);
+    text = text.replace(new RegExp(`(?:${literalParticipant})(?:\\s+${literalParticipant})+`, "gi"), () => participant);
     return text;
   }
   function normalizeText(text) {
@@ -2253,6 +2254,27 @@
     return !!state;
   }
 
+  // src/chat-context.js
+  var contextNodes = /* @__PURE__ */ new WeakMap();
+  var nextContextNode = 0;
+  function nodeIdentity(node) {
+    if (!node) return "";
+    if (!contextNodes.has(node)) contextNodes.set(node, ++nextContextNode);
+    return contextNodes.get(node);
+  }
+  function getChatContextKey(main, title = "") {
+    if (!main) return "";
+    const container = main.querySelector?.(SELECTORS.conversationMessages);
+    const header = main.querySelector?.("header");
+    let identity = main.getAttribute?.("data-chat-id") || header?.getAttribute?.("data-chat-id");
+    if (!identity) {
+      const message = container?.querySelector?.("[data-id]");
+      identity = /^(?:true|false)_([^_]+@[^_]+)_/.exec(message?.getAttribute?.("data-id") || "")?.[1];
+    }
+    if (identity) return `chat:${identity}`;
+    return `dom:${nodeIdentity(main)}:${nodeIdentity(container)}:${nodeIdentity(header)}:${title}`;
+  }
+
   // src/companion-bridge.js
   var BRIDGE_PROPERTY = "__whatsappWebPlusCompanionBridge";
   var BRIDGE_CONTRACT_VERSION = 2;
@@ -2314,7 +2336,7 @@
         documentRef?.documentElement?.getAttribute?.("lang") || documentRef?.documentElement?.lang || globalThis.navigator?.language || ""
       ).trim();
     }
-    return { main, title, language: language2, privacy };
+    return { main, title, chatContext: getChatContextKey(main, title), language: language2, privacy };
   }
   function normalizeText2(text) {
     const value = String(text || "").trim();
@@ -2426,7 +2448,7 @@
       let reason = "";
       if (current2.privacy !== previousContext.privacy) reason = "privacy-changed";
       else if (current2.language !== previousContext.language) reason = "language-changed";
-      else if (current2.main !== previousContext.main || current2.title !== previousContext.title) {
+      else if (current2.main !== previousContext.main || current2.title !== previousContext.title || current2.chatContext !== previousContext.chatContext) {
         reason = "chat-context-changed";
       }
       previousContext = current2;
@@ -2534,6 +2556,7 @@
   var lastFocusedMessageTarget = null;
   var lastFocusedMessageContainer = null;
   var lastFocusedMessageChatTitle = "";
+  var lastFocusedMessageChatContext = "";
   var announcementTimer = null;
   var userAnnouncementUntil = 0;
   var announcementGeneration = 0;
@@ -3115,6 +3138,7 @@
       messageContainer: messageItem.closest?.(SELECTORS.conversationMessages),
       main: messageItem.closest?.(SELECTORS.main),
       chatTitle: getCurrentChatTitle(),
+      chatContext: getChatContextKey(document.querySelector(SELECTORS.main), getCurrentChatTitle()),
       identity: getMessageExpansionIdentity(messageItem),
       readMoreButton,
       hasReadMoreControl: hasMessageReadMoreControl(messageItem),
@@ -3124,7 +3148,7 @@
   function isMessageReaderSourceCurrent(source) {
     if (!source?.messageItem) return false;
     const { messageContainer, main } = source;
-    if (!messageContainer?.isConnected || !main?.isConnected || document.querySelector(SELECTORS.main) !== main || document.querySelector(SELECTORS.conversationMessages) !== messageContainer || !main.contains?.(messageContainer) || getCurrentChatTitle() !== source.chatTitle) return false;
+    if (!messageContainer?.isConnected || !main?.isConnected || document.querySelector(SELECTORS.main) !== main || document.querySelector(SELECTORS.conversationMessages) !== messageContainer || !main.contains?.(messageContainer) || getCurrentChatTitle() !== source.chatTitle || source.chatContext && getChatContextKey(main, getCurrentChatTitle()) !== source.chatContext) return false;
     const { identity } = source;
     if (!identity?.dataId) return false;
     if (isPrimaryMessageItem(source.messageItem) && messageContainer.contains?.(source.messageItem) && identity.wrapper?.isConnected && identity.wrapper.contains?.(source.messageItem) && identity.wrapper.getAttribute?.("data-id") === identity.dataId) return true;
@@ -4111,6 +4135,7 @@
       lastFocusedMessageTarget = target;
       lastFocusedMessageContainer = document.querySelector(SELECTORS.conversationMessages);
       lastFocusedMessageChatTitle = getCurrentChatTitle();
+      lastFocusedMessageChatContext = getChatContextKey(main, lastFocusedMessageChatTitle);
       const message = row.querySelector("[data-id]");
       lastFocusedMessageId = row.getAttribute("data-id") || message?.getAttribute("data-id") || "";
       const cell = target.closest?.('[role="gridcell"]');
@@ -4138,7 +4163,8 @@
       lastFocusedMessageId,
       lastFocusedMessageTarget,
       lastFocusedMessageContainer,
-      lastFocusedMessageChatTitle
+      lastFocusedMessageChatTitle,
+      lastFocusedMessageChatContext
     };
   }
   function clearRememberedChatRow() {
@@ -4155,6 +4181,7 @@
     lastFocusedMessageTarget = null;
     lastFocusedMessageContainer = null;
     lastFocusedMessageChatTitle = "";
+    lastFocusedMessageChatContext = "";
   }
 
   // src/audio-experiment.js
@@ -6661,14 +6688,15 @@
   var statusInterval = null;
   var lastTPressTime = 0;
   var unreadTarget = null;
-  var consumedUnreadChatTitle = "";
+  var consumedUnreadChatContext = "";
   var isStatusTracking = readSetting(STORAGE_KEYS.chatActivity, "false") === "true";
-  var chatPulseChatTitle = "";
+  var chatPulseContext = "";
   var chatPulseTailId = "";
   var chatPulseSeenIds = /* @__PURE__ */ new Set();
   var chatPulseStatuses = /* @__PURE__ */ new Map();
   var chatPulsePendingIds = /* @__PURE__ */ new Set();
   var chatPulseSyncTimer = null;
+  var CHAT_PULSE_HISTORY_LIMIT = 2048;
   var passiveAnnouncementTimer = null;
   var passiveAnnouncements = [];
   var passiveAnnouncementGeneration = 0;
@@ -6778,14 +6806,48 @@
     return Array.from(entries.values());
   }
   function setChatPulseBaseline(chatTitle, entries) {
-    chatPulseChatTitle = chatTitle;
+    chatPulseContext = chatTitle;
     chatPulseTailId = entries.length ? entries[entries.length - 1].id : "";
     chatPulseSeenIds = new Set(entries.map((entry) => entry.id));
     chatPulseStatuses = new Map(entries.map((entry) => [entry.id, entry.status]));
     chatPulsePendingIds.clear();
+    pruneChatPulseHistory(entries);
   }
   function captureChatPulseBaseline() {
-    setChatPulseBaseline(getCurrentChatTitle(), getChatPulseEntries());
+    setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries());
+  }
+  function getCurrentChatContext() {
+    return getChatContextKey(document.querySelector(SELECTORS.main), getCurrentChatTitle());
+  }
+  function pruneChatPulseHistory(entries) {
+    const visible = new Set(entries.map((entry) => entry.id));
+    for (const id of chatPulsePendingIds) {
+      if (!visible.has(id)) chatPulsePendingIds.delete(id);
+    }
+    for (const id of chatPulseSeenIds) {
+      if (chatPulseSeenIds.size <= Math.max(CHAT_PULSE_HISTORY_LIMIT, visible.size)) break;
+      if (visible.has(id) || id === chatPulseTailId) continue;
+      chatPulseSeenIds.delete(id);
+      chatPulseStatuses.delete(id);
+    }
+  }
+  function isChatAtLatestMessages() {
+    const main = document.querySelector(SELECTORS.main);
+    const container = main?.querySelector(SELECTORS.conversationMessages);
+    if (!container || container.clientHeight <= 0) return false;
+    if (isRenderedElement(main.querySelector(getScrollToBottomSelector()))) return false;
+    let viewport = container;
+    for (let node = container; node && node !== main; node = node.parentElement) {
+      if (node.scrollHeight > node.clientHeight || /^(auto|scroll)$/.test(window.getComputedStyle?.(node)?.overflowY || "")) {
+        viewport = node;
+        break;
+      }
+    }
+    if (viewport.clientHeight <= 0) return false;
+    if (window.getComputedStyle?.(viewport)?.flexDirection === "column-reverse") {
+      return Math.abs(viewport.scrollTop) <= 4;
+    }
+    return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 4;
   }
   function schedulePassiveAnnouncements() {
     if (passiveAnnouncementTimer !== null || !passiveAnnouncements.length) return;
@@ -6832,8 +6894,8 @@
     passiveAnnouncementGeneration++;
     invalidatePassiveAnnouncements();
   }
-  function reconcileChatPulseEntries(chatTitle, entries) {
-    if (chatTitle !== chatPulseChatTitle) {
+  function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false } = {}) {
+    if (chatTitle !== chatPulseContext) {
       passiveAnnouncementGeneration++;
       invalidatePassiveAnnouncements();
       discardPassiveAnnouncements("pulse");
@@ -6843,6 +6905,10 @@
     if (!chatTitle) return [];
     const tailIndex = chatPulseTailId ? entries.findIndex((entry) => entry.id === chatPulseTailId) : -1;
     const canDetectAppend = !chatPulseTailId && chatPulseSeenIds.size === 0 || tailIndex >= 0;
+    if (!canDetectAppend && atLatest && !chatPulsePendingIds.size) {
+      setChatPulseBaseline(chatTitle, entries);
+      return [];
+    }
     const appendedCandidates = canDetectAppend ? entries.slice(tailIndex + 1).filter((entry) => !chatPulseSeenIds.has(entry.id)) : [];
     const pendingCandidates = entries.filter((entry) => chatPulsePendingIds.has(entry.id) && !chatPulseSeenIds.has(entry.id));
     const candidateIds = new Set(
@@ -6875,6 +6941,7 @@
       if (!hadStatus || nextRank >= previousRank) chatPulseStatuses.set(entry.id, entry.status);
     });
     if (newEntries.length) chatPulseTailId = newEntries[newEntries.length - 1].id;
+    pruneChatPulseHistory(entries);
     receiptCounts.forEach((count, status) => {
       const translatedStatus = translateDeliveryStatus(status);
       announcements.push(count === 1 ? t("messageStatusSingle", { status: translatedStatus }) : t("messageStatusPlural", { count, status: translatedStatus }));
@@ -6893,11 +6960,12 @@
   }
   function syncChatPulse() {
     if (!isAutomaticReadingEnabled()) return;
-    const chatTitle = getCurrentChatTitle();
-    const previousTailId = chatTitle === chatPulseChatTitle ? chatPulseTailId : "";
+    const chatTitle = getCurrentChatContext();
+    const previousTailId = chatTitle === chatPulseContext ? chatPulseTailId : "";
     queuePassiveAnnouncements("pulse", reconcileChatPulseEntries(
       chatTitle,
-      getChatPulseEntries()
+      getChatPulseEntries(),
+      { atLatest: isChatAtLatestMessages() }
     ));
     followChatPulseTail(
       document.querySelector(SELECTORS.conversationMessages),
@@ -6923,7 +6991,7 @@
     else {
       if (chatPulseSyncTimer !== null) clearTimeout(chatPulseSyncTimer);
       chatPulseSyncTimer = null;
-      chatPulseChatTitle = "";
+      chatPulseContext = "";
       chatPulseTailId = "";
       chatPulseSeenIds.clear();
       chatPulseStatuses.clear();
@@ -6969,9 +7037,11 @@
     const row = getNextMessageRow(dividerEl, messageContainer);
     const message = row && row.querySelector("[data-id]");
     const chatTitle = getCurrentChatTitle();
-    if (!message || !chatTitle || chatTitle === consumedUnreadChatTitle) return;
+    const chatContext = getCurrentChatContext();
+    if (!message || !chatTitle || chatContext === consumedUnreadChatContext) return;
     unreadTarget = {
       chatTitle,
+      chatContext,
       messageId: message.getAttribute("data-id"),
       scrollTop: messageContainer.scrollTop,
       dividerEl
@@ -6983,7 +7053,7 @@
   }
   function maybeCaptureUnreadDivider(node) {
     if (!node.closest || !node.closest(SELECTORS.conversationMessages)) return;
-    if (getCurrentChatTitle() === consumedUnreadChatTitle) return;
+    if (getCurrentChatContext() === consumedUnreadChatContext) return;
     const candidates = node.matches && node.matches("div, span") ? [node] : [];
     if (node.querySelectorAll) candidates.push(...node.querySelectorAll("div, span"));
     for (let i = 0; i < candidates.length; i++) {
@@ -6998,17 +7068,18 @@
   }
   function reconcileUnreadTarget() {
     const currentChatTitle = getCurrentChatTitle();
-    if (consumedUnreadChatTitle && consumedUnreadChatTitle !== currentChatTitle) {
-      consumedUnreadChatTitle = "";
+    const currentChatContext = getCurrentChatContext();
+    if (consumedUnreadChatContext && consumedUnreadChatContext !== currentChatContext) {
+      consumedUnreadChatContext = "";
     }
     if (!unreadTarget) return;
     const dividerRemoved = unreadTarget.dividerEl && (!unreadTarget.dividerEl.isConnected || !isShortUnreadText(unreadTarget.dividerEl.textContent || ""));
-    if (unreadTarget.chatTitle !== currentChatTitle || dividerRemoved) unreadTarget = null;
+    if (unreadTarget.chatTitle !== currentChatTitle || unreadTarget.chatContext && unreadTarget.chatContext !== currentChatContext || dividerRemoved) unreadTarget = null;
   }
   function consumeUnreadTarget() {
-    const chatTitle = getCurrentChatTitle();
+    const chatTitle = getCurrentChatContext();
     unreadTarget = null;
-    if (chatTitle) consumedUnreadChatTitle = chatTitle;
+    if (chatTitle) consumedUnreadChatContext = chatTitle;
     if (!isAutomaticReadingEnabled()) return;
     discardPassiveAnnouncements("pulse");
     setChatPulseBaseline(chatTitle, getChatPulseEntries());
@@ -7280,7 +7351,7 @@
         focusChatListShortcut(document.body);
       } else {
         const messageContainer = document.querySelector(SELECTORS.conversationMessages);
-        if (!messageContainer || messageContainer !== remembered.lastFocusedMessageContainer || getCurrentChatTitle() !== remembered.lastFocusedMessageChatTitle) return;
+        if (!messageContainer || messageContainer !== remembered.lastFocusedMessageContainer || getCurrentChatTitle() !== remembered.lastFocusedMessageChatTitle || getCurrentChatContext() !== remembered.lastFocusedMessageChatContext) return;
         const rememberedRow = remembered.lastFocusedMessageNode;
         const currentMessageId = rememberedRow?.getAttribute("data-id") || rememberedRow?.querySelector("[data-id]")?.getAttribute("data-id") || "";
         const movedRow = rememberedRow?.isConnected && messageContainer.contains(rememberedRow) && currentMessageId === remembered.lastFocusedMessageId ? rememberedRow : null;
@@ -7593,7 +7664,7 @@
   }
   function findUnreadMessageTarget(messageContainer) {
     reconcileUnreadTarget();
-    if (consumedUnreadChatTitle && consumedUnreadChatTitle === getCurrentChatTitle()) return null;
+    if (consumedUnreadChatContext && consumedUnreadChatContext === getCurrentChatContext()) return null;
     if (unreadTarget) {
       if (!unreadTarget.chatTitle || unreadTarget.chatTitle !== getCurrentChatTitle()) {
         unreadTarget = null;

@@ -1,3 +1,5 @@
+import { getChatContextKey } from './chat-context.js';
+
 const BRIDGE_PROPERTY = '__whatsappWebPlusCompanionBridge';
 const BRIDGE_CONTRACT_VERSION = 2;
 const BRIDGE_QUEUE_LIMIT = 50;
@@ -60,7 +62,7 @@ function readContextState() {
       globalThis.navigator?.language || ''
     ).trim();
   }
-  return { main, title, language, privacy };
+  return { main, title, chatContext: getChatContextKey(main, title), language, privacy };
 }
 
 function normalizeText(text) {
@@ -178,7 +180,8 @@ function createBridge() {
     let reason = '';
     if (current.privacy !== previousContext.privacy) reason = 'privacy-changed';
     else if (current.language !== previousContext.language) reason = 'language-changed';
-    else if (current.main !== previousContext.main || current.title !== previousContext.title) {
+    else if (current.main !== previousContext.main || current.title !== previousContext.title ||
+      current.chatContext !== previousContext.chatContext) {
       reason = 'chat-context-changed';
     }
     previousContext = current;

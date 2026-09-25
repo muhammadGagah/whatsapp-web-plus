@@ -1,3 +1,4 @@
+import { getChatContextKey } from './chat-context.js';
 import {
   CHAT_LABEL_NOISE_RE,
   CHAT_LIST_TOP_FALLBACK_MAX_Y,
@@ -54,6 +55,7 @@ let lastFocusedMessageId = '';
 let lastFocusedMessageTarget = null;
 let lastFocusedMessageContainer = null;
 let lastFocusedMessageChatTitle = '';
+let lastFocusedMessageChatContext = '';
 let announcementTimer = null;
 let userAnnouncementUntil = 0;
 let announcementGeneration = 0;
@@ -769,6 +771,7 @@ export function getFocusedMessageReaderSource(event) {
     messageContainer: messageItem.closest?.(SELECTORS.conversationMessages),
     main: messageItem.closest?.(SELECTORS.main),
     chatTitle: getCurrentChatTitle(),
+    chatContext: getChatContextKey(document.querySelector(SELECTORS.main), getCurrentChatTitle()),
     identity: getMessageExpansionIdentity(messageItem),
     readMoreButton,
     hasReadMoreControl: hasMessageReadMoreControl(messageItem),
@@ -782,7 +785,8 @@ export function isMessageReaderSourceCurrent(source) {
   if (!messageContainer?.isConnected || !main?.isConnected ||
     document.querySelector(SELECTORS.main) !== main ||
     document.querySelector(SELECTORS.conversationMessages) !== messageContainer ||
-    !main.contains?.(messageContainer) || getCurrentChatTitle() !== source.chatTitle) return false;
+    !main.contains?.(messageContainer) || getCurrentChatTitle() !== source.chatTitle ||
+    (source.chatContext && getChatContextKey(main, getCurrentChatTitle()) !== source.chatContext)) return false;
   const { identity } = source;
   if (!identity?.dataId) return false;
   if (isPrimaryMessageItem(source.messageItem) &&
@@ -2027,6 +2031,7 @@ export function rememberFocusedRow(target, interactionType = 'focus') {
     // Capture context before a MutationObserver can see a replacement route.
     lastFocusedMessageContainer = document.querySelector(SELECTORS.conversationMessages);
     lastFocusedMessageChatTitle = getCurrentChatTitle();
+    lastFocusedMessageChatContext = getChatContextKey(main, lastFocusedMessageChatTitle);
     const message = row.querySelector('[data-id]');
     lastFocusedMessageId = row.getAttribute('data-id') || message?.getAttribute('data-id') || '';
     const cell = target.closest?.('[role="gridcell"]');
@@ -2050,7 +2055,7 @@ export function getRememberedFocus() {
   return {
     lastFocusedChatRowNode, lastFocusedChatTarget, lastFocusedChatContainer,
     lastFocusedChatTitle, lastFocusedMessageNode, lastFocusedMessageId,
-    lastFocusedMessageTarget, lastFocusedMessageContainer, lastFocusedMessageChatTitle
+    lastFocusedMessageTarget, lastFocusedMessageContainer, lastFocusedMessageChatTitle, lastFocusedMessageChatContext
   };
 }
 
@@ -2069,4 +2074,5 @@ export function clearRememberedMessageRow() {
   lastFocusedMessageTarget = null;
   lastFocusedMessageContainer = null;
   lastFocusedMessageChatTitle = '';
+  lastFocusedMessageChatContext = '';
 }

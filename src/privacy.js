@@ -6,6 +6,7 @@ import {
   WEB_URL_RE
 } from './config.js';
 import {
+  escapeRegExp,
   getCustomText,
   getMessageContextInstructionRegex,
   getMetaAIRegex,
@@ -534,10 +535,10 @@ function applyPrivacyFilter(text, context, el) {
   const hadParticipantPrefix = getParticipantPrefixRegex().test(text);
 
   if (hadParticipantPrefix) {
-    return removePhonesOutsideWebUrls(text.replace(PHONE_URL_RE, participant));
+    return removePhonesOutsideWebUrls(text.replace(PHONE_URL_RE, () => participant));
   }
 
-  text = text.replace(PHONE_URL_RE, hadUnknownPrefix ? '' : participant);
+  text = text.replace(PHONE_URL_RE, () => hadUnknownPrefix ? '' : participant);
 
   if (hadUnknownPrefix || hadParticipantPrefix) {
     text = text.replace(getUnknownContactRegex(), '').trim();
@@ -553,7 +554,8 @@ function applyPrivacyFilter(text, context, el) {
     text = replacePhonesOutsideWebUrls(text, el);
   }
 
-  text = text.replace(new RegExp(`(?:${participant})(?:\\s+${participant})+`, 'gi'), participant);
+  const literalParticipant = escapeRegExp(participant);
+  text = text.replace(new RegExp(`(?:${literalParticipant})(?:\\s+${literalParticipant})+`, 'gi'), () => participant);
   return text;
 }
 
