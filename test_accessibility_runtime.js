@@ -445,6 +445,56 @@ secondMessageCell.closestHandler = selector => {
     return null;
 };
 selectorResults.set(runtime.SELECTORS.main, messageMain);
+// WhatsApp can mount an already populated main panel after script startup.
+// Exercise the observer route, without the full refresh performed by a toggle.
+const startupObserver = runtime.createCleanupObserver();
+messageMain.nodeType = 1;
+messageMain.closestHandler = selector =>
+    selector === `${runtime.SELECTORS.side}, ${runtime.SELECTORS.main}` ? messageMain : null;
+const startupFocus = document.activeElement;
+const startupTimers = new Set(scheduledTimeouts.keys());
+startupObserver.trigger([{ type: 'childList', target: document.body,
+    addedNodes: [messageMain], removedNodes: [] }]);
+drainScheduledFrames();
+assert.equal(messageCell.getAttribute('role'), 'gridcell',
+    'a populated main panel mounted after startup initializes message roles');
+assert.equal(document.activeElement, startupFocus, 'startup repair does not move focus');
+const startupWrapper = new Element();
+startupWrapper.nodeType = 1;
+startupWrapper.queryHandler = selector => selector.includes(runtime.SELECTORS.conversationMessages)
+    ? messageContainerForGrid : null;
+messageCell.removeAttribute('role');
+startupObserver.trigger([{ type: 'childList', target: document.body,
+    addedNodes: [startupWrapper], removedNodes: [] }]);
+drainScheduledFrames();
+assert.equal(messageCell.getAttribute('role'), 'gridcell',
+    'a new outer wrapper containing history also initializes message roles');
+messageViewport.closestHandler = selector =>
+    selector === runtime.SELECTORS.conversationMessages ? messageContainerForGrid : null;
+messageContainerForGrid.closestHandler = selector =>
+    selector === runtime.SELECTORS.conversationMessages ? messageContainerForGrid : null;
+for (const [target, attributeName] of [[messageViewport, 'data-tab'],
+    [messageContainerForGrid, 'data-testid']]) {
+    messageCell.removeAttribute('role');
+    startupObserver.trigger([{ type: 'attributes', target, attributeName }]);
+    drainScheduledFrames();
+    assert.equal(messageCell.getAttribute('role'), 'gridcell',
+        `late ${attributeName} initialization repairs message roles`);
+}
+runtime.setAnnouncementReduction(false);
+startupObserver.trigger([{ type: 'childList', target: document.body,
+    addedNodes: [startupWrapper], removedNodes: [] }]);
+drainScheduledFrames();
+assert.equal(messageCell.getAttribute('role'), null, 'late mounting respects disabled reduction');
+runtime.setAnnouncementReduction(true);
+// The observer also schedules unrelated pulse/appearance work; isolate this fixture.
+for (const timerId of scheduledTimeouts.keys()) {
+    if (!startupTimers.has(timerId)) scheduledTimeouts.delete(timerId);
+}
+messageMain.closestHandler = null;
+messageViewport.closestHandler = null;
+messageContainerForGrid.closestHandler = null;
+startupObserver.disconnect();
 runtime.applyMessageGridExperiment();
 assert.equal(messageViewport.getAttribute('role'), 'grid');
 assert.equal(messageViewport.getAttribute('aria-labelledby'), 'wa-plus-message-grid-label');
@@ -1222,15 +1272,69 @@ document.activeElement = messageCell;
 
 const incompleteRow = new Element();
 incompleteRow.setAttribute('role', 'row');
+// Real startup logs contain empty virtualized message rows before rendered ones.
+const virtualRow = new Element();
+virtualRow.setAttribute('role', 'row');
+const virtualCell = new Element();
+virtualCell.setAttribute('data-id', 'virtual-message');
+virtualCell.setAttribute('tabindex', '-1');
+const virtualBody = new Element();
+virtualBody.setAttribute('data-virtualized', 'true');
+virtualCell.appendChild(virtualBody);
+virtualRow.appendChild(virtualCell);
+virtualCell.closestHandler = selector => selector === 'div[role="row"]' ? virtualRow : null;
+virtualRow.queryHandler = selector =>
+    selector === '[data-testid^="conv-msg-"][data-id] > [data-virtualized="true"]'
+        ? virtualBody : null;
+const renderedRowsQuery = messageViewport.queryAllHandler;
+messageViewport.queryAllHandler = selector => selector === 'div[role="row"]'
+    ? [virtualRow, messageRow, secondMessageRow]
+    : selector === '[role="gridcell"]' ? [virtualCell, messageCell, secondMessageCell] : [];
+runtime.applyMessageGridExperiment();
+assert.equal(messageViewport.getAttribute('role'), 'grid', 'virtualized placeholders must not disable rendered message semantics');
+assert.equal(messageCell.getAttribute('role'), 'gridcell');
+assert.equal(virtualCell.getAttribute('role'), 'gridcell', 'placeholder rows retain a valid cell context');
+assert.equal(virtualCell.getAttribute('tabindex'), '-1', 'placeholders do not enter the tab order');
+runtime.handleMessageGridKeydown(gridKey(secondMessageCell, 'Home'));
+assert.equal(document.activeElement, messageCell, 'Home skips virtualized placeholders');
+virtualCell.textContent = 'Partially loaded message';
+runtime.applyMessageGridExperiment();
+assert.equal(virtualCell.getAttribute('role'), null, 'partially loaded text is never classified as an empty placeholder');
+virtualCell.textContent = '';
+const hydratedCell = new Element();
+hydratedCell.setAttribute('data-focusable-list-item', 'true');
+hydratedCell.closestHandler = selector => selector === 'div[role="row"]' ? virtualRow : null;
+virtualBody.appendChild(hydratedCell);
+virtualRow.queryHandler = selector => selector === '.focusable-list-item' ? hydratedCell : null;
+runtime.applyMessageGridExperiment();
+assert.equal(hydratedCell.getAttribute('role'), 'gridcell', 'hydrated messages receive normal cell semantics');
+assert.equal(virtualCell.getAttribute('role'), null, 'hydration does not leave a nested placeholder gridcell');
+virtualBody.removeChild(hydratedCell);
+virtualRow.queryHandler = () => null;
+runtime.applyMessageGridExperiment();
+assert.equal(virtualCell.getAttribute('role'), null, 'placeholder role is released when its virtualized marker disappears');
+assert.equal(messageViewport.getAttribute('role'), null, 'unknown incomplete rows still prevent a partial grid');
+assert.equal(hydratedCell.getAttribute('role'), null, 'recycled rendered cells release their role');
+virtualRow.queryHandler = selector =>
+    selector === '[data-testid^="conv-msg-"][data-id] > [data-virtualized="true"]' ? virtualBody : null;
+runtime.applyMessageGridExperiment();
+runtime.setAnnouncementReduction(false);
+runtime.applyMessageGridExperiment();
+assert.equal(virtualCell.getAttribute('role'), null, 'disabling reduction restores placeholder roles');
+runtime.setAnnouncementReduction(true);
+messageViewport.queryAllHandler = renderedRowsQuery;
+runtime.applyMessageGridExperiment();
 const mixedMetaSender = new Element();
 const mixedMetaBody = new Element();
 const mixedMetaMetadata = new Element();
 mixedMetaSender.setAttribute('aria-label', 'Meta AI');
 mixedMetaSender.closestHandler = () => null;
+mixedMetaBody.closestHandler = selector => selector === '.focusable-list-item' ? messageCell : null;
+mixedMetaBody.textContent = 'Complete AI reply';
 messageCell.queryAllHandler = selector =>
     selector === 'span[aria-label]'
         ? [mixedMetaSender]
-        : [];
+        : selector === '[data-testid="msg-container"] .copyable-text.selectable-text' ? [mixedMetaBody] : [];
 messageCell.queryHandler = selector => {
     if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return mixedMetaBody;
     if (selector === '[data-testid="msg-meta"]') return mixedMetaMetadata;
@@ -1249,11 +1353,8 @@ assert.equal(
     'an incomplete grid restores the host role instead of leaking gridcell ownership'
 );
 assert.equal(secondMessageCell.getAttribute('role'), null);
-assert.equal(messageCell.hasAttribute('aria-label'), false);
-assert.equal(
-    messageCell.getAttribute('aria-labelledby'),
-    [mixedMetaSender, mixedMetaBody, mixedMetaMetadata].map(el => el.getAttribute('id')).join(' ')
-);
+assert.equal(messageCell.getAttribute('aria-label'), 'Meta AI Complete AI reply');
+assert.equal(messageCell.getAttribute('aria-labelledby'), null);
 messageCell.queryAllHandler = () => [];
 messageCell.queryHandler = () => null;
 messageViewport.queryAllHandler = selector =>
@@ -1296,6 +1397,14 @@ assert.equal(liveRegion.textContent, '');
 
 const companionBridge = runtime.getCompanionBridge();
 assert.equal(companionBridge.contractVersion, 2);
+const beforeCancelledMention = companionBridge.snapshot();
+runtime.announce('Stale mention', () => false);
+const [mentionTimerId, mentionTimer] = Array.from(scheduledTimeouts.entries()).at(-1);
+scheduledTimeouts.delete(mentionTimerId);
+mentionTimer();
+assert.equal(liveRegion.textContent, '');
+assert.equal(companionBridge.snapshot().latestSequence, beforeCancelledMention.latestSequence,
+    'Cancelled mention must not reach the Companion bridge');
 const bridgeBeforeLongStatus = companionBridge.snapshot();
 runtime.announce(`Long status ${'x'.repeat(2200)}`);
 const [longStatusTimerId, longStatusTimer] = Array.from(scheduledTimeouts.entries()).at(-1);
@@ -1417,7 +1526,7 @@ for (const child of metaAIReply.children) child.parentElement = metaAIReply;
 metaAIReply.queryAllHandler = selector =>
     selector === 'span[aria-label]'
         ? [metaAISender]
-        : [];
+        : selector === '[data-testid="msg-container"] .copyable-text.selectable-text' ? [metaAIBody] : [];
 metaAIReply.queryHandler = selector => {
     if (selector === '[data-testid="msg-container"] .copyable-text.selectable-text') return metaAIBody;
     if (selector === '[data-testid="msg-meta"]') return metaAIMetadata;
@@ -1425,8 +1534,8 @@ metaAIReply.queryHandler = selector => {
 };
 assert.equal(runtime.isMetaAIReply(metaAIReply), true);
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
-assert.equal(metaAIReply.hasAttribute('aria-label'), false);
-assert.equal(metaAIReply.getAttribute('aria-labelledby'), [metaAISender, metaAIBody, metaAIMetadata].map(el => el.getAttribute('id')).join(' '));
+assert.equal(metaAIReply.getAttribute('aria-label'), 'Meta AI Meta AI official guide');
+assert.equal(metaAIReply.getAttribute('aria-labelledby'), null);
 assert.equal(metaAILink.getAttribute('href'), 'https://example.test/guide');
 assert.equal(metaAILink.getAttribute('aria-label'), 'Meta AI official guide');
 assert.equal(metaAILink.getAttribute('tabindex'), '0');
@@ -1436,17 +1545,16 @@ assert.equal(metaAIMenu.getAttribute('tabindex'), '0');
 assert.equal(metaAIMenu.getAttribute('role'), 'button');
 assert.equal(metaAIMenu.getAttribute('aria-expanded'), 'false');
 assert.equal(metaAIMenu.hasAttribute('id'), false);
-assert.equal(runtime.isOwnedMutation(metaAIBody, 'id'), true);
-assert.equal(runtime.isOwnedMutation(metaAIReply, 'aria-labelledby'), true);
+assert.equal(runtime.isOwnedMutation(metaAIBody, 'id'), false);
 metaAIBody.setAttribute('id', 'react-body-id');
 assert.equal(runtime.handleAttributeMutation({ target: metaAIBody, attributeName: 'id' }), metaAIConversation);
 metaAIReply.setAttribute('aria-labelledby', 'react-labelled-by');
 assert.equal(runtime.handleAttributeMutation({ target: metaAIReply, attributeName: 'aria-labelledby' }), metaAIConversation);
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
-assert.equal(metaAIReply.getAttribute('aria-labelledby').split(' ')[1], 'react-body-id');
+assert.equal(metaAIReply.getAttribute('aria-labelledby'), null);
 metaAIReply.setAttribute('aria-label', 'Replacement focus hint');
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), true);
-assert.equal(metaAIReply.hasAttribute('aria-label'), false);
+assert.equal(metaAIReply.getAttribute('aria-label'), 'Meta AI Meta AI official guide');
 metaAIReply.queryAllHandler = () => [];
 metaAIReply.queryHandler = () => null;
 assert.equal(runtime.applyMetaAIMessageName(metaAIReply), false);
@@ -5044,6 +5152,91 @@ assert.equal(document.activeElement, cachedMessage);
 runtime.setOpenChatsAtFirstUnread(false);
 runtime.setUnreadTarget(null);
 
+// An unread row can exist while WhatsApp has only rendered its empty wrapper.
+for (const mode of ['hydrate', 'timeout', 'cancel', 'chat-change', 'auto-hydrate', 'auto-timeout', 'cancel-final-scroll']) {
+    headerTitle.textContent = `Unread rendering ${mode}`;
+    runtime.reconcileUnreadTarget();
+    runtime.setUnreadTarget({ chatTitle: headerTitle.textContent, messageId: 'cached-id', scrollTop: 50 });
+    const origin = new Element();
+    origin.focus();
+    const originalRowQuery = cachedRow.queryHandler;
+    const originalScroll = cachedRow.scrollIntoView;
+    let scrollAttempts = 0;
+    if (mode === 'cancel-final-scroll') cachedRow.scrollIntoView = () => {
+        if (++scrollAttempts === 12) runtime.cancelPendingFocusRequests();
+    };
+    cachedRow.queryHandler = selector => selector === '[data-id]' || selector.includes('[data-testid^="conv-msg-"]')
+        ? cachedMessage : null;
+    runtime.clearStatusRegion();
+    if (mode.startsWith('auto-')) {
+        runtime.setOpenChatsAtFirstUnread(true);
+        runtime.handleShortcuts(makeEvent({ key: 'Enter', code: 'Enter', target: chatRowActivator }));
+        scheduledFrames.shift()();
+    } else runtime.jumpToUnreadShortcut();
+    assert.equal(document.activeElement, origin, `${mode}: empty wrapper never receives focus`);
+    assert.equal(runtime.findUnreadMessageTarget(latestMessageContainer), cachedRow,
+        `${mode}: unread target remains available while rendering`);
+    assert.equal(scheduledFrames.length, 1);
+    if (mode === 'cancel') runtime.cancelPendingFocusRequests();
+    if (mode === 'chat-change') headerTitle.textContent = 'Different conversation';
+    if (mode === 'hydrate' || mode === 'auto-hydrate') cachedRow.queryHandler = originalRowQuery;
+    const timersBeforeRetry = scheduledTimeouts.size;
+    drainScheduledFrames();
+    if (mode === 'hydrate' || mode === 'auto-hydrate') {
+        assert.equal(document.activeElement, cachedMessage);
+        assert.equal(runtime.findUnreadMessageTarget(latestMessageContainer), null,
+            'only rendered message focus consumes the target');
+    } else {
+        assert.equal(document.activeElement, origin, `${mode}: retries do not steal focus`);
+        if (mode === 'timeout') {
+            Array.from(scheduledTimeouts.values()).at(-1)();
+            assert.equal(liveRegion.textContent, 'Unread message is not ready');
+            assert.equal(runtime.findUnreadMessageTarget(latestMessageContainer), cachedRow);
+        }
+        if (mode === 'auto-timeout' || mode === 'cancel-final-scroll') {
+            assert.equal(scheduledTimeouts.size, timersBeforeRetry, `${mode}: no failure announcement is queued`);
+            assert.equal(runtime.findUnreadMessageTarget(latestMessageContainer), cachedRow);
+        }
+    }
+    cachedRow.queryHandler = originalRowQuery;
+    cachedRow.scrollIntoView = originalScroll;
+    runtime.clearStatusRegion();
+    runtime.setUnreadTarget(null);
+    runtime.setOpenChatsAtFirstUnread(false);
+}
+
+// Alt+3's fallback container must use the same identity rules as its caller.
+for (const fallbackMode of ['ready', 'hydrate', 'replaced']) {
+    headerTitle.textContent = `Fallback ${fallbackMode}`;
+    runtime.reconcileUnreadTarget();
+    const savedMainQuery = activeMain.queryHandler;
+    const savedRowQuery = cachedRow.queryHandler;
+    activeMain.queryHandler = selector => {
+        if (selector.includes('footer div[contenteditable="true"]')) return composer;
+        if (selector.includes('conversation-panel-messages')) return null;
+        if (selector === '[data-id="cached-id"]') return cachedMessage;
+        return savedMainQuery(selector);
+    };
+    if (fallbackMode !== 'ready') cachedRow.queryHandler = selector => selector === '[data-id]'
+        ? cachedMessage : null;
+    runtime.setUnreadTarget({ chatTitle: headerTitle.textContent, messageId: 'cached-id', scrollTop: 50 });
+    const before = new Element();
+    before.focus();
+    runtime.jumpToUnreadShortcut();
+    if (fallbackMode !== 'ready') {
+        assert.equal(document.activeElement, before);
+        assert.equal(scheduledFrames.length, 1);
+        cachedRow.queryHandler = savedRowQuery;
+        if (fallbackMode === 'replaced') activeMain.queryHandler = savedMainQuery;
+        drainScheduledFrames();
+    }
+    assert.equal(document.activeElement, fallbackMode === 'replaced' ? before : cachedMessage,
+        `fallback ${fallbackMode}: focus succeeds only while the same container is current`);
+    activeMain.queryHandler = savedMainQuery;
+    cachedRow.queryHandler = savedRowQuery;
+    runtime.setUnreadTarget(null);
+}
+
 const navButton = new Element();
 selectorResults.set(runtime.SELECTORS.navChats, navButton);
 event = makeEvent({ altKey: true, shiftKey: true, code: 'Digit1' });
@@ -5696,7 +5889,7 @@ assert.doesNotMatch(originalSource, /\(e\.ctrlKey && e\.altKey\)|toggleMessageIn
 assert.match(originalSource, /applyOwnedMessageRole\(viewport, ["']grid["']/);
 assert.match(originalSource, /applyOwnedMessageRole\(message, ["']gridcell["']/);
 assert.match(originalSource, /aria-labelledby["'],\s*ensureMessageGridLabel\(\)\.id/);
-assert.match(originalSource, /messages\d*\.every\(/);
+assert.match(originalSource, /rowCells\d*\.every\(/);
 assert.match(originalSource, /if \(e\.isComposing \|\| e\.defaultPrevented\) \{\s+lastTPressTime = 0;\s+return;/);
 assert.match(originalSource, /chatPulseSyncTimer = setTimeout[\s\S]*\}, 300\)/);
 assert.match(originalSource, /function isMetaAIReply/);

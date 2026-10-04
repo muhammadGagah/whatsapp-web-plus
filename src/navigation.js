@@ -1317,6 +1317,48 @@ export function findUnreadMessageTarget(messageContainer) {
   return null;
 }
 
+function focusUnreadMessageTarget(target, messageContainer, request, announceFailure = true) {
+  const chatContext = getCurrentChatContext();
+  const wrapper = target.matches?.('[data-id]') ? target : target.querySelector('[data-id]');
+  const messageId = wrapper?.getAttribute('data-id') || unreadTarget?.messageId || '';
+  const schedule = window.requestAnimationFrame || (callback => setTimeout(callback, 50));
+  // Scrolling may remove the divider. Keep the intended identity until a real
+  // message is focused, rather than consuming a focusable empty placeholder.
+  if (messageId) unreadTarget = {
+    chatTitle: getCurrentChatTitle(), chatContext, messageId,
+    scrollTop: unreadTarget?.scrollTop ?? messageContainer.scrollTop
+  };
+  const isCurrent = () => {
+    const main = document.querySelector(SELECTORS.main);
+    const currentContainer = main?.querySelector(SELECTORS.conversationMessages) || main;
+    return isFocusRequestCurrent(request) && !getActiveModal() &&
+      messageContainer.isConnected && getCurrentChatContext() === chatContext &&
+      currentContainer === messageContainer;
+  };
+  const tryFocus = attempt => {
+    if (!isCurrent()) return;
+    const currentWrapper = messageId ? findMessageById(messageContainer, messageId) : null;
+    const row = messageId ? currentWrapper?.closest('div[role="row"]') : target;
+    if (row?.isConnected) {
+      row.scrollIntoView({ block: 'center' });
+      const item = row.querySelector('.focusable-list-item');
+      if (isCurrent() && item && item.closest('div[role="row"]') === row && isRenderedElement(item) &&
+        (!messageId || (findMessageById(messageContainer, messageId) === currentWrapper &&
+          currentWrapper.contains(item))) &&
+        focusItem(item) && isCurrent() && item.isConnected && document.activeElement === item &&
+        item.closest('div[role="row"]') === row &&
+        (!messageId || (findMessageById(messageContainer, messageId) === currentWrapper && currentWrapper.contains(item)))) {
+        consumeUnreadTarget();
+        return;
+      }
+    }
+    if (!isCurrent()) return;
+    if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
+    else if (announceFailure) announce(t('unreadNotReady'));
+  };
+  tryFocus(1);
+}
+
 export function jumpToUnreadShortcut() {
   const request = beginFocusRequest();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
@@ -1346,13 +1388,7 @@ export function jumpToUnreadShortcut() {
       return;
     }
 
-    if (!focusItem(getBestInnerFocusElement(target))) {
-      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryJump(attempt + 1));
-      else announce(t('unreadNotReady'));
-      return;
-    }
-    target.scrollIntoView({ block: 'center' });
-    consumeUnreadTarget();
+    focusUnreadMessageTarget(target, messageContainer, request);
   };
 
   tryJump(1);
@@ -1647,10 +1683,7 @@ function scheduleFirstUnreadAfterChatOpen(target) {
       if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
       return;
     }
-    if (focusItem(getBestInnerFocusElement(unread))) {
-      unread.scrollIntoView({ block: 'center' });
-      consumeUnreadTarget();
-    }
+    focusUnreadMessageTarget(unread, messageContainer, request, false);
   };
   schedule(() => tryFocus(1));
 }

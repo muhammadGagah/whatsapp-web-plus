@@ -1,5 +1,5 @@
 import { SELECTORS } from './config.js';
-import { isChatMainActive } from './chat-accessibility.js';
+import { getVirtualizedMessageCell, isChatMainActive } from './chat-accessibility.js';
 import { isAnnouncementReductionEnabled } from './settings-state.js';
 
 const PASS = 'pass';
@@ -143,7 +143,11 @@ function getMessageGridChecks(main) {
   const cells = rows.map(row => row.querySelector?.('.focusable-list-item')).filter(Boolean);
   const gridValid = viewports.length === 1 &&
     rows.length > 0 &&
-    cells.length === rows.length &&
+    cells.length > 0 &&
+    rows.every(row => {
+      const cell = row.querySelector?.('.focusable-list-item') || getVirtualizedMessageCell(row);
+      return cell && getAttribute(cell, 'role') === 'gridcell';
+    }) &&
     getAttribute(viewport, 'role') === 'grid' &&
     getAttribute(viewport, 'aria-rowcount') === '-1' &&
     cells.every(cell => getAttribute(cell, 'role') === 'gridcell');

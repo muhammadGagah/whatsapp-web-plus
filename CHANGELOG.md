@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.6.91 - 2026-10-04
+
+### Accessibility fixes
+
+- Announce the highlighted @mention suggestion while focus remains in the message composer, including the all-members option. Avoid repeating unchanged suggestions and cancel queued announcements when their selection or focus is no longer current.
+- Wait for the intended unread message to render before moving focus or consuming its target, for both Alt+3 and automatic first-unread navigation. Preserve the target for retry when rendering fails.
+- Restore Alt+3 navigation when the conversation uses the fallback message container, while cancelling pending focus if that container changes.
+- Read complete Meta AI replies in the message reader and focused message name, including deeply nested streamed text, while excluding action controls.
+- Apply announcement reduction when a populated conversation appears after startup, without requiring the setting to be toggled off and on.
+- Preserve message-grid semantics for empty virtualized placeholders so announcement reduction remains active as messages load.
+
+### Voice messages
+
+- Apply the selected voice-message profile when recording through WhatsApp's updated microphone button, including clicks on its icon and screen-reader activation.
+- Leave echo cancellation, capture sample rate, and bit depth to WhatsApp and the browser. Adapt audio processing to the input sample rate with a browser-default fallback.
+- Reserve equalizer headroom before applying a 2 dB output boost to enhanced voice-message profiles. Natural applies gain without equalization. WhatsApp default and call profiles remain unchanged.
+
 ## 2.6.85 - 2026-09-25
 
 ### Fixed

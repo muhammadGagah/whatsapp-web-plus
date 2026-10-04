@@ -8,6 +8,7 @@ const VOICE_CAPTURE_ARM_MS = 5000;
 const CAPTURE_PROFILE = 'native-codec-aware-v2';
 const DEFAULT_AUDIO_PROFILE = 'clear';
 const DEFAULT_CALL_AUDIO_PROFILE = 'clear';
+const VOICE_OUTPUT_BOOST_DB = 2;
 const CALL_CAPTURE_DEFAULTS = Object.freeze({
   sampleRate: 16_000,
   channelCount: 1,
@@ -16,7 +17,9 @@ const CALL_CAPTURE_DEFAULTS = Object.freeze({
 const AUDIO_PROFILES = Object.freeze({
   natural: Object.freeze({
     id: 'natural',
-    processing: false
+    processing: true,
+    gainOnly: true,
+    outputGainDb: 0
   }),
   clear: Object.freeze({
     id: 'clear',
@@ -216,8 +219,12 @@ function consumeVoiceMessageCaptureArm() {
 }
 
 function isVoiceMessageButton(target) {
-  const button = target?.closest?.('button');
-  return Boolean(button?.querySelector?.('[data-icon="mic-outlined"], [data-testid="mic-outlined"]'));
+  const button = target?.closest?.('button, [role="button"]');
+  const footer = button?.closest?.('#main footer');
+  if (!footer || button.disabled || button.getAttribute('aria-disabled') === 'true' ||
+    !footer.querySelector('[contenteditable="true"][role="textbox"]')) return false;
+  return Boolean(button.querySelector('[data-icon="mic-outlined"], [data-testid="mic-outlined"]')) ||
+    Array.from(button.querySelectorAll('svg title')).some(title => title.textContent?.trim() === 'ic-mic');
 }
 
 function handleVoiceCaptureActivation(event) {
@@ -606,7 +613,7 @@ function installMediaRecorderDiagnosticsHook() {
   return prototype.start === patchedStart;
 }
 
-function buildAudioConstraints(constraints, strictSampleRate, profileName) {
+function buildAudioConstraints(constraints, profileName) {
   if (!constraints || constraints.audio === false || constraints.audio == null) return constraints;
   const originalAudio = constraints.audio === true ? {} : constraints.audio;
   if (!originalAudio || typeof originalAudio !== 'object') return constraints;
@@ -614,12 +621,9 @@ function buildAudioConstraints(constraints, strictSampleRate, profileName) {
   const supported = getSupportedConstraintsRaw();
   const inputProcessing = AUDIO_PROFILES[profileName]?.inputProcessing || {};
   const audio = { ...originalAudio };
-  if (supported.sampleRate) {
-    audio.sampleRate = strictSampleRate ? { exact: 48_000 } : { ideal: 48_000 };
-  }
-  if (supported.sampleSize) audio.sampleSize = { ideal: 16 };
+  // Preserve native capture requirements; unspecified sample rate/size belong to the browser.
   if (supported.channelCount) audio.channelCount = { ideal: 1 };
-  if (supported.echoCancellation) audio.echoCancellation = Boolean(inputProcessing.echoCancellation);
+  // Leave echo cancellation as requested by WhatsApp, or use the browser default when omitted.
   if (supported.noiseSuppression) audio.noiseSuppression = Boolean(inputProcessing.noiseSuppression);
   if (supported.autoGainControl) audio.autoGainControl = Boolean(inputProcessing.autoGainControl);
   if (supported.voiceIsolation) audio.voiceIsolation = Boolean(inputProcessing.voiceIsolation);
@@ -632,8 +636,7 @@ function buildConstraintAttempts(constraints, profileName) {
     return [{ mode: 'original', constraints }];
   }
   return [
-    { mode: 'raw-48k', constraints: buildAudioConstraints(constraints, true, profileName) },
-    { mode: 'raw-48k-best-effort', constraints: buildAudioConstraints(constraints, false, profileName) },
+    { mode: 'voice-profile', constraints: buildAudioConstraints(constraints, profileName) },
     { mode: 'original', constraints }
   ];
 }
@@ -702,7 +705,26 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
   let context = null;
   const nodes = [];
   try {
-    context = new AudioContextClass({ sampleRate: 48_000, latencyHint: 'interactive' });
+    const isVoiceMessage = profiles === AUDIO_PROFILES;
+    let inputSampleRate = null;
+    try {
+      const rate = inputStream.getAudioTracks?.()[0]?.getSettings?.().sampleRate;
+      if (Number.isFinite(rate) && rate >= 8000 && rate <= 96000) inputSampleRate = rate;
+    } catch { /* Track settings are optional; use the browser default when unavailable. */ }
+    let contextRateMode = isVoiceMessage ? 'browser-default' : 'call-48k';
+    const options = { latencyHint: 'interactive' };
+    if (!isVoiceMessage) options.sampleRate = 48_000;
+    else if (inputSampleRate) {
+      options.sampleRate = inputSampleRate;
+      contextRateMode = 'input-track';
+    }
+    try {
+      context = new AudioContextClass(options);
+    } catch (error) {
+      if (!isVoiceMessage || !inputSampleRate || error?.name !== 'NotSupportedError') throw error;
+      context = new AudioContextClass({ latencyHint: 'interactive' });
+      contextRateMode = 'browser-fallback';
+    }
     const source = context.createMediaStreamSource(inputStream);
     const mono = context.createGain();
     const highPass = context.createBiquadFilter();
@@ -719,19 +741,22 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     configureMonoNode(mono);
     configureMonoNode(destination);
 
-    highPass.type = 'highpass';
-    highPass.frequency.value = profile.highPassHz;
-    highPass.Q.value = profile.highPassQ;
+    if (!profile.gainOnly) {
+      highPass.type = 'highpass';
+      const filterHz = hz => isVoiceMessage ? Math.min(hz, context.sampleRate * 0.45) : hz;
+      highPass.frequency.value = filterHz(profile.highPassHz);
+      highPass.Q.value = profile.highPassQ;
 
-    lowMid.type = 'peaking';
-    lowMid.frequency.value = profile.lowMidHz;
-    lowMid.Q.value = profile.lowMidQ;
-    lowMid.gain.value = profile.lowMidGainDb;
+      lowMid.type = 'peaking';
+      lowMid.frequency.value = filterHz(profile.lowMidHz);
+      lowMid.Q.value = profile.lowMidQ;
+      lowMid.gain.value = profile.lowMidGainDb;
 
-    presence.type = 'peaking';
-    presence.frequency.value = profile.presenceHz;
-    presence.Q.value = profile.presenceQ;
-    presence.gain.value = profile.presenceGainDb;
+      presence.type = 'peaking';
+      presence.frequency.value = filterHz(profile.presenceHz);
+      presence.Q.value = profile.presenceQ;
+      presence.gain.value = profile.presenceGainDb;
+    }
 
     if (compressor) {
       compressor.threshold.value = profile.compressor.threshold;
@@ -741,14 +766,23 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       compressor.release.value = profile.compressor.release;
     }
 
-    output.gain.value = dbToGain(profile.outputGainDb);
+    // Retain the baseline EQ headroom, then apply the requested voice-only output boost.
+    // This reduces overload risk; it is not a brick-wall limiter for arbitrary transients.
+    const eqBoostDb = Math.max(0, profile.lowMidGainDb || 0) + Math.max(0, profile.presenceGainDb || 0);
+    const baseOutputGainDb = isVoiceMessage && !profile.gainOnly
+      ? Math.min(profile.outputGainDb, -eqBoostDb - 1) : profile.outputGainDb;
+    const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0);
+    output.gain.value = dbToGain(outputGainDb);
 
     source.connect(mono);
-    mono.connect(highPass);
-    highPass.connect(lowMid);
-    lowMid.connect(presence);
-    presence.connect(compressor || output);
-    if (compressor) compressor.connect(output);
+    if (profile.gainOnly) mono.connect(output);
+    else {
+      mono.connect(highPass);
+      highPass.connect(lowMid);
+      lowMid.connect(presence);
+      presence.connect(compressor || output);
+      if (compressor) compressor.connect(output);
+    }
     output.connect(destination);
 
     if (context.state === 'suspended' && typeof context.resume === 'function') {
@@ -825,16 +859,20 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     return {
       stream: processedStream,
       processing: {
-        mode: `${modePrefix}-${profileName}`,
+        mode: profile.gainOnly ? `${modePrefix}-gain-only` : `${modePrefix}-${profileName}`,
         active: true,
         contextSampleRate: context.sampleRate,
+        inputSampleRate,
+        contextRateMode,
         contextState: context.state,
-        highPassHz: profile.highPassHz,
-        lowMidHz: profile.lowMidHz,
+        highPassHz: profile.gainOnly ? null : highPass.frequency.value,
+        lowMidHz: profile.gainOnly ? null : lowMid.frequency.value,
         lowMidGainDb: profile.lowMidGainDb,
-        presenceHz: profile.presenceHz,
+        presenceHz: profile.gainOnly ? null : presence.frequency.value,
         presenceGainDb: profile.presenceGainDb,
-        outputGainDb: profile.outputGainDb,
+        outputGainDb,
+        outputBoostDb: isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0,
+        configuredOutputGainDb: profile.outputGainDb,
         compressor: compressor ? jsonSafe(profile.compressor) : null,
         inputTracks: (inputStream.getAudioTracks?.() || []).map(getTrackInfo),
         outputTracks: outputAudioTracks.map(getTrackInfo)
@@ -1082,7 +1120,7 @@ function getAudioExperimentStatus() {
     customEncoder: false,
     customTransport: false,
     compressor: Boolean(selectedProfile.compressor),
-    constraintStrategy: ['raw-48k', 'raw-48k-best-effort', 'original'],
+    constraintStrategy: ['voice-profile', 'original'],
     clearProfile: jsonSafe(AUDIO_PROFILES.clear),
     audioProfiles: jsonSafe(AUDIO_PROFILES),
     callCompressor: Boolean(selectedCallProfile.compressor),

@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2.6.85
+// @version      2.6.91
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -17,7 +17,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2.6.85",
+    scriptVersion: "2.6.91",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -35,7 +35,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2.6.85";
+  var SCRIPT_VERSION = "2.6.91";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -146,6 +146,7 @@
     chatSelectionRestore: "chat-selection-restore",
     messageGrid: "message-grid",
     messageCell: "message-cell",
+    messagePlaceholder: "message-placeholder",
     messageExpandedName: "message-expanded-name",
     messageMentionName: "message-mention-name",
     temporaryFocus: "temporary-focus",
@@ -457,7 +458,7 @@
     messageReaderLinkDestination: "destination: {destination}",
     audioProfiles: "Voice-message recording profile",
     audioProfileWhatsApp: "WhatsApp default (no processing)",
-    audioProfileNatural: "Natural (raw 48 kilohertz, no equalizer)",
+    audioProfileNatural: "Natural (no equalizer)",
     audioProfileClear: "Clear (balanced)",
     audioProfileClearPlus: "Clear Plus (stronger and more even)",
     audioProfileNoiseFilter: "Noise filter (noisy rooms)",
@@ -756,7 +757,7 @@
     messageReaderLinkDestination: "tujuan: {destination}",
     audioProfiles: "Profil perekaman pesan suara",
     audioProfileWhatsApp: "Bawaan WhatsApp (tanpa pemrosesan)",
-    audioProfileNatural: "Alami (mentah 48 kilohertz, tanpa ekualiser)",
+    audioProfileNatural: "Alami (tanpa ekualiser)",
     audioProfileClear: "Jernih (seimbang)",
     audioProfileClearPlus: "Jernih Plus (lebih kuat dan rata)",
     audioProfileNoiseFilter: "Peredam bising (ruangan berisik)",
@@ -2560,7 +2561,6 @@
   var announcementTimer = null;
   var userAnnouncementUntil = 0;
   var announcementGeneration = 0;
-  var metaAIMessageNameId = 0;
   var MESSAGE_LOG_LIMIT = 50;
   function getNextMessageRow(marker, messageContainer) {
     const viewport = marker.closest("[data-tab]") || messageContainer;
@@ -2730,28 +2730,30 @@
       (child) => child.matches("[data-tab]") && child.querySelector('div[role="row"]')
     ) || null;
   }
-  function isMetaAIReply(message) {
-    return hasDirectMetaAISender(message) && !!message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text');
+  function getMetaAIMessageTextRoot(message) {
+    if (!hasDirectMetaAISender(message)) return null;
+    const candidates = Array.from(message.querySelectorAll('[data-testid="msg-container"] .copyable-text.selectable-text')).filter((el) => el.closest(".focusable-list-item") === message && !el.closest('[data-testid="quoted-message"]') && !isExcludedPrimaryMessageNode(el, message));
+    const roots = candidates.filter((el) => !candidates.some((other) => other !== el && other.contains(el)));
+    return roots.length === 1 ? roots[0] : null;
   }
-  function getMetaAIMessageNameId(el) {
-    const existingId = el.getAttribute("id");
-    if (existingId) return existingId;
-    const id = `wa-plus-meta-ai-name-${++metaAIMessageNameId}`;
-    applyOwnedAttribute(el, "id", id, OWNERS.metaAIMessageName);
-    return id;
+  function isMetaAIReply(message) {
+    return !!getMetaAIMessageTextRoot(message);
   }
   function applyMetaAIMessageName(message) {
-    if (!isMetaAIReply(message)) {
+    const root = getMetaAIMessageTextRoot(message);
+    if (!root) {
       releaseOwnedWithin(message, OWNERS.metaAIMessageName);
       return false;
     }
-    const labelledElements = [
-      getDirectMetaAISender(message),
-      message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text'),
-      message.querySelector('[data-testid="msg-meta"]')
-    ].filter(Boolean);
-    applyOwnedAttribute(message, "aria-label", null, OWNERS.metaAIMessageName);
-    applyOwnedAttribute(message, "aria-labelledby", labelledElements.map(getMetaAIMessageNameId).join(" "), OWNERS.metaAIMessageName);
+    const sender = getDirectMetaAISender(message);
+    const metadata = message.querySelector('[data-testid="msg-meta"]');
+    const label = [
+      cleanString(sender.getAttribute("aria-label") || sender.textContent || "", "identity"),
+      collectReaderText(root, message, true),
+      metadata ? collectReaderText(metadata, message, true) : ""
+    ].filter(Boolean).join(" ");
+    applyOwnedAttribute(message, "aria-labelledby", null, OWNERS.metaAIMessageName);
+    applyOwnedAttribute(message, "aria-label", cleanString(label, false), OWNERS.metaAIMessageName);
     return true;
   }
   function applyOwnedMessageRole(el, role, owner) {
@@ -2874,6 +2876,8 @@
     pendingMessageExpansion = null;
   }
   function getPrimaryMessageTextRoot(messageItem) {
+    const metaAIRoot = getMetaAIMessageTextRoot(messageItem);
+    if (metaAIRoot) return metaAIRoot;
     const getOutermostCandidates = (selector) => {
       const candidates = Array.from(
         messageItem.querySelectorAll?.(selector) || []
@@ -3419,6 +3423,13 @@
     event.stopPropagation();
     return true;
   }
+  function getVirtualizedMessageCell(row) {
+    const placeholder = row.querySelector('[data-testid^="conv-msg-"][data-id] > [data-virtualized="true"]');
+    if (!placeholder) return null;
+    const cell = placeholder.parentElement;
+    if (cell?.parentElement !== row || row.children.length !== 1 || cell.children.length !== 1 || !cell.getAttribute("data-id")?.trim() || row.textContent?.trim() || cell.textContent?.trim() || [row, cell].some((el) => el.getAttribute("contenteditable") === "true") || cell.hasAttribute("tabindex") && cell.getAttribute("tabindex") !== "-1" || [row, cell, placeholder].some((el) => ["aria-label", "aria-labelledby", "title"].some((name) => el.hasAttribute(name))) || placeholder.matches('[role], [tabindex], [contenteditable="true"]') || placeholder.querySelector('img, svg, video, audio, button, input, select, textarea, a[href], [role], [contenteditable="true"], [tabindex], [aria-label], [aria-labelledby], [title]')) return null;
+    return cell;
+  }
   function applyMessageGridExperiment() {
     const main = document.querySelector(SELECTORS.main);
     const container = main && main.querySelector(SELECTORS.conversationMessages);
@@ -3426,12 +3437,16 @@
     const chatReady = !!viewport && isChatMainActive(main);
     const active = isAnnouncementReductionEnabled() && chatReady;
     const rows = active ? Array.from(viewport.querySelectorAll('div[role="row"]')) : [];
-    const messages2 = rows.map((row) => row.querySelector(".focusable-list-item"));
+    const rowCells = rows.map((row) => row.querySelector(".focusable-list-item"));
+    const placeholders = rows.map((row, index) => rowCells[index] ? null : getVirtualizedMessageCell(row));
+    const messages2 = rowCells.filter(Boolean);
     const metaAIReplies = new Set(messages2.filter(isMetaAIReply));
-    const completeGrid = active && rows.length > 0 && messages2.every(
-      (message, index) => message && message.closest('div[role="row"]') === rows[index] && canApplyOwnedMessageRole(message, "gridcell", OWNERS.messageCell)
-    ) && new Set(messages2).size === messages2.length && canApplyOwnedMessageRole(viewport, "grid", OWNERS.messageGrid);
+    const completeGrid = active && messages2.length > 0 && rowCells.every((message, index) => {
+      const cell = message || placeholders[index];
+      return cell && cell.closest('div[role="row"]') === rows[index] && canApplyOwnedMessageRole(cell, "gridcell", message ? OWNERS.messageCell : OWNERS.messagePlaceholder);
+    }) && new Set(messages2).size === messages2.length && canApplyOwnedMessageRole(viewport, "grid", OWNERS.messageGrid);
     const messageSet = new Set(messages2);
+    const placeholderSet = new Set(placeholders.filter(Boolean));
     const staleMetaAIMessageNames = /* @__PURE__ */ new Set();
     for (const el of [...ownedElements]) {
       const attributes = ownedAttributes.get(el);
@@ -3450,10 +3465,12 @@
     metaAIReplies.forEach(applyMetaAIMessageName);
     releaseMessageAttributes(OWNERS.messageGrid, (el) => completeGrid && el === viewport);
     releaseMessageAttributes(OWNERS.messageCell, (el) => completeGrid && messageSet.has(el));
+    releaseMessageAttributes(OWNERS.messagePlaceholder, (el) => completeGrid && placeholderSet.has(el));
     if (!completeGrid) return;
     if (!applyOwnedMessageRole(viewport, "grid", OWNERS.messageGrid)) {
       releaseMessageAttributes(OWNERS.messageGrid, () => false);
       releaseMessageAttributes(OWNERS.messageCell, () => false);
+      releaseMessageAttributes(OWNERS.messagePlaceholder, () => false);
       return;
     }
     applyOwnedAttribute(
@@ -3466,6 +3483,7 @@
     messages2.forEach((message) => {
       applyOwnedMessageRole(message, "gridcell", OWNERS.messageCell);
     });
+    placeholderSet.forEach((cell) => applyOwnedMessageRole(cell, "gridcell", OWNERS.messagePlaceholder));
     normalizeMessageGridTabStops(messages2);
   }
   function refreshMessageMentionNames(rootEl = document) {
@@ -3692,6 +3710,7 @@
     if (!isAnnouncementReductionEnabled()) {
       releaseMessageAttributes(OWNERS.messageGrid, () => false);
       releaseMessageAttributes(OWNERS.messageCell, () => false);
+      releaseMessageAttributes(OWNERS.messagePlaceholder, () => false);
       releaseMessageAttributes(OWNERS.metaAIMessageName, () => false);
       restoreChatRowNativeMasks(rootEl);
       restoreChatRowNativeMasksOutsideChatList();
@@ -3731,7 +3750,7 @@
       dirtyRoots.clear();
       let chatList = null;
       const messageDirty = roots.some(
-        (root) => root.matches?.(SELECTORS.conversationMessages) || root.closest?.(SELECTORS.conversationMessages)
+        (root) => root.matches?.(SELECTORS.conversationMessages) || root.closest?.(SELECTORS.conversationMessages) || root.querySelector?.(SELECTORS.conversationMessages)
       );
       const chatListDirty = roots.some(
         (root) => root.matches?.(SELECTORS.side) || root.closest?.(SELECTORS.chatListInSide) || root.querySelector?.(SELECTORS.chatList)
@@ -3746,7 +3765,8 @@
   }
   function getRoleFixRoot(el) {
     if (!el || !el.closest) return null;
-    return el.closest(SELECTORS.conversationMessages) || el.closest('div[role="row"]') || el.closest(SELECTORS.chatListInSide) || el.closest(`${SELECTORS.side}, ${SELECTORS.main}`);
+    return el.closest(SELECTORS.conversationMessages) || el.closest('div[role="row"]') || el.closest(SELECTORS.chatListInSide) || el.closest(`${SELECTORS.side}, ${SELECTORS.main}`) || // Startup may mount the entire chat inside a new outer wrapper.
+    (el.querySelector?.(`${SELECTORS.conversationMessages}, ${SELECTORS.chatListInSide}`) ? el : null);
   }
   function applyVisuallyHiddenStyle(el) {
     el.style.position = "absolute";
@@ -3827,13 +3847,14 @@
     announcementGeneration++;
     clearMessageLog();
   }
-  function announce(text) {
+  function announce(text, shouldAnnounce = () => true) {
     if (!text) return;
     userAnnouncementUntil = Date.now() + 3e3;
     const liveRegion = ensureLiveRegion();
     clearTimeout(announcementTimer);
     liveRegion.textContent = "";
     announcementTimer = setTimeout(() => {
+      if (!shouldAnnounce()) return;
       liveRegion.textContent = text;
       publishCompanionAnnouncement({
         source: "status",
@@ -4192,6 +4213,7 @@
   var CAPTURE_PROFILE = "native-codec-aware-v2";
   var DEFAULT_AUDIO_PROFILE = "clear";
   var DEFAULT_CALL_AUDIO_PROFILE = "clear";
+  var VOICE_OUTPUT_BOOST_DB = 2;
   var CALL_CAPTURE_DEFAULTS = Object.freeze({
     sampleRate: 16e3,
     channelCount: 1,
@@ -4200,7 +4222,9 @@
   var AUDIO_PROFILES = Object.freeze({
     natural: Object.freeze({
       id: "natural",
-      processing: false
+      processing: true,
+      gainOnly: true,
+      outputGainDb: 0
     }),
     clear: Object.freeze({
       id: "clear",
@@ -4382,8 +4406,10 @@
     return armed;
   }
   function isVoiceMessageButton(target) {
-    const button = target?.closest?.("button");
-    return Boolean(button?.querySelector?.('[data-icon="mic-outlined"], [data-testid="mic-outlined"]'));
+    const button = target?.closest?.('button, [role="button"]');
+    const footer = button?.closest?.("#main footer");
+    if (!footer || button.disabled || button.getAttribute("aria-disabled") === "true" || !footer.querySelector('[contenteditable="true"][role="textbox"]')) return false;
+    return Boolean(button.querySelector('[data-icon="mic-outlined"], [data-testid="mic-outlined"]')) || Array.from(button.querySelectorAll("svg title")).some((title) => title.textContent?.trim() === "ic-mic");
   }
   function handleVoiceCaptureActivation(event) {
     const nativeRecordingShortcut = event.type === "keydown" && event.code === "KeyR" && event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey;
@@ -4739,19 +4765,14 @@
     }
     return prototype.start === patchedStart;
   }
-  function buildAudioConstraints(constraints, strictSampleRate, profileName) {
+  function buildAudioConstraints(constraints, profileName) {
     if (!constraints || constraints.audio === false || constraints.audio == null) return constraints;
     const originalAudio = constraints.audio === true ? {} : constraints.audio;
     if (!originalAudio || typeof originalAudio !== "object") return constraints;
     const supported = getSupportedConstraintsRaw();
     const inputProcessing = AUDIO_PROFILES[profileName]?.inputProcessing || {};
     const audio = { ...originalAudio };
-    if (supported.sampleRate) {
-      audio.sampleRate = strictSampleRate ? { exact: 48e3 } : { ideal: 48e3 };
-    }
-    if (supported.sampleSize) audio.sampleSize = { ideal: 16 };
     if (supported.channelCount) audio.channelCount = { ideal: 1 };
-    if (supported.echoCancellation) audio.echoCancellation = Boolean(inputProcessing.echoCancellation);
     if (supported.noiseSuppression) audio.noiseSuppression = Boolean(inputProcessing.noiseSuppression);
     if (supported.autoGainControl) audio.autoGainControl = Boolean(inputProcessing.autoGainControl);
     if (supported.voiceIsolation) audio.voiceIsolation = Boolean(inputProcessing.voiceIsolation);
@@ -4762,8 +4783,7 @@
       return [{ mode: "original", constraints }];
     }
     return [
-      { mode: "raw-48k", constraints: buildAudioConstraints(constraints, true, profileName) },
-      { mode: "raw-48k-best-effort", constraints: buildAudioConstraints(constraints, false, profileName) },
+      { mode: "voice-profile", constraints: buildAudioConstraints(constraints, profileName) },
       { mode: "original", constraints }
     ];
   }
@@ -4823,7 +4843,27 @@
     let context = null;
     const nodes = [];
     try {
-      context = new AudioContextClass({ sampleRate: 48e3, latencyHint: "interactive" });
+      const isVoiceMessage = profiles === AUDIO_PROFILES;
+      let inputSampleRate = null;
+      try {
+        const rate = inputStream.getAudioTracks?.()[0]?.getSettings?.().sampleRate;
+        if (Number.isFinite(rate) && rate >= 8e3 && rate <= 96e3) inputSampleRate = rate;
+      } catch {
+      }
+      let contextRateMode = isVoiceMessage ? "browser-default" : "call-48k";
+      const options = { latencyHint: "interactive" };
+      if (!isVoiceMessage) options.sampleRate = 48e3;
+      else if (inputSampleRate) {
+        options.sampleRate = inputSampleRate;
+        contextRateMode = "input-track";
+      }
+      try {
+        context = new AudioContextClass(options);
+      } catch (error) {
+        if (!isVoiceMessage || !inputSampleRate || error?.name !== "NotSupportedError") throw error;
+        context = new AudioContextClass({ latencyHint: "interactive" });
+        contextRateMode = "browser-fallback";
+      }
       const source = context.createMediaStreamSource(inputStream);
       const mono = context.createGain();
       const highPass = context.createBiquadFilter();
@@ -4836,17 +4876,20 @@
       if (compressor) nodes.push(compressor);
       configureMonoNode(mono);
       configureMonoNode(destination);
-      highPass.type = "highpass";
-      highPass.frequency.value = profile.highPassHz;
-      highPass.Q.value = profile.highPassQ;
-      lowMid.type = "peaking";
-      lowMid.frequency.value = profile.lowMidHz;
-      lowMid.Q.value = profile.lowMidQ;
-      lowMid.gain.value = profile.lowMidGainDb;
-      presence.type = "peaking";
-      presence.frequency.value = profile.presenceHz;
-      presence.Q.value = profile.presenceQ;
-      presence.gain.value = profile.presenceGainDb;
+      if (!profile.gainOnly) {
+        highPass.type = "highpass";
+        const filterHz = (hz) => isVoiceMessage ? Math.min(hz, context.sampleRate * 0.45) : hz;
+        highPass.frequency.value = filterHz(profile.highPassHz);
+        highPass.Q.value = profile.highPassQ;
+        lowMid.type = "peaking";
+        lowMid.frequency.value = filterHz(profile.lowMidHz);
+        lowMid.Q.value = profile.lowMidQ;
+        lowMid.gain.value = profile.lowMidGainDb;
+        presence.type = "peaking";
+        presence.frequency.value = filterHz(profile.presenceHz);
+        presence.Q.value = profile.presenceQ;
+        presence.gain.value = profile.presenceGainDb;
+      }
       if (compressor) {
         compressor.threshold.value = profile.compressor.threshold;
         compressor.knee.value = profile.compressor.knee;
@@ -4854,13 +4897,19 @@
         compressor.attack.value = profile.compressor.attack;
         compressor.release.value = profile.compressor.release;
       }
-      output.gain.value = dbToGain(profile.outputGainDb);
+      const eqBoostDb = Math.max(0, profile.lowMidGainDb || 0) + Math.max(0, profile.presenceGainDb || 0);
+      const baseOutputGainDb = isVoiceMessage && !profile.gainOnly ? Math.min(profile.outputGainDb, -eqBoostDb - 1) : profile.outputGainDb;
+      const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0);
+      output.gain.value = dbToGain(outputGainDb);
       source.connect(mono);
-      mono.connect(highPass);
-      highPass.connect(lowMid);
-      lowMid.connect(presence);
-      presence.connect(compressor || output);
-      if (compressor) compressor.connect(output);
+      if (profile.gainOnly) mono.connect(output);
+      else {
+        mono.connect(highPass);
+        highPass.connect(lowMid);
+        lowMid.connect(presence);
+        presence.connect(compressor || output);
+        if (compressor) compressor.connect(output);
+      }
       output.connect(destination);
       if (context.state === "suspended" && typeof context.resume === "function") {
         let resumeTimer;
@@ -4948,16 +4997,20 @@
       return {
         stream: processedStream,
         processing: {
-          mode: `${modePrefix}-${profileName}`,
+          mode: profile.gainOnly ? `${modePrefix}-gain-only` : `${modePrefix}-${profileName}`,
           active: true,
           contextSampleRate: context.sampleRate,
+          inputSampleRate,
+          contextRateMode,
           contextState: context.state,
-          highPassHz: profile.highPassHz,
-          lowMidHz: profile.lowMidHz,
+          highPassHz: profile.gainOnly ? null : highPass.frequency.value,
+          lowMidHz: profile.gainOnly ? null : lowMid.frequency.value,
           lowMidGainDb: profile.lowMidGainDb,
-          presenceHz: profile.presenceHz,
+          presenceHz: profile.gainOnly ? null : presence.frequency.value,
           presenceGainDb: profile.presenceGainDb,
-          outputGainDb: profile.outputGainDb,
+          outputGainDb,
+          outputBoostDb: isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0,
+          configuredOutputGainDb: profile.outputGainDb,
           compressor: compressor ? jsonSafe(profile.compressor) : null,
           inputTracks: (inputStream.getAudioTracks?.() || []).map(getTrackInfo),
           outputTracks: outputAudioTracks.map(getTrackInfo)
@@ -5194,7 +5247,7 @@
       customEncoder: false,
       customTransport: false,
       compressor: Boolean(selectedProfile.compressor),
-      constraintStrategy: ["raw-48k", "raw-48k-best-effort", "original"],
+      constraintStrategy: ["voice-profile", "original"],
       clearProfile: jsonSafe(AUDIO_PROFILES.clear),
       audioProfiles: jsonSafe(AUDIO_PROFILES),
       callCompressor: Boolean(selectedCallProfile.compressor),
@@ -7691,6 +7744,40 @@
     }
     return null;
   }
+  function focusUnreadMessageTarget(target, messageContainer, request, announceFailure = true) {
+    const chatContext = getCurrentChatContext();
+    const wrapper = target.matches?.("[data-id]") ? target : target.querySelector("[data-id]");
+    const messageId = wrapper?.getAttribute("data-id") || unreadTarget?.messageId || "";
+    const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 50));
+    if (messageId) unreadTarget = {
+      chatTitle: getCurrentChatTitle(),
+      chatContext,
+      messageId,
+      scrollTop: unreadTarget?.scrollTop ?? messageContainer.scrollTop
+    };
+    const isCurrent = () => {
+      const main = document.querySelector(SELECTORS.main);
+      const currentContainer = main?.querySelector(SELECTORS.conversationMessages) || main;
+      return isFocusRequestCurrent(request) && !getActiveModal() && messageContainer.isConnected && getCurrentChatContext() === chatContext && currentContainer === messageContainer;
+    };
+    const tryFocus = (attempt) => {
+      if (!isCurrent()) return;
+      const currentWrapper = messageId ? findMessageById(messageContainer, messageId) : null;
+      const row = messageId ? currentWrapper?.closest('div[role="row"]') : target;
+      if (row?.isConnected) {
+        row.scrollIntoView({ block: "center" });
+        const item = row.querySelector(".focusable-list-item");
+        if (isCurrent() && item && item.closest('div[role="row"]') === row && isRenderedElement(item) && (!messageId || findMessageById(messageContainer, messageId) === currentWrapper && currentWrapper.contains(item)) && focusItem(item) && isCurrent() && item.isConnected && document.activeElement === item && item.closest('div[role="row"]') === row && (!messageId || findMessageById(messageContainer, messageId) === currentWrapper && currentWrapper.contains(item))) {
+          consumeUnreadTarget();
+          return;
+        }
+      }
+      if (!isCurrent()) return;
+      if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
+      else if (announceFailure) announce(t("unreadNotReady"));
+    };
+    tryFocus(1);
+  }
   function jumpToUnreadShortcut() {
     const request = beginFocusRequest();
     const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
@@ -7717,13 +7804,7 @@
         announce(t("unreadNotFound"));
         return;
       }
-      if (!focusItem(getBestInnerFocusElement(target))) {
-        if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryJump(attempt + 1));
-        else announce(t("unreadNotReady"));
-        return;
-      }
-      target.scrollIntoView({ block: "center" });
-      consumeUnreadTarget();
+      focusUnreadMessageTarget(target, messageContainer, request);
     };
     tryJump(1);
   }
@@ -7980,10 +8061,7 @@
         if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
         return;
       }
-      if (focusItem(getBestInnerFocusElement(unread))) {
-        unread.scrollIntoView({ block: "center" });
-        consumeUnreadTarget();
-      }
+      focusUnreadMessageTarget(unread, messageContainer, request, false);
     };
     schedule(() => tryFocus(1));
   }
@@ -9826,6 +9904,135 @@
     controller?.refresh();
   }
 
+  // src/mention-announcements.js
+  var ITEMS = '[data-testid="contact-mention-list-item"], [data-testid="mention-all-list-item"]';
+  var BUCKET = "#wa-popovers-bucket";
+  function createMentionAnnouncements(deps = {}) {
+    const doc = deps.document || document;
+    const win = deps.window || window;
+    const say = deps.announce || announce;
+    const visible = deps.isRenderedElement || isRenderedElement;
+    const modal = deps.getActiveModal || getActiveModal;
+    const privateMode = deps.isPrivacyModeEnabled || isPrivacyModeEnabled;
+    const mask = deps.maskPhoneNumbers || maskPhoneNumbers;
+    const later = deps.setTimeout || setTimeout;
+    const cancel = deps.clearTimeout || clearTimeout;
+    let timer = null;
+    let observer = null;
+    let started = false;
+    let previous = null;
+    function reset() {
+      previous = null;
+    }
+    function selected(row) {
+      const button = row.closest('button, [role="option"]');
+      return [row, button].some((el) => el?.getAttribute("aria-selected") === "true");
+    }
+    function painted(row) {
+      const color = win.getComputedStyle?.(row)?.backgroundColor;
+      return !!color && color !== "transparent" && !/^rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/.test(color);
+    }
+    function selection() {
+      const input = doc.querySelector(SELECTORS.messageInput);
+      if (doc.hidden || doc.hasFocus?.() === false || !input || !visible(input) || !input.contains(doc.activeElement) || modal()) {
+        return null;
+      }
+      const bucket = doc.querySelector(BUCKET);
+      const rows = Array.from(bucket?.querySelectorAll(ITEMS) || []).filter((row2) => {
+        const button = row2.closest('button, [role="option"]');
+        return visible(row2) && button && !button.disabled && button.getAttribute("aria-disabled") !== "true";
+      });
+      const semantic = rows.filter(selected);
+      const highlighted = semantic.length ? semantic : rows.filter(painted);
+      if (highlighted.length !== 1) return null;
+      const row = highlighted[0];
+      const primary = row.querySelector('[data-testid="mention-primary"]') || (row.getAttribute("data-testid") === "mention-all-list-item" ? row.querySelector("span:not([aria-hidden])") : null);
+      let name = primary?.textContent?.replace(/\s+/g, " ").trim();
+      if (!name) return null;
+      if (privateMode()) name = mask(name, row);
+      const nativeId = input.getAttribute("aria-activedescendant");
+      const native = nativeId && doc.getElementById(nativeId);
+      if (native && visible(native) && rows.some((item) => item === native || item.contains(native) || item.closest('button, [role="option"]') === native)) return null;
+      const popup = row.closest('button, [role="option"]').parentElement;
+      return { input, popup, row, name, index: rows.indexOf(row), label: input.getAttribute("aria-label") };
+    }
+    function refresh() {
+      const current2 = selection();
+      if (!current2) {
+        reset();
+        return;
+      }
+      const { input, popup, name, index, label } = current2;
+      if (previous?.input === input && previous.popup === popup && previous.index === index && previous.name === name && previous.label === label) return;
+      previous = current2;
+      say(name, () => {
+        if (!started) return false;
+        const latest = selection();
+        return !!latest && latest.input === input && latest.popup === popup && latest.index === index && latest.name === name && latest.label === label;
+      });
+    }
+    function schedule() {
+      if (!started || timer !== null) return;
+      timer = later(() => {
+        timer = null;
+        refresh();
+      }, 0);
+    }
+    function mutationsChanged(records) {
+      const input = doc.querySelector(SELECTORS.messageInput);
+      if (records.some((record) => {
+        const node = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        if (node?.closest?.(BUCKET) || node === input || input?.contains(node)) return true;
+        if (record.type !== "childList") return false;
+        return [...record.addedNodes, ...record.removedNodes].some((el) => el.nodeType === 1 && (el.matches?.(BUCKET) || el.querySelector?.(BUCKET) || previous && (el.contains(previous.input) || el.contains(previous.popup))));
+      })) schedule();
+    }
+    function start() {
+      if (started || !doc.body) return;
+      started = true;
+      for (const type of ["input", "keyup", "focusin", "focusout", "visibilitychange"]) doc.addEventListener(type, schedule, true);
+      win.addEventListener?.("blur", schedule);
+      win.addEventListener?.("focus", schedule);
+      const Observer = deps.MutationObserver || win.MutationObserver;
+      if (Observer) {
+        observer = new Observer(mutationsChanged);
+        observer.observe(doc.body, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: [
+            "class",
+            "style",
+            "hidden",
+            "aria-hidden",
+            "aria-selected",
+            "aria-activedescendant",
+            "aria-disabled"
+          ]
+        });
+      }
+      schedule();
+    }
+    function stop() {
+      started = false;
+      observer?.disconnect();
+      observer = null;
+      if (timer !== null) cancel(timer);
+      timer = null;
+      for (const type of ["input", "keyup", "focusin", "focusout", "visibilitychange"]) doc.removeEventListener(type, schedule, true);
+      win.removeEventListener?.("blur", schedule);
+      win.removeEventListener?.("focus", schedule);
+      reset();
+    }
+    return { start, stop, refresh };
+  }
+  var controller2;
+  function startMentionAnnouncements() {
+    if (!controller2) controller2 = createMentionAnnouncements();
+    controller2.start();
+  }
+
   // src/semantic-health.js
   var PASS = "pass";
   var FAIL = "fail";
@@ -9931,7 +10138,10 @@
     const viewport = viewports[0];
     const rows = Array.from(viewport.querySelectorAll?.('div[role="row"]') || []);
     const cells = rows.map((row) => row.querySelector?.(".focusable-list-item")).filter(Boolean);
-    const gridValid = viewports.length === 1 && rows.length > 0 && cells.length === rows.length && getAttribute(viewport, "role") === "grid" && getAttribute(viewport, "aria-rowcount") === "-1" && cells.every((cell) => getAttribute(cell, "role") === "gridcell");
+    const gridValid = viewports.length === 1 && rows.length > 0 && cells.length > 0 && rows.every((row) => {
+      const cell = row.querySelector?.(".focusable-list-item") || getVirtualizedMessageCell(row);
+      return cell && getAttribute(cell, "role") === "gridcell";
+    }) && getAttribute(viewport, "role") === "grid" && getAttribute(viewport, "aria-rowcount") === "-1" && cells.every((cell) => getAttribute(cell, "role") === "gridcell");
     const tabStops = cells.filter((cell) => getAttribute(cell, "tabindex") === "0");
     const tabStopValid = gridValid && tabStops.length === 1 && cells.every((cell) => ["0", "-1"].includes(getAttribute(cell, "tabindex")));
     return {
@@ -10097,7 +10307,7 @@
     if ((attrName === "aria-hidden" || attrName === "tabindex") && el.closest && el.closest(SELECTORS.chatListInSide)) {
       return getRoleFixRoot(el);
     }
-    if (attrName === "class" || attrName === "aria-pressed" || attrName === "aria-selected" || attrName === "data-navbar-item-selected") {
+    if (attrName === "data-testid" || attrName === "data-tab" || attrName === "data-virtualized" || attrName === "class" || attrName === "aria-pressed" || attrName === "aria-selected" || attrName === "data-navbar-item-selected") {
       return getRoleFixRoot(el);
     }
     return null;
@@ -10143,7 +10353,7 @@
             }
             recleanMessageAncestor(parent);
             maybeCaptureUnreadDivider(parent);
-            if (parent.closest?.(SELECTORS.chatListInSide)) scheduleRoleFix(getRoleFixRoot(parent));
+            if (parent.closest?.(SELECTORS.chatListInSide) || targetInConversation) scheduleRoleFix(getRoleFixRoot(parent));
           }
           scheduleCleanUiSync();
           continue;
@@ -10190,7 +10400,7 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ["aria-label", "aria-labelledby", "aria-live", "id", "data-id", "title", "role", "class", "tabindex", "hidden", "style", "disabled", "aria-disabled", "aria-hidden", "aria-pressed", "aria-selected", "aria-expanded", "src", "poster", "data-testid", "data-status-id", "data-media-id", "data-animate-status-viewer", "data-navbar-item-selected", "data-pre-plain-text", "data-plain-text", "data-app-text-template"]
+        attributeFilter: ["aria-label", "aria-labelledby", "aria-live", "id", "data-id", "title", "role", "class", "tabindex", "hidden", "style", "disabled", "aria-disabled", "aria-hidden", "aria-pressed", "aria-selected", "aria-expanded", "src", "poster", "data-testid", "data-tab", "data-virtualized", "data-status-id", "data-media-id", "data-animate-status-viewer", "data-navbar-item-selected", "data-pre-plain-text", "data-plain-text", "data-app-text-template"]
       });
       cleanElementAttributes(document.body);
       refreshUnreadChatTotal();
@@ -10205,6 +10415,7 @@
     try {
       ensureLiveRegion();
       startFormattingToolbar();
+      startMentionAnnouncements();
       startSettingsMenu();
       startCleanupObserver();
       updateStyleSheets();

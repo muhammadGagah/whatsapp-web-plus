@@ -114,6 +114,7 @@ export const OWNERS = Object.freeze({
   chatSelectionRestore: 'chat-selection-restore',
   messageGrid: 'message-grid',
   messageCell: 'message-cell',
+  messagePlaceholder: 'message-placeholder',
   messageExpandedName: 'message-expanded-name',
   messageMentionName: 'message-mention-name',
   temporaryFocus: 'temporary-focus',

@@ -149,7 +149,7 @@ export default {
   messageReaderLinkDestination: 'destination: {destination}',
   audioProfiles: 'Voice-message recording profile',
   audioProfileWhatsApp: 'WhatsApp default (no processing)',
-  audioProfileNatural: 'Natural (raw 48 kilohertz, no equalizer)',
+  audioProfileNatural: 'Natural (no equalizer)',
   audioProfileClear: 'Clear (balanced)',
   audioProfileClearPlus: 'Clear Plus (stronger and more even)',
   audioProfileNoiseFilter: 'Noise filter (noisy rooms)',

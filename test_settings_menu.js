@@ -397,7 +397,7 @@ assert.deepEqual(
     audioProfileItems.map(item => item.children[1].textContent),
     [
         'WhatsApp default (no processing)',
-        'Natural (raw 48 kilohertz, no equalizer)',
+        'Natural (no equalizer)',
         'Clear (balanced)',
         'Clear Plus (stronger and more even)',
         'Noise filter (noisy rooms)'

@@ -59,7 +59,6 @@ let lastFocusedMessageChatContext = '';
 let announcementTimer = null;
 let userAnnouncementUntil = 0;
 let announcementGeneration = 0;
-let metaAIMessageNameId = 0;
 const MESSAGE_LOG_LIMIT = 50;
 
 export function getNextMessageRow(marker, messageContainer) {
@@ -280,31 +279,37 @@ function getMessageGridViewport(container) {
   ) || null;
 }
 
-export function isMetaAIReply(message) {
-  return hasDirectMetaAISender(message) &&
-    !!message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text');
+function getMetaAIMessageTextRoot(message) {
+  if (!hasDirectMetaAISender(message)) return null;
+  const candidates = Array.from(message.querySelectorAll('[data-testid="msg-container"] .copyable-text.selectable-text'))
+    .filter(el => el.closest('.focusable-list-item') === message &&
+      !el.closest('[data-testid="quoted-message"]') &&
+      !isExcludedPrimaryMessageNode(el, message));
+  const roots = candidates.filter(el => !candidates.some(other => other !== el && other.contains(el)));
+  return roots.length === 1 ? roots[0] : null;
 }
 
-function getMetaAIMessageNameId(el) {
-  const existingId = el.getAttribute('id');
-  if (existingId) return existingId;
-  const id = `wa-plus-meta-ai-name-${++metaAIMessageNameId}`;
-  applyOwnedAttribute(el, 'id', id, OWNERS.metaAIMessageName);
-  return id;
+export function isMetaAIReply(message) {
+  return !!getMetaAIMessageTextRoot(message);
 }
 
 export function applyMetaAIMessageName(message) {
-  if (!isMetaAIReply(message)) {
+  const root = getMetaAIMessageTextRoot(message);
+  if (!root) {
     releaseOwnedWithin(message, OWNERS.metaAIMessageName);
     return false;
   }
-  const labelledElements = [
-    getDirectMetaAISender(message),
-    message.querySelector('[data-testid="msg-container"] .copyable-text.selectable-text'),
-    message.querySelector('[data-testid="msg-meta"]')
-  ].filter(Boolean);
-  applyOwnedAttribute(message, 'aria-label', null, OWNERS.metaAIMessageName);
-  applyOwnedAttribute(message, 'aria-labelledby', labelledElements.map(getMetaAIMessageNameId).join(' '), OWNERS.metaAIMessageName);
+  const sender = getDirectMetaAISender(message);
+  const metadata = message.querySelector('[data-testid="msg-meta"]');
+  const label = [
+    cleanString(sender.getAttribute('aria-label') || sender.textContent || '', 'identity'),
+    collectReaderText(root, message, true),
+    metadata ? collectReaderText(metadata, message, true) : ''
+  ].filter(Boolean).join(' ');
+  // Deep word-by-word markup can exceed Chromium's text-alternative traversal
+  // limit. Supply the complete filtered text without changing descendant controls.
+  applyOwnedAttribute(message, 'aria-labelledby', null, OWNERS.metaAIMessageName);
+  applyOwnedAttribute(message, 'aria-label', cleanString(label, false), OWNERS.metaAIMessageName);
   return true;
 }
 
@@ -480,6 +485,8 @@ function clearPendingMessageExpansion(request = pendingMessageExpansion) {
 }
 
 function getPrimaryMessageTextRoot(messageItem) {
+  const metaAIRoot = getMetaAIMessageTextRoot(messageItem);
+  if (metaAIRoot) return metaAIRoot;
   const getOutermostCandidates = selector => {
     const candidates = Array.from(
       messageItem.querySelectorAll?.(selector) || []
@@ -1155,6 +1162,20 @@ export function handleMessageGridKeydown(event) {
   return true;
 }
 
+export function getVirtualizedMessageCell(row) {
+  const placeholder = row.querySelector('[data-testid^="conv-msg-"][data-id] > [data-virtualized="true"]');
+  if (!placeholder) return null;
+  const cell = placeholder.parentElement;
+  if (cell?.parentElement !== row || row.children.length !== 1 || cell.children.length !== 1 ||
+    !cell.getAttribute('data-id')?.trim() || row.textContent?.trim() || cell.textContent?.trim() ||
+    [row, cell].some(el => el.getAttribute('contenteditable') === 'true') ||
+    (cell.hasAttribute('tabindex') && cell.getAttribute('tabindex') !== '-1') ||
+    [row, cell, placeholder].some(el => ['aria-label', 'aria-labelledby', 'title'].some(name => el.hasAttribute(name))) ||
+    placeholder.matches('[role], [tabindex], [contenteditable="true"]') ||
+    placeholder.querySelector('img, svg, video, audio, button, input, select, textarea, a[href], [role], [contenteditable="true"], [tabindex], [aria-label], [aria-labelledby], [title]')) return null;
+  return cell;
+}
+
 function applyMessageGridExperiment() {
   const main = document.querySelector(SELECTORS.main);
   const container = main && main.querySelector(SELECTORS.conversationMessages);
@@ -1162,15 +1183,19 @@ function applyMessageGridExperiment() {
   const chatReady = !!viewport && isChatMainActive(main);
   const active = isAnnouncementReductionEnabled() && chatReady;
   const rows = active ? Array.from(viewport.querySelectorAll('div[role="row"]')) : [];
-  const messages = rows.map(row => row.querySelector('.focusable-list-item'));
+  const rowCells = rows.map(row => row.querySelector('.focusable-list-item'));
+  // Virtualized rows reserve scroll space without rendering a message yet.
+  const placeholders = rows.map((row, index) => rowCells[index] ? null : getVirtualizedMessageCell(row));
+  const messages = rowCells.filter(Boolean);
   const metaAIReplies = new Set(messages.filter(isMetaAIReply));
-  const completeGrid = active && rows.length > 0 && messages.every((message, index) =>
-    message &&
-    message.closest('div[role="row"]') === rows[index] &&
-    canApplyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell)
-  ) && new Set(messages).size === messages.length &&
+  const completeGrid = active && messages.length > 0 && rowCells.every((message, index) => {
+    const cell = message || placeholders[index];
+    return cell && cell.closest('div[role="row"]') === rows[index] &&
+      canApplyOwnedMessageRole(cell, 'gridcell', message ? OWNERS.messageCell : OWNERS.messagePlaceholder);
+  }) && new Set(messages).size === messages.length &&
     canApplyOwnedMessageRole(viewport, 'grid', OWNERS.messageGrid);
   const messageSet = new Set(messages);
+  const placeholderSet = new Set(placeholders.filter(Boolean));
 
   const staleMetaAIMessageNames = new Set();
   for (const el of [...ownedElements]) {
@@ -1191,12 +1216,14 @@ function applyMessageGridExperiment() {
 
   releaseMessageAttributes(OWNERS.messageGrid, el => completeGrid && el === viewport);
   releaseMessageAttributes(OWNERS.messageCell, el => completeGrid && messageSet.has(el));
+  releaseMessageAttributes(OWNERS.messagePlaceholder, el => completeGrid && placeholderSet.has(el));
 
   if (!completeGrid) return;
 
   if (!applyOwnedMessageRole(viewport, 'grid', OWNERS.messageGrid)) {
     releaseMessageAttributes(OWNERS.messageGrid, () => false);
     releaseMessageAttributes(OWNERS.messageCell, () => false);
+    releaseMessageAttributes(OWNERS.messagePlaceholder, () => false);
     return;
   }
   applyOwnedAttribute(
@@ -1209,6 +1236,7 @@ function applyMessageGridExperiment() {
   messages.forEach(message => {
     applyOwnedMessageRole(message, 'gridcell', OWNERS.messageCell);
   });
+  placeholderSet.forEach(cell => applyOwnedMessageRole(cell, 'gridcell', OWNERS.messagePlaceholder));
   normalizeMessageGridTabStops(messages);
 }
 
@@ -1477,6 +1505,7 @@ export function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
   if (!isAnnouncementReductionEnabled()) {
     releaseMessageAttributes(OWNERS.messageGrid, () => false);
     releaseMessageAttributes(OWNERS.messageCell, () => false);
+    releaseMessageAttributes(OWNERS.messagePlaceholder, () => false);
     releaseMessageAttributes(OWNERS.metaAIMessageName, () => false);
     restoreChatRowNativeMasks(rootEl);
     restoreChatRowNativeMasksOutsideChatList();
@@ -1525,7 +1554,8 @@ export function scheduleRoleFix(rootEl) {
     let chatList = null;
     const messageDirty = roots.some(root =>
       root.matches?.(SELECTORS.conversationMessages) ||
-      root.closest?.(SELECTORS.conversationMessages)
+      root.closest?.(SELECTORS.conversationMessages) ||
+      root.querySelector?.(SELECTORS.conversationMessages)
     );
     const chatListDirty = roots.some(root =>
       root.matches?.(SELECTORS.side) ||
@@ -1546,7 +1576,9 @@ export function getRoleFixRoot(el) {
   return el.closest(SELECTORS.conversationMessages) ||
     el.closest('div[role="row"]') ||
     el.closest(SELECTORS.chatListInSide) ||
-    el.closest(`${SELECTORS.side}, ${SELECTORS.main}`);
+    el.closest(`${SELECTORS.side}, ${SELECTORS.main}`) ||
+    // Startup may mount the entire chat inside a new outer wrapper.
+    (el.querySelector?.(`${SELECTORS.conversationMessages}, ${SELECTORS.chatListInSide}`) ? el : null);
 }
 
 function applyVisuallyHiddenStyle(el) {
@@ -1635,13 +1667,14 @@ export function invalidatePassiveAnnouncements() {
   clearMessageLog();
 }
 
-export function announce(text) {
+export function announce(text, shouldAnnounce = () => true) {
   if (!text) return;
   userAnnouncementUntil = Date.now() + 3000;
   const liveRegion = ensureLiveRegion();
   clearTimeout(announcementTimer);
   liveRegion.textContent = '';
   announcementTimer = setTimeout(() => {
+    if (!shouldAnnounce()) return;
     liveRegion.textContent = text;
     publishCompanionAnnouncement({
       source: 'status',

@@ -61,6 +61,7 @@ import {
 } from './appearance.js';
 import { startSettingsMenu } from './settings-menu.js';
 import { startFormattingToolbar } from './formatting-toolbar.js';
+import { startMentionAnnouncements } from './mention-announcements.js';
 import {
   releaseStatusAccessibility,
   scheduleStatusAccessibilitySync,
@@ -191,7 +192,8 @@ function handleAttributeMutation(mutation) {
     return getRoleFixRoot(el);
   }
 
-  if (attrName === 'class' ||
+  if (attrName === 'data-testid' || attrName === 'data-tab' || attrName === 'data-virtualized' ||
+    attrName === 'class' ||
     attrName === 'aria-pressed' ||
     attrName === 'aria-selected' ||
     attrName === 'data-navbar-item-selected') {
@@ -266,7 +268,7 @@ function createCleanupObserver() {
           }
           recleanMessageAncestor(parent);
           maybeCaptureUnreadDivider(parent);
-          if (parent.closest?.(SELECTORS.chatListInSide)) scheduleRoleFix(getRoleFixRoot(parent));
+          if (parent.closest?.(SELECTORS.chatListInSide) || targetInConversation) scheduleRoleFix(getRoleFixRoot(parent));
         }
         scheduleCleanUiSync();
         continue;
@@ -321,7 +323,7 @@ function startCleanupObserver() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'aria-labelledby', 'aria-live', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'hidden', 'style', 'disabled', 'aria-disabled', 'aria-hidden', 'aria-pressed', 'aria-selected', 'aria-expanded', 'src', 'poster', 'data-testid', 'data-status-id', 'data-media-id', 'data-animate-status-viewer', 'data-navbar-item-selected', 'data-pre-plain-text', 'data-plain-text', 'data-app-text-template']
+      attributeFilter: ['aria-label', 'aria-labelledby', 'aria-live', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'hidden', 'style', 'disabled', 'aria-disabled', 'aria-hidden', 'aria-pressed', 'aria-selected', 'aria-expanded', 'src', 'poster', 'data-testid', 'data-tab', 'data-virtualized', 'data-status-id', 'data-media-id', 'data-animate-status-viewer', 'data-navbar-item-selected', 'data-pre-plain-text', 'data-plain-text', 'data-app-text-template']
     });
     cleanElementAttributes(document.body);
     refreshUnreadChatTotal();
@@ -338,6 +340,7 @@ onDomReady(function() {
   try {
     ensureLiveRegion();
     startFormattingToolbar();
+    startMentionAnnouncements();
     startSettingsMenu();
     startCleanupObserver();
     updateStyleSheets();

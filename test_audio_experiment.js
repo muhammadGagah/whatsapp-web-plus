@@ -8,7 +8,9 @@ const vm = require('node:vm');
 const store = new Map();
 const eventReports = [];
 let capturedConstraints = null;
-let rejectStrictOnce = false;
+let trackSampleRate = 48000;
+let rejectedContextRate = null;
+let failTrackSettings = false;
 let rejectWithErrorOnce = null;
 let blockProcessedStopOverride = false;
 let originalStopCount = 0;
@@ -26,8 +28,9 @@ class FakeTrack extends EventTarget {
     if (this.id === 'track-1') originalStopCount += 1;
   }
   getSettings() {
+    if (failTrackSettings) throw new Error("settings unavailable");
     return {
-      sampleRate: 48000, sampleSize: 16,
+      sampleRate: trackSampleRate, sampleSize: 16,
       channelCount: this.id === 'processed-track' ? 1 : 2,
       echoCancellation: false, noiseSuppression: false,
       autoGainControl: false, voiceIsolation: false
@@ -81,8 +84,9 @@ class FakeCompressorNode extends FakeNode {
 
 class FakeAudioContext {
   constructor(options = {}) {
+    if (options.sampleRate && options.sampleRate === rejectedContextRate) throw Object.assign(new Error("rate unsupported"), { name: "NotSupportedError" });
     this.options = options;
-    this.sampleRate = options.sampleRate;
+    this.sampleRate = options.sampleRate ?? 44100;
     this.state = 'running';
     FakeAudioContext.instances.push(this);
   }
@@ -125,12 +129,6 @@ const mediaDevices = {
     if (rejectWithErrorOnce) {
       const error = rejectWithErrorOnce;
       rejectWithErrorOnce = null;
-      throw error;
-    }
-    if (rejectStrictOnce && constraints?.audio?.sampleRate?.exact === 48000) {
-      rejectStrictOnce = false;
-      const error = new Error('strict sample rate rejected');
-      error.name = 'OverconstrainedError';
       throw error;
     }
     return nativeStream;
@@ -266,10 +264,10 @@ windowTarget.addEventListener('keydown', event => {
   assert.notEqual(processed, nativeStream);
   assert.equal(processed.getAudioTracks()[0].id, 'processed-track');
   assert.deepEqual(plain(capturedConstraints.audio.deviceId), { exact: 'mic-1' });
-  assert.deepEqual(plain(capturedConstraints.audio.sampleRate), { exact: 48000 });
-  assert.deepEqual(plain(capturedConstraints.audio.sampleSize), { ideal: 16 });
+  assert.equal(capturedConstraints.audio.sampleRate, undefined);
+  assert.equal(capturedConstraints.audio.sampleSize, undefined);
   assert.deepEqual(plain(capturedConstraints.audio.channelCount), { ideal: 1 });
-  assert.equal(capturedConstraints.audio.echoCancellation, false);
+  assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
   assert.equal(capturedConstraints.audio.noiseSuppression, false);
   assert.equal(capturedConstraints.audio.autoGainControl, false);
   assert.equal(capturedConstraints.audio.voiceIsolation, false);
@@ -281,7 +279,7 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(clearReport.processing.highPassHz, 45);
   assert.equal(clearReport.processing.lowMidGainDb, -0.5);
   assert.equal(clearReport.processing.presenceGainDb, 1.2);
-  assert.equal(clearReport.processing.outputGainDb, -1.5);
+  assert.ok(Math.abs(clearReport.processing.outputGainDb - (-0.2)) < 1e-9);
 
   const captureAfterClear = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(captureAfterClear, nativeStream);
@@ -324,11 +322,53 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(originalStopCount, 1);
   assert.equal(FakeAudioContext.instances.at(-1).state, 'closed');
 
+  // Actual capture is requested by WhatsApp's click handler after our capture listener.
+  let clickCapturePromise;
+  const onRecordClick = () => {
+    clickCapturePromise = mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: 'user-mic' }, sampleRate: 32000, sampleSize: 24 }
+    });
+  };
+  windowTarget.addEventListener('click', onRecordClick);
+  for (const variant of ['modern-button', 'modern-svg', 'legacy', 'role-button', 'disabled', 'aria-disabled', 'outside', 'no-composer', 'other-icon']) {
+    const footer = { querySelector: () => variant === 'no-composer' ? null : {} };
+    const button = {
+      disabled: variant === 'disabled',
+      closest: selector => selector === '#main footer' && variant !== 'outside' ? footer : null,
+      getAttribute: name => name === 'aria-disabled' && variant === 'aria-disabled' ? 'true' : null,
+      querySelector: () => variant === 'legacy' ? {} : null,
+      querySelectorAll: () => [{ textContent: variant === 'other-icon' ? 'ic-send' : 'ic-mic' }]
+    };
+    const target = variant === 'modern-svg' ? {} : button;
+    target.closest = selector => selector === 'button, [role="button"]' ? button
+      : selector === '#main footer' && variant !== 'outside' ? footer : null;
+    const click = new Event('click', { cancelable: true });
+    Object.defineProperty(click, 'target', { value: target });
+    windowTarget.dispatchEvent(click);
+    const stream = await clickCapturePromise;
+    const shouldProcess = ['modern-button', 'modern-svg', 'legacy', 'role-button'].includes(variant);
+    assert.equal(stream !== nativeStream, shouldProcess, `${variant}: choose voice profile only for composer microphone`);
+    assert.equal(click.defaultPrevented, false, 'native activation is not intercepted');
+    assert.deepEqual(plain(capturedConstraints.audio.sampleRate), 32000);
+    assert.deepEqual(plain(capturedConstraints.audio.sampleSize), 24);
+    assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
+    assert.deepEqual(plain(capturedConstraints.audio.deviceId), { exact: 'user-mic' });
+    if (shouldProcess) stream.getAudioTracks()[0].stop();
+    assert.equal(await mediaDevices.getUserMedia({ audio: true }), nativeStream,
+      'one activation must not leak a voice profile into the next unrelated capture');
+  }
+  windowTarget.removeEventListener('click', onRecordClick);
+
   assert.equal(api.setProfile('natural'), true);
   assert.equal(api.armNextCapture(), true);
   const natural = await mediaDevices.getUserMedia({ audio: true });
-  assert.equal(natural, nativeStream);
-  assert.equal(api.getLastReport().processing.mode, 'natural');
+  assert.notEqual(natural, nativeStream);
+  assert.equal(api.getLastReport().processing.mode, 'codec-aware-gain-only');
+  assert.equal(api.getLastReport().processing.outputGainDb, 2);
+  const naturalGraph = FakeAudioContext.instances.at(-1);
+  assert.equal(naturalGraph.filters.every(node => !node.next), true, 'Natural gain must bypass EQ');
+  assert.ok(Math.abs(naturalGraph.lastGain.gain.value - Math.pow(10, 2 / 20)) < 1e-9);
+  natural.getAudioTracks()[0].stop();
   assert.equal(api.setProfile('invalid'), false);
 
   assert.equal(api.selectProfile('clear-plus'), true);
@@ -351,7 +391,7 @@ windowTarget.addEventListener('keydown', event => {
   const noiseFiltered = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(capturedConstraints.audio.noiseSuppression, true);
   assert.equal(capturedConstraints.audio.voiceIsolation, true);
-  assert.equal(capturedConstraints.audio.echoCancellation, false);
+  assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
   assert.equal(capturedConstraints.audio.autoGainControl, false);
   assert.equal(api.getLastReport().processing.mode, 'codec-aware-noise-filter');
   noiseFiltered.getAudioTracks()[0].stop();
@@ -361,14 +401,77 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(api.armNextCapture(), false);
   assert.equal(api.selectProfile('clear'), true);
   assert.equal(api.isEnabled(), true);
+  // Echo cancellation follows WhatsApp while voice isolation and other processing flags retain their policy.
+  for (const profile of ['natural', 'clear', 'clear-plus', 'noise-filter']) {
+    api.selectProfile(profile);
+    for (const echo of [undefined, true, false, { exact: true }, { ideal: false }]) {
+      const audio = { deviceId: { exact: 'test-mic' } };
+      if (echo !== undefined) audio.echoCancellation = echo;
+      const request = { audio };
+      const original = JSON.stringify(request);
+      api.armNextCapture();
+      const stream = await mediaDevices.getUserMedia(request);
+      const expectedGainDb = { natural: 2, clear: -0.2, 'clear-plus': -0.2, 'noise-filter': -1 }[profile];
+      assert.ok(Math.abs(api.getLastReport().processing.outputGainDb - expectedGainDb) < 1e-9);
+      assert.equal(api.getLastReport().processing.outputBoostDb, 2);
+      assert.equal(JSON.stringify(capturedConstraints.audio.echoCancellation), JSON.stringify(echo));
+      assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), echo !== undefined);
+      assert.equal(capturedConstraints.audio.sampleRate, undefined);
+      assert.equal(capturedConstraints.audio.sampleSize, undefined);
+      assert.equal(capturedConstraints.audio.voiceIsolation, profile === 'noise-filter');
+      assert.equal(capturedConstraints.audio.autoGainControl, false);
+      assert.equal(capturedConstraints.audio.noiseSuppression, profile === 'noise-filter');
+      assert.equal(JSON.stringify(request), original);
+      if (stream !== nativeStream) stream.getAudioTracks()[0].stop();
+    }
+  }
+  api.selectProfile('clear');
+  for (const rate of [44100, 48000, 16000, 96000, undefined, NaN, 4000]) {
+    trackSampleRate = rate;
+    api.armNextCapture();
+    const input = { audio: { sampleRate: { ideal: 44100 }, sampleSize: { ideal: 24 }, echoCancellation: true } };
+    const untouched = JSON.stringify(input);
+    const stream = await mediaDevices.getUserMedia(input);
+    const expectedRate = Number.isFinite(rate) && rate >= 8000 ? rate : 44100;
+    assert.equal(FakeAudioContext.instances.at(-1).sampleRate, expectedRate);
+    assert.equal(api.getLastReport().processing.contextRateMode, Number.isFinite(rate) && rate >= 8000 ? 'input-track' : 'browser-default');
+    assert.deepEqual(plain(capturedConstraints.audio.sampleRate), { ideal: 44100 });
+    assert.deepEqual(plain(capturedConstraints.audio.sampleSize), { ideal: 24 });
+    assert.equal(capturedConstraints.audio.echoCancellation, true);
+    assert.equal(JSON.stringify(input), untouched);
+    stream.getAudioTracks()[0].stop();
+  }
+  trackSampleRate = 32000;
+  rejectedContextRate = 32000;
+  api.armNextCapture();
+  const defaultRateStream = await mediaDevices.getUserMedia({ audio: true });
+  assert.equal(api.getLastReport().processing.contextRateMode, 'browser-fallback');
+  assert.equal(api.getLastReport().processing.contextSampleRate, 44100);
+  defaultRateStream.getAudioTracks()[0].stop();
+  rejectedContextRate = null;
+  failTrackSettings = true;
+  api.armNextCapture();
+  const missingSettingsStream = await mediaDevices.getUserMedia({ audio: true });
+  assert.equal(api.getLastReport().processing.contextRateMode, 'browser-default');
+  missingSettingsStream.getAudioTracks()[0].stop();
+  failTrackSettings = false;
+  trackSampleRate = 16000;
+  api.selectProfile('clear-plus');
+  api.armNextCapture();
+  const lowRateStream = await mediaDevices.getUserMedia({ audio: true });
+  assert.equal(api.getLastReport().processing.presenceHz, 7200);
+  assert.ok(Math.abs(api.getLastReport().processing.outputGainDb - (-0.2)) < 1e-9);
+  lowRateStream.getAudioTracks()[0].stop();
+  trackSampleRate = 48000;
+  api.selectProfile('clear');
   const before = calls.length;
-  rejectStrictOnce = true;
+  rejectWithErrorOnce = Object.assign(new Error("constraint rejected"), { name: "OverconstrainedError" });
   assert.equal(api.armNextCapture(), true);
   await mediaDevices.getUserMedia({ audio: { deviceId: { exact: 'mic-2' } } });
   assert.equal(calls.length, before + 2);
-  assert.deepEqual(plain(capturedConstraints.audio.sampleRate), { ideal: 48000 });
+  assert.deepEqual(plain(capturedConstraints), { audio: { deviceId: { exact: "mic-2" } } });
   assert.equal(api.getReports().some(item => item.kind === 'getUserMedia-constraint-retry'), true);
-  assert.equal(api.getReports().some(item => item.kind === 'getUserMedia' && item.constraintMode === 'raw-48k-best-effort'), true);
+  assert.equal(api.getReports().some(item => item.kind === 'getUserMedia' && item.constraintMode === 'original'), true);
   assert.equal(eventReports.length > 0, true);
 
   const permissionCalls = calls.length;

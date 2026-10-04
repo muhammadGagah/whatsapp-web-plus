@@ -149,7 +149,7 @@ export default {
   messageReaderLinkDestination: 'tujuan: {destination}',
   audioProfiles: 'Profil perekaman pesan suara',
   audioProfileWhatsApp: 'Bawaan WhatsApp (tanpa pemrosesan)',
-  audioProfileNatural: 'Alami (mentah 48 kilohertz, tanpa ekualiser)',
+  audioProfileNatural: 'Alami (tanpa ekualiser)',
   audioProfileClear: 'Jernih (seimbang)',
   audioProfileClearPlus: 'Jernih Plus (lebih kuat dan rata)',
   audioProfileNoiseFilter: 'Peredam bising (ruangan berisik)',

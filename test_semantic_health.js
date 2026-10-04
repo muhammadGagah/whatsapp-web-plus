@@ -2,7 +2,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const moduleSource = `${fs.readFileSync('src/semantic-health.js', 'utf8')
+const placeholderSource = fs.readFileSync('src/chat-accessibility.js', 'utf8')
+  .match(/export function getVirtualizedMessageCell\(row\) \{[\s\S]*?\n\}/)[0].replace(/^export /, '');
+const moduleSource = `${placeholderSource}\n${fs.readFileSync('src/semantic-health.js', 'utf8')
   .replace(/^import .*$/gm, '')
   .replace(/^export\s+/gm, '')}
 globalThis.__semanticHealthTestApi = { getSemanticHealth };`;
@@ -25,6 +27,7 @@ class Element {
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   removeAttribute(name) { this.attributes.delete(name); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
+  hasAttribute(name) { return this.attributes.has(name); }
   append(...nodes) {
     nodes.forEach(node => {
       node.parentElement = this;
@@ -33,6 +36,11 @@ class Element {
   }
   focus() { this.focusCalls += 1; }
   matches(selector) {
+    if (selector === '[data-testid^="conv-msg-"][data-id] > [data-virtualized="true"]') {
+      return this.getAttribute('data-virtualized') === 'true' &&
+        this.parentElement?.getAttribute('data-testid')?.startsWith('conv-msg-') &&
+        this.parentElement.hasAttribute('data-id');
+    }
     if (selector === '[data-tab]') return this.attributes.has('data-tab');
     if (selector === 'div[role="row"]') {
       return this.tagName === 'DIV' && this.getAttribute('role') === 'row';
@@ -191,6 +199,22 @@ assert.equal(duplicateTabStop.checks.messageGridFocusTarget, 'fail');
 assert.equal(duplicateTabStop.errorCode, 'semantic.messageGridTabStop');
 
 const structurallyBrokenChat = makeChat();
+const virtualChat = makeChat();
+const virtualRow = new Element('div', { role: 'row', tabindex: '-1' });
+const virtualCell = new Element('div', { 'data-testid': 'conv-msg-placeholder', 'data-id': 'placeholder', role: 'gridcell', tabindex: '-1' });
+const virtualBody = new Element('div', { 'data-virtualized': 'true' });
+virtualCell.append(virtualBody);
+virtualRow.append(virtualCell);
+virtualChat.viewport.append(virtualRow);
+assert.equal(runScenario({ chat: virtualChat }).overall, 'pass', 'virtualized history retains healthy message semantics');
+virtualCell.setAttribute('tabindex', '0');
+assert.equal(runScenario({ chat: virtualChat }).checks.messageGrid, 'fail', 'focusable placeholders are not accepted');
+virtualCell.setAttribute('tabindex', '-1');
+virtualCell.textContent = 'A real message is loading';
+assert.equal(runScenario({ chat: virtualChat }).checks.messageGrid, 'fail', 'partially rendered content requires a real message cell');
+virtualCell.textContent = '';
+virtualCell.removeAttribute('role');
+assert.equal(runScenario({ chat: virtualChat }).checks.messageGrid, 'fail', 'placeholder rows still require gridcell semantics');
 structurallyBrokenChat.viewport.removeAttribute('data-tab');
 const brokenGrid = runScenario({ chat: structurallyBrokenChat });
 assert.equal(brokenGrid.checks.messageGrid, 'fail');
