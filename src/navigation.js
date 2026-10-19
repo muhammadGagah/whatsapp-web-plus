@@ -11,6 +11,7 @@ import {
 import { armNextVoiceMessageCapture } from './audio-experiment.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
 import { handleMessageReaderShortcut } from './message-reader.js';
+import { handleReadStickerShortcut } from './read-sticker.js';
 import {
   appendSenderDevice,
   cleanString,
@@ -307,10 +308,11 @@ function schedulePassiveAnnouncements() {
     const ready = passiveAnnouncements.filter(entry =>
       entry.generation === generation &&
       ((entry.source === 'pulse' && isAutomaticReadingEnabled()) ||
-      (entry.source === 'activity' && isStatusTracking)));
+      (entry.source === 'activity' && isStatusTracking) ||
+      (entry.source === 'download' && entry.isCurrent())));
     passiveAnnouncements = [];
     if (generation !== passiveAnnouncementGeneration) return;
-    announcePassiveMessages(ready.map(entry => entry.text), generation);
+    announcePassiveMessages(ready.map(entry => entry.getText ? entry.getText() : entry.text), generation);
   }, delay);
 }
 
@@ -327,6 +329,14 @@ export function queuePassiveAnnouncements(source, announcements) {
   if (passiveAnnouncements.length > 50) {
     passiveAnnouncements = passiveAnnouncements.slice(-50);
   }
+  schedulePassiveAnnouncements();
+}
+
+export function queueDownloadAnnouncement(key, getText, isCurrent) {
+  passiveAnnouncements = passiveAnnouncements.filter(entry => entry.source !== 'download' || entry.key !== key);
+  passiveAnnouncements.push({ source: 'download', key, getText, isCurrent,
+    generation: passiveAnnouncementGeneration });
+  if (passiveAnnouncements.length > 50) passiveAnnouncements = passiveAnnouncements.slice(-50);
   schedulePassiveAnnouncements();
 }
 
@@ -1550,6 +1560,7 @@ function remapWhatsAppShortcut(e) {
     matchesShortcutBinding(e, getShortcutBinding(name)));
   if (actions.length !== 1) return false;
   const action = actions[0];
+  if (action === 'read-sticker') return handleReadStickerShortcut(e);
   if (action === 'voice-call' || action === 'video-call') {
     const main = document.querySelector(SELECTORS.main);
     if (!isChatMainActive(main)) return false;

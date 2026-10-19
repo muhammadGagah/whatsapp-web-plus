@@ -1,19 +1,22 @@
 # WhatsApp Web Plus
 
-WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It adds keyboard navigation, clearer announcements, and useful shortcuts. You do not need to write or edit code.
+WhatsApp Web Plus makes WhatsApp Web easier to use with a screen reader. It adds keyboard navigation, clearer announcements, and useful shortcuts.
 
 ## Which version should I use?
 
-- **Browser:** use WhatsApp Web Plus with Tampermonkey in Chrome or Edge.
-- **Microsoft Store app:** use [WhatsApp Companion for NVDA](https://github.com/muhammadGagah/whatsapp-web-plus-companion).
+**Browser:** use WhatsApp Web Plus with Tampermonkey in Chrome or Edge.
+
+**Microsoft Store app:** use [WhatsApp Companion for NVDA](https://github.com/muhammadGagah/whatsapp-web-plus-companion).
 
 You can use both if you use WhatsApp in both places. Each installation is updated separately.
 
 ## What you need
 
-- Google Chrome or Microsoft Edge
-- A screen reader such as NVDA
-- A WhatsApp account
+Google Chrome or Microsoft Edge
+
+A screen reader such as NVDA
+
+A WhatsApp account
 
 This guide focuses on Windows with NVDA. Other browsers and screen readers may use different commands.
 
@@ -78,9 +81,65 @@ Use the arrow keys to move, `Enter` to open a submenu, `Enter` or `Space` to cha
 
 For more options, read the [full keyboard shortcut list](docs/detailed-guide.md#keyboard-shortcuts) and [settings guide](docs/detailed-guide.md#settings-menu). These include navigation, appearance, privacy, voice recording, voice calls, and custom languages.
 
+### Reading messages
+
+For a long message with **Read more**, focus the message in WhatsApp and press `Shift+Enter` to expand it. NVDA can then read the expanded text in Focus Mode, including the sender and time. To open a message in the message reader, focus it and press `Alt+Shift+C`.
+
+Photo album captions are read with the message details. You will hear **Caption:** before the text, or **Keterangan:** when using Indonesian. This works automatically.
+
+Press `Alt+1` to return to the remembered chat in the chat list, then use the arrows to continue navigating. When Escape closes a private chat, group, channel, or community announcement chat, you will hear **Chat is now closed**. Closing a menu alone does not trigger that announcement.
+
+### Keeping message menus open
+
+**Keep message menus within the window** helps when a message menu closes as soon as it opens in a small browser window. It keeps the menu inside the available space and allows longer menus to scroll. The setting is on by default. You can change it under **Shift+F8 > Accessibility**.
+
+### Following a file download
+
+When WhatsApp shows progress for a document download, the script announces the percentage as it changes. Announcements are spaced out so they do not interrupt constantly. Downloads use numbered labels instead of reading filenames aloud.
+
+A 100 percent announcement refers to WhatsApp's transfer indicator. It does not confirm that the browser has saved the file. Your focus stays where it is.
+
+### Reading stickers with AI
+
+Read Sticker asks an AI provider to describe the sticker you choose. It is off by default and has no assigned shortcut. Providers appear in this order: Gemini, Groq, Cloudflare Workers AI, and Custom, OpenAI-compatible.
+
+1. Open **Shift+F8 > Accessibility > Read Sticker** and enable the feature.
+2. Choose **Configure provider and API key**, select a provider, and enter its credentials. Custom also needs an HTTPS address and a model that can read images.
+3. Choose **Save**, then assign **Read Sticker** in **Shortcut remapping**.
+4. Focus a sticker message or its sticker button and press your assigned shortcut.
+5. Wait for the description. If Tampermonkey asks for connection permission, allow the provider you selected.
+
+Only the selected sticker is sent when you use the shortcut. You can move to another message in the same chat while waiting. Changing chats, language, or provider settings cancels the previous request. The description is read once and does not replace the sticker's label. AI descriptions can be wrong.
+
+Leave the key field blank to keep a saved key or token. The key is encrypted in this WhatsApp profile. Browser and Companion settings are separate. Clearing site data can remove the key, and encryption does not protect it from scripts running in the same page or someone controlling your profile. Saving settings does not test the key.
+
+Animated stickers are read from a few sampled images, so quick changes may be missed. Some animated stickers can only be described as a still image. In that case, the result explains that motion could not be read. You will hear an error if the image cannot be read or the request times out.
+
+### Using Gemini
+
+Open [Google AI Studio](https://aistudio.google.com/api-keys), sign in with your Google account, and complete the setup to get an API key. Copy the key, then open **Configure provider and API key** in Read Sticker settings. Select **Gemini**, paste the key into the API key field, and choose **Save**.
+
+### Using Cloudflare for Read Sticker
+
+In Cloudflare, open **Workers AI > Use REST API**. Copy your **Account ID** and create a **Workers AI API Token**, then enter them in Read Sticker settings. R2 Access Key ID and Secret Access Key are for a different service.
+
+The default model is **Llama 3.2 11B Vision**. You can change **Model ID** to another model that supports images, using its full ID, such as `@cf/meta/llama-4-scout-17b-16e-instruct`. Other models need to accept messages containing image data URLs. Changing only the model keeps your saved token. Changing the account requires a token for that account.
+
+If the default Llama model asks for agreement, read the linked terms and check both statements only if they apply to you. Choose **Agree and enable model**. After Cloudflare confirms success, the dialog closes and announces the result. Run Read Sticker again to read the sticker. If confirmation does not arrive within 45 seconds, the dialog tells you that the result is uncertain. Closing a submitted request cannot undo an agreement Cloudflare has already received. Agreements for other models are handled through Cloudflare.
+
+For a tutorial, choose **Preview Cloudflare agreement** in the provider settings. You can repeat the steps without sending an agreement. Close the preview or press Escape to return to your settings.
+
+No additional extension or server is needed. Provider charges and usage limits still apply. See the [Cloudflare setup guide](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) and [Read Sticker technical limits and validation](docs/read-sticker-validation.md) for more detail.
+
+### Default settings
+
+For a new installation, Privacy mode, automatic reading of new messages, Enter/Space voice-message playback, Clean Status reading, message-menu fitting, and Clean UI are on. Total unread-chat announcements are off. Read Sticker stays off until you enable it.
+
+Updating preserves your saved choices. Use **Shift+F8** to change them.
+
 ## Assigning shortcuts
 
-Use **Shortcut remapping** to assign keys for voice-message recording, previous/next chat, and outgoing voice/video calls. Leave a binding blank to disable it.
+Use **Shortcut remapping** to assign keys for Read Sticker, voice-message recording, previous/next chat, and outgoing voice/video calls. Leave a binding blank to disable it.
 
 ### Record a shortcut
 
@@ -117,7 +176,7 @@ These are defaults, not your saved remappings.
 | `Alt+Shift+C` | Open the focused message in the message reader |
 | `Shift+Enter` | Expand Read more in the focused message |
 | `Alt+F10` | Open formatting options for selected text in the editor |
-| `Enter / Space` | Play or pause the focused voice message when the optional keyboard playback setting is enabled (off by default) |
+| `Enter / Space` | Play or pause the focused voice message when the optional keyboard playback setting is enabled (on by default) |
 
 ### Settings and appearance
 
@@ -207,7 +266,7 @@ To open the update page yourself:
 3. Review the version and confirm the update in Tampermonkey.
 4. Refresh WhatsApp Web.
 
-The current version is **2.6.91**. Read the [release history](CHANGELOG.md) for changes.
+The source version is **2026.10.19**. Read the [release history](CHANGELOG.md) for changes.
 
 ## If WhatsApp Web Plus does not start
 
@@ -220,14 +279,21 @@ See the [site-access instructions](docs/detailed-guide.md#3-check-site-access-if
 
 ## More help
 
-- [Detailed installation and alternative methods](docs/detailed-guide.md#install-with-tampermonkey)
-- [Read messages in a separate tab](docs/detailed-guide.md#move-around-whatsapp-web)
-- [Open a message context menu with NVDA](docs/detailed-guide.md#open-a-message-context-menu-with-nvda)
-- [Custom language strings](docs/detailed-guide.md#custom-language-string-reference)
-- [Developer setup and debugging](docs/detailed-guide.md#for-contributors)
-- [Translation guide](translator.md)
-- [Signed update publishing guide (English)](docs/SIGNED-USERSSCRIPT-UPDATES.md)
-- [Panduan penerbitan pembaruan bertanda tangan (Bahasa Indonesia)](docs/SIGNED-USERSSCRIPT-UPDATES-ID.md)
+[Detailed installation and alternative methods](docs/detailed-guide.md#install-with-tampermonkey)
+
+[Read messages in a separate tab](docs/detailed-guide.md#move-around-whatsapp-web)
+
+[Open a message context menu with NVDA](docs/detailed-guide.md#open-a-message-context-menu-with-nvda)
+
+[Custom language strings](docs/detailed-guide.md#custom-language-string-reference)
+
+[Developer setup and debugging](docs/detailed-guide.md#for-contributors)
+
+[Translation guide](translator.md)
+
+[Signed update publishing guide (English)](docs/SIGNED-USERSSCRIPT-UPDATES.md)
+
+[Panduan penerbitan pembaruan bertanda tangan (Bahasa Indonesia)](docs/SIGNED-USERSSCRIPT-UPDATES-ID.md)
 
 ## Reporting a problem
 

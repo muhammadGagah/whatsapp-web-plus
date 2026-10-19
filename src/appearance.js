@@ -26,7 +26,7 @@ import {
 } from './owned-attributes.js';
 import { announce, focusItem } from './chat-accessibility.js';
 
-let isCleanUiMode = readSetting(STORAGE_KEYS.cleanUi, 'false') === 'true';
+let isCleanUiMode = readSetting(STORAGE_KEYS.cleanUi, 'true') === 'true';
 let isOriginalDarkMode = readSetting(STORAGE_KEYS.originalDark, 'false') === 'true';
 let cleanUiSyncPending = false;
 

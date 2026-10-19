@@ -62,6 +62,10 @@ import {
 import { startSettingsMenu } from './settings-menu.js';
 import { startFormattingToolbar } from './formatting-toolbar.js';
 import { startMentionAnnouncements } from './mention-announcements.js';
+import { startMessageMenuFit } from './message-menu-accessibility.js';
+import { startChatCloseAnnouncements } from './chat-close.js';
+import { startDownloadProgress } from './download-progress.js';
+import { startReadSticker } from './read-sticker.js';
 import {
   releaseStatusAccessibility,
   scheduleStatusAccessibilitySync,
@@ -341,6 +345,10 @@ onDomReady(function() {
     ensureLiveRegion();
     startFormattingToolbar();
     startMentionAnnouncements();
+    startMessageMenuFit();
+    startDownloadProgress();
+    startChatCloseAnnouncements();
+    startReadSticker();
     startSettingsMenu();
     startCleanupObserver();
     updateStyleSheets();

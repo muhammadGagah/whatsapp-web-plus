@@ -198,7 +198,7 @@ vm.createContext(context);
 
 let shortcutCapturePromise;
 
-let source = fs.readFileSync(path.join(__dirname, 'src/audio-experiment.js'), 'utf8');
+let source = fs.readFileSync(path.join(__dirname, '..', 'src/audio-experiment.js'), 'utf8');
 source = source.replace(/^import .*;\s*$/gm, '').replace(/export function /g, 'function ');
 vm.runInContext(source, context, { filename: 'src/audio-experiment.js' });
 const plain = value => JSON.parse(JSON.stringify(value));

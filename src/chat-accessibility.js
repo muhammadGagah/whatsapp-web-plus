@@ -403,7 +403,7 @@ function hasRenderedMessagePopup() {
     .some(isRenderedElement);
 }
 
-function isPrimaryMessageItem(item) {
+export function isPrimaryMessageItem(item) {
   if (!item?.matches?.('.focusable-list-item')) return false;
   const liveRole = (item.getAttribute?.('role') || '').toLowerCase();
   if (item.matches?.('a[href], button, input, textarea, select, [contenteditable="true"]') ||
@@ -470,6 +470,45 @@ export function hasMessageReadMoreControl(messageItem, { renderedOnly = false } 
 
 let pendingMessageExpansion = null;
 let heldMessageExpansionKey = null;
+const expandedMessageReferences = new WeakMap();
+let expandedMessageReferenceId = 0;
+
+function releaseExpandedMessageReference(item) {
+  const reference = expandedMessageReferences.get(item);
+  if (!reference) return;
+  reference.observer.disconnect();
+  releaseOwnedAttribute(item, 'aria-labelledby', OWNERS.messageExpandedName);
+  releaseOwnedAttribute(reference.label, 'aria-label', OWNERS.messageExpandedName);
+  reference.label.parentElement?.removeChild(reference.label);
+  expandedMessageReferences.delete(item);
+}
+
+function attachExpandedMessageReference(item, text, expandedText) {
+  releaseExpandedMessageReference(item);
+  if (item.hasAttribute('aria-labelledby')) return;
+  const label = document.createElement('span');
+  do { label.id = `wa-plus-expanded-${++expandedMessageReferenceId}`; }
+  while (document.getElementById(label.id));
+  label.hidden = true;
+  label.setAttribute('role', 'note');
+  item.appendChild(label);
+  applyOwnedAttribute(label, 'aria-label', prepareNamedAttribute(label, 'aria-label', text), OWNERS.messageExpandedName);
+  applyOwnedAttribute(item, 'aria-labelledby', label.id, OWNERS.messageExpandedName);
+  const wrapper = item.closest?.('[data-id]') || item;
+  const id = wrapper.getAttribute('data-id');
+  const observer = new MutationObserver(() => {
+    if (!item.isConnected || !label.isConnected || !wrapper.contains(item) ||
+      wrapper.getAttribute('data-id') !== id || item.getAttribute('aria-labelledby') !== label.id ||
+      getPrimaryMessageText(item) !== expandedText) {
+      releaseExpandedMessageReference(item);
+      releaseOwnedAttribute(item, 'aria-label', OWNERS.messageExpandedName);
+    }
+  });
+  expandedMessageReferences.set(item, {label, observer});
+  if (wrapper.parentElement) observer.observe(wrapper.parentElement, {childList: true});
+  observer.observe(wrapper, {subtree: true, childList: true, characterData: true,
+    attributes: true, attributeFilter: ['data-id', 'aria-labelledby']});
+}
 
 function consumeMessageExpansionKey(event) {
   event.preventDefault();
@@ -738,15 +777,19 @@ function getPrimaryMessageText(messageItem) {
   if (!root) return '';
 
   const parts = [];
-  const collect = (node, isRoot = false) => {
+  const collect = (node, isRoot = false, listIndex = null) => {
     if (node?.nodeType === 3) {
       parts.push(node.nodeValue || '');
       return;
     }
     if (!node || (node.nodeType != null && node.nodeType !== 1) ||
       isExcludedPrimaryMessageNode(node, messageItem, isRoot)) return;
+    const tagName = (node.tagName || '').toLowerCase();
+    const boundary = !isRoot && (isReaderBlock(node) || /^(ol|ul|li|br)$/.test(tagName));
+    if (boundary) parts.push(' ');
+    if (tagName === 'br') return;
+    if (tagName === 'li' && listIndex !== null) parts.push(`${listIndex}. `);
     if (!isRoot) {
-      const tagName = (node.tagName || '').toLowerCase();
       if (tagName === 'img') {
         const alternative = node.getAttribute?.('alt') || '';
         if (alternative) parts.push(alternative);
@@ -755,7 +798,20 @@ function getPrimaryMessageText(messageItem) {
     }
     const children = getNodeChildren(node);
     if (!children.length) parts.push(node.textContent || '');
-    else children.forEach(child => collect(child));
+    else if (tagName === 'ol') {
+      const items = children.filter(child => (child.tagName || '').toLowerCase() === 'li');
+      const reversed = node.hasAttribute?.('reversed');
+      const integer = value => /^-?\d+$/.test(value || '') ? Number(value) : null;
+      let index = integer(node.getAttribute?.('start')) ?? (reversed ? items.length : 1);
+      for (const child of children) {
+        if ((child.tagName || '').toLowerCase() === 'li') {
+          index = integer(child.getAttribute?.('value')) ?? index;
+          collect(child, false, index);
+          index += reversed ? -1 : 1;
+        } else collect(child);
+      }
+    } else children.forEach(child => collect(child));
+    if (boundary) parts.push(' ');
   };
   collect(root, true);
   return cleanString(parts.join(''), false);
@@ -817,30 +873,40 @@ export function isMessageReaderSourceCurrent(source) {
   return true;
 }
 
-function getMessageExpansionSourceLabel(messageItem) {
-  return getNamedAttributeSource(messageItem, 'aria-label');
+function getMessageExpansionMetadata(messageItem) {
+  const root = getPrimaryMessageTextRoot(messageItem);
+  const belongs = node => node.closest?.('.focusable-list-item') === messageItem &&
+    !node.closest?.('[data-testid="quoted-message"]');
+  const wrappers = Array.from(messageItem.querySelectorAll?.(SELECTORS.messageTextMetadata) || [])
+    .filter(node => belongs(node) && node.contains?.(root));
+  const metadata = wrappers.length === 1
+    ? wrappers[0].getAttribute('data-pre-plain-text') || '' : '';
+  const parsed = /^\[([^\]]+)\]\s*([\s\S]*?):\s*$/.exec(metadata);
+  const authors = Array.from(messageItem.querySelectorAll?.('[data-testid="author"]') || [])
+    .filter(node => belongs(node) && isRenderedElement(node));
+  const names = [...new Set(authors.map(node => cleanString(node.textContent || '', false)).filter(Boolean))];
+  return {
+    sender: parsed?.[2] || (names.length === 1 ? names[0] : ''),
+    sentAt: parsed?.[1] || getMessageSentAt(messageItem, root)
+  };
+}
+
+function preserveMessageExpansionMetadata(messageItem, collapsedText) {
+  const metadata = getMessageExpansionMetadata(messageItem);
+  const source = cleanString(getNamedAttributeSource(messageItem, 'aria-label') || '', false);
+  const anchor = collapsedText.slice(0, 24);
+  const start = source.indexOf(anchor);
+  if (anchor.length >= 8 && start >= 0 && source.indexOf(anchor, start + 1) < 0) {
+    const prefix = source.slice(0, start).trim();
+    if (prefix) metadata.sender = prefix;
+  }
+  return metadata;
 }
 
 function buildExpandedMessageLabel(request, expandedText) {
-  const source = cleanString(request.sourceLabel || '', false);
-  const collapsed = cleanString(request.collapsedText || '', false);
-  const controlName = cleanString(request.controlName || '', false);
-  if (!source || !collapsed || !controlName || !expandedText) return '';
-
-  let bodyStart = source.indexOf(collapsed);
-  let bodyAnchor = collapsed;
-  if (bodyStart < 0) {
-    bodyAnchor = collapsed.replace(/(?:\u2026|\.{3})\s*$/, '').trim();
-    if (bodyAnchor.length < 16) return '';
-    bodyStart = source.indexOf(bodyAnchor);
-  }
-  if (bodyStart < 0 || source.indexOf(bodyAnchor, bodyStart + 1) >= 0) return '';
-
-  const controlStart = source.indexOf(controlName, bodyStart + bodyAnchor.length);
-  if (controlStart < 0 || source.indexOf(controlName, controlStart + controlName.length) >= 0) return '';
-  const prefix = source.slice(0, bodyStart).trim();
-  const suffix = source.slice(controlStart + controlName.length).trim();
-  return cleanString([prefix, expandedText, suffix].filter(Boolean).join(' '), false);
+  if (!expandedText) return '';
+  const metadata = request.metadata || getMessageExpansionMetadata(request.messageItem);
+  return cleanString([metadata.sender, expandedText, metadata.sentAt].filter(Boolean).join(' '), false);
 }
 
 function tryCommitExpandedMessageName(request) {
@@ -874,26 +940,25 @@ function tryCommitExpandedMessageName(request) {
   clearPendingMessageExpansion(request);
   const prepared = prepareNamedAttribute(messageItem, 'aria-label', rebuilt);
   applyOwnedAttribute(messageItem, 'aria-label', prepared, OWNERS.messageExpandedName);
+  attachExpandedMessageReference(messageItem, rebuilt, expandedText);
   return true;
 }
 
 function armMessageExpansionNameSync(messageItem, button) {
+  if (expandedMessageReferences.has(messageItem)) releaseExpandedMessageReference(messageItem);
   if (messageItem.hasAttribute?.('aria-labelledby') || isMetaAIReply(messageItem)) return null;
   releaseOwnedAttribute(messageItem, 'aria-label', OWNERS.messageExpandedName);
-  const sourceLabel = getMessageExpansionSourceLabel(messageItem);
   const appliedLabel = messageItem.getAttribute?.('aria-label') || '';
   const collapsedText = getPrimaryMessageText(messageItem);
-  const controlName = button.getAttribute?.('aria-label') || button.textContent || '';
-  if (!sourceLabel || !appliedLabel || !collapsedText || !cleanString(controlName, false)) return null;
+  if (!collapsedText) return null;
 
   clearPendingMessageExpansion();
   const request = {
     messageItem,
     identity: getMessageExpansionIdentity(messageItem),
-    sourceLabel,
+    metadata: preserveMessageExpansionMetadata(messageItem, collapsedText),
     appliedLabel,
     collapsedText,
-    controlName,
     observer: null,
     timeoutId: null
   };
@@ -1065,7 +1130,12 @@ function handleChatListShortcutArrowKeydown(event) {
     return false;
   }
 
-  if (anchor.consumed) return false;
+  if (anchor.consumed) {
+    event.preventDefault();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    else event.stopPropagation?.();
+    return true;
+  }
 
   const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter(candidate => {
     const candidateActivator = getChatRowActivator(candidate);
@@ -1116,8 +1186,7 @@ function handleChatListShortcutArrowKeydown(event) {
   const started = focusChatRow(
     nextRow,
     handleFailure,
-    shouldContinue,
-    clearChatListShortcutArrowAnchor
+    shouldContinue
   );
   if (!started) handleFailure();
   return true;

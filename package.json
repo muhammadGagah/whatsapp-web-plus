@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-web-plus",
-  "version": "2.6.91",
+  "version": "2026.10.19",
   "private": true,
   "scripts": {
     "build": "node build.mjs",
@@ -8,11 +8,13 @@
     "update:keygen": "node scripts/generate-update-key.mjs",
     "sign:update": "node scripts/sign-update-manifest.mjs",
     "verify:signed-update": "node scripts/verify-signed-update.mjs",
-    "test:update-manifest": "node test_update_manifest.mjs",
-    "test:loader": "node test_loader_contract.js",
-    "test": "npm run build && npm run build:debug && npm run test:update-manifest && node test_privacy_filter.js && node test_owned_attributes.js && node test_meta_ai_cleanup.js && node test_accessibility_runtime.js && node test_d02_d06_focus.js && node test_companion_reader.js && node test_shortcut_list.js && node test_message_reader_text.js && node test_settings_state.js && node test_settings_menu.js && node test_formatting_toolbar.js && node test_mention_announcements.js && node test_status_accessibility.js && node test_status_transition_diagnostics.js && node test_audio_experiment.js && node test_semantic_health.js && npm run test:loader"
+    "test:update-manifest": "node tests/test_update_manifest.mjs",
+    "test:loader": "node tests/test_loader_contract.js",
+    "test": "npm run build && npm run build:debug && npm run test:update-manifest && node tests/test_privacy_filter.js && node tests/test_owned_attributes.js && node tests/test_meta_ai_cleanup.js && node tests/test_accessibility_runtime.js && node tests/test_d02_d06_focus.js && node tests/test_companion_reader.js && node tests/test_shortcut_list.js && node tests/test_message_reader_text.js && node tests/test_message_expansion.js && node tests/test_chat_close.js && node tests/test_settings_state.js && node tests/test_settings_menu.js && node tests/test_formatting_toolbar.js && node tests/test_mention_announcements.js && node tests/test_download_progress.js && node tests/test_status_accessibility.js && node tests/test_message_menu_accessibility.js && node tests/test_status_transition_diagnostics.js && node tests/test_audio_experiment.js && node tests/test_semantic_health.js && npm run test:loader && node tests/test_read_sticker_shortcuts.js && node tests/test_sticker_settings.js && node tests/test_sticker_core.js && node tests/test_sticker_cloudflare.js && node tests/test_sticker_agreement.js && node tests/test_sticker_tampermonkey.js && node tests/test_sticker_lifecycle.js && node tests/test_sticker_target.js"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "fake-indexeddb": "^6.2.6",
+    "linkedom": "^0.18.13"
   }
 }

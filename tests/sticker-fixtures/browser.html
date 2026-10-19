@@ -1,0 +1,30 @@
+<!doctype html><html lang="en"><title>Sticker media regression checks</title><h1>Sticker media regression checks</h1><pre id="result">Running</pre><script type="module">
+import {decodeStickerSvg,snapshotStickerSvg,decodeSticker,encodeStickerInput,inspectStickerBytes} from '../../src/sticker-media.js';
+const reports=[];
+function check(value,message){if(!value)throw Error(message);reports.push(message);}
+try{
+for(const file of ['static.png','animation.webp','animation.gif']){
+ const bytes=new Uint8Array(await(await fetch(file)).arrayBuffer());
+ const media=await decodeSticker(bytes,new AbortController().signal);
+ check(media.animated===(file!=='static.png'),file+' animation classification');
+ if(media.animated){check(new Set(media.frames.map(f=>f.hash)).size>1,file+' decoded actual distinct frames');check(media.frames[1].time===80000,file+' actual frame duration');}
+ const input=encodeStickerInput(media,file==='animation.gif'?'custom':'groq','qwen/qwen3.8-27b');
+ check(input.images.length<=3,file+' payload image count');
+ if(file==='animation.gif')check(input.mode==='storyboard'&&input.images.length===1,'Custom uses one storyboard');
+}
+const c=new AbortController();c.abort();let aborted=false;try{await decodeSticker(new Uint8Array(await(await fetch('animation.webp')).arrayBuffer()),c.signal);}catch{aborted=true;}check(aborted,'Cancellation stops decode');
+let rejected=false;try{inspectStickerBytes(new Uint8Array([1,2,3]));}catch{rejected=true;}check(rejected,'Invalid bytes rejected');
+const host=document.createElement('div');
+host.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"><defs><clipPath id="clip"><rect width="32" height="64"/></clipPath></defs><g clip-path="url(#clip)"><rect width="64" height="64" fill="red"/></g></svg>';
+const svg=host.firstChild;
+const svgMedia=await decodeStickerSvg(svg,new AbortController().signal);
+check(svgMedia.animated&&svgMedia.mode==='unclear','SVG honestly uses one animation snapshot');
+const pixels=svgMedia.frames[0].canvas.getContext('2d').getImageData(0,0,64,64).data;
+check(pixels[(10*64+10)*4]===255&&pixels[(10*64+40)*4+3]===0,'SVG clipping and transparency render correctly');
+check(encodeStickerInput(svgMedia,'gemini','').unclear,'SVG payload preserves motion limitation');
+for(const unsafe of ['<image href="https://example.invalid/private"/>','<foreignObject/>','<use href="https://example.invalid/asset#x"/>','<rect fill="url(https://example.invalid/asset)"/>']){
+ const badSvg=svg.cloneNode(true);badSvg.insertAdjacentHTML('beforeend',unsafe);let denied=false;try{snapshotStickerSvg(badSvg);}catch{denied=true;}check(denied,'SVG active/external content rejected');
+}
+document.getElementById('result').textContent=JSON.stringify({passed:true,reports});
+}catch(error){document.getElementById('result').textContent=JSON.stringify({passed:false,error:String(error),reports});}
+</script></html>

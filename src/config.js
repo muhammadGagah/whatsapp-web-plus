@@ -13,6 +13,7 @@ export const STORAGE_KEYS = Object.freeze({
   reduceAnnouncements: 'wa-plus-reduce-announcements',
   automaticReading: 'wa-plus-automatic-reading',
   statusReadingCleanup: 'wa-plus-status-reading-cleanup',
+  messageMenuFit: 'wa-plus-message-menu-fit',
   senderDeviceAnnouncements: 'wa-plus-sender-device-announcements',
   announceUnreadChatTotal: 'wa-plus-announce-unread-chat-total',
   voiceMessageKeyboardPlayback: 'wa-plus-voice-message-keyboard-playback',
@@ -97,7 +98,8 @@ export const SELECTORS = Object.freeze({
   messageTextMetadata: '.copyable-text[data-pre-plain-text]',
   messageMediaCaption: '.copyable-text[data-pre-plain-text] ' +
     ':is([data-testid~="image-caption"], [data-testid~="video-caption"]), ' +
-    '[data-testid="msg-container"] [data-testid~="document-caption"]',
+    '[data-testid="msg-container"] [data-testid~="document-caption"], ' +
+    '[data-testid="media-album"] [data-testid~="album-caption"]',
   messagePrimaryText: '.copyable-text[data-pre-plain-text] [data-testid="selectable-text"]',
   messageSentTime: '[data-testid="msg-meta"] [data-testid="msg-time"], [data-testid="msg-time"]',
   messageReadMoreButton: '[data-testid="caption-read-more-button"]',
@@ -146,7 +148,7 @@ export const CHAT_PREVIEW_ICON_LABELS = Object.freeze([
 export const FOCUSABLE_SELECTOR = 'a[href], button, input, textarea, select, details, iframe, object, embed, [contenteditable="true"], [tabindex], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"]';
 export const CHAT_ROW_NATIVE_TEXT_SELECTOR = '[data-testid="cell-frame-label"], [data-testid="cell-frame-title"], [data-testid="cell-frame-primary-detail"], [data-testid="cell-frame-secondary"], [data-testid="last-msg-status"], [role="gridcell"], [aria-label], [title]';
 export const CLEAN_UI_PROTECTED_SELECTOR = '#side, #pane-side, #main, nav, [role="navigation"], [role="tooltip"], [data-testid="chat-list"], [aria-label="Chat list"], [aria-label="Daftar chat"], [role="grid"]';
-export const DESKTOP_APP_PROMO_COPY_RE = /^Get extra features like voice and video calling, screen sharing and more\.?$/i;
+export const DESKTOP_APP_PROMO_COPY_RE = /^(?:Get extra features like voice and video calling, screen sharing and more|Dapatkan fitur ekstra seperti menelepon suara dan video, berbagi layar, dan masih banyak lagi)\.?$/i;
 export const MESSAGE_TEXT_CONTENT_SELECTOR = '[data-testid="msg-container"] [data-testid="selectable-text"]';
 export const MESSAGE_MEDIA_CONTENT_SELECTOR = [
   '[data-testid="msg-container"] img[alt]',

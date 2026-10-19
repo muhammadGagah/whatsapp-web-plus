@@ -45,7 +45,7 @@ If either command fails, fix the problem before continuing. The tests regenerate
 Keep the existing manifest and signature unchanged in this first commit. Stage the release files, then inspect the list. Add any other intended source, test, or documentation files explicitly.
 
 ```powershell
-git add -- src 'test_*.js' README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
+git add -- src tests README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
 ```
 
 Review the summary of staged changes:

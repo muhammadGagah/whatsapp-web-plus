@@ -15,7 +15,7 @@ import {
   verifyManifest,
   writeNewPrivateKey,
   writeNewPublicKey,
-} from './scripts/update-manifest-lib.mjs';
+} from '../scripts/update-manifest-lib.mjs';
 
 const manifest = {
   schemaVersion: 2,

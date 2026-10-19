@@ -136,7 +136,7 @@ assert.equal(
 );
 
 assert.ok(expectedVersion);
-assert.equal(require('./package.json').version, expectedVersion);
+assert.equal(require('../package.json').version, expectedVersion);
 assert.equal(source.match(/^\/\/ @version\s+(\S+)$/m)?.[1], expectedVersion);
 assert.match(source, /applyOwnedMessageRole\(viewport, ["']grid["']/);
 assert.match(source, /applyOwnedMessageRole\(message, ["']gridcell["']/);
@@ -145,7 +145,9 @@ assert.match(source, /releaseMessageAttributes\(OWNERS\.messageCell/);
 assert.match(source, /releaseOwnedAttribute\(el, name, owner\)/);
 assert.match(source, /function restorePrivacyAttributes\(\)/);
 assert.doesNotMatch(source, /fixGenericSectionBug|MARKERS|unreadMessageId/);
-assert.doesNotMatch(source, /HTMLElement\.prototype\.focus\s*=/);
+// Privacy must not redirect focus. The separate menu-fitting hook now prevents
+// ancestor scrolling only; its native-focus passthrough is tested behaviorally.
+assert.doesNotMatch(fs.readFileSync('src/privacy.js', 'utf8'), /HTMLElement\.prototype\.focus\s*=/);
 const nonFocusableMessageContent = {
     closest(selector) {
         if (selector === 'div#main') return main;
@@ -857,6 +859,65 @@ assert.equal(
     'a late caption mutation refreshes the applied label without duplicating stale content'
 );
 assert.equal(setCustomText('unknown-contact-prefix', 'Quizás'), true);
+const albumMessage = new Element();
+const albumCaption = new Element();
+albumCaption.textContent = 'Holiday notes, contact +62 812-9505-8785';
+albumCaption.closestHandler = selector => selector === '.focusable-list-item' ? albumMessage : null;
+albumMessage.matches = selector => selector === '.focusable-list-item';
+albumMessage.closestHandler = selector => {
+    if (selector === 'div#main') return main;
+    if (selector === '[data-testid="conversation-panel-messages"]') return conversation;
+    if (selector === '[data-testid^="conv-msg-"][data-id]') return documentWrapper;
+    return null;
+};
+albumMessage.queryHandler = selector =>
+    selector === '[data-testid="media-album"] [data-testid~="album-caption"]' ? albumCaption : null;
+const albumNativeLabel = 'You Media album 4 photos 18:56 Delivered';
+const albumMaskedLabel = `${albumNativeLabel}. Caption: Holiday notes, contact Participant`;
+albumMessage.setAttribute('aria-label', albumNativeLabel);
+assert.equal(albumMessage.getAttribute('aria-label'), albumMaskedLabel);
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.equal(albumMessage.getAttribute('aria-label'), albumMaskedLabel, 'caption stays unique on repeated cleaning');
+sandbox.document.documentElement = { lang: 'en' };
+setSenderDeviceAnnouncement(true);
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.equal(albumMessage.getAttribute('aria-label'), `${albumMaskedLabel}. Sent from WhatsApp Web or Desktop`);
+setSenderDeviceAnnouncement(false);
+setPrivacy(false);
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.equal(albumMessage.getAttribute('aria-label'), `${albumNativeLabel}. Caption: ${albumCaption.textContent}`);
+sandbox.document.documentElement.lang = 'id';
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.match(albumMessage.getAttribute('aria-label'), /Keterangan: Holiday notes/);
+albumCaption.textContent = 'Updated album';
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.match(albumMessage.getAttribute('aria-label'), /Keterangan: Updated album$/);
+assert.ok(!albumMessage.getAttribute('aria-label').includes('Holiday notes'));
+albumCaption.textContent = '';
+cleanNamedAttribute(albumMessage, 'aria-label');
+assert.ok(!albumMessage.getAttribute('aria-label').includes('Keterangan:'));
+sandbox.document.documentElement.lang = 'en';
+albumCaption.textContent = 'Original caption';
+albumMessage.setAttribute('aria-label', `${albumNativeLabel}. Caption: Original caption`);
+assert.equal(albumMessage.getAttribute('aria-label'), `${albumNativeLabel}. Caption: Original caption`);
+albumCaption.textContent = '4';
+assert.equal(prepareNamedAttribute(albumMessage, 'aria-label', albumNativeLabel), `${albumNativeLabel}. Caption: 4`,
+    'a numeric caption must not be mistaken for the album photo count');
+albumCaption.closestHandler = () => new Element();
+assert.equal(prepareNamedAttribute(albumMessage, 'aria-label', albumNativeLabel), albumNativeLabel,
+    'captions belonging to a nested message are excluded');
+albumCaption.closestHandler = selector => selector === '.focusable-list-item' ? albumMessage : null;
+albumCaption.childNodes = [
+    { nodeType: 3, nodeValue: 'Hello ' },
+    { tagName: 'IMG', getAttribute: name => name === 'alt' ? '😊' : null },
+    { tagName: 'BR' },
+    { nodeType: 3, nodeValue: 'world' },
+    { matches: selector => selector === '[data-testid="caption-read-more-button"]', textContent: 'Read more' }
+];
+assert.equal(prepareNamedAttribute(albumMessage, 'aria-label', albumNativeLabel), `${albumNativeLabel}. Caption: Hello 😊 world`);
+assert.ok(!albumMessage.focusCalled, 'caption decoration never moves focus');
+setPrivacy(true);
+delete sandbox.document.documentElement;
 assert.equal(clean('Quizás 081362579858 online', 'identity'), 'Quizás online');
 assert.equal(setCustomText('unknown-contact-prefix', ''), true);
 assert.equal(setCustomText('participant-prefix', 'Teilnehmer'), true);

@@ -1,4 +1,6 @@
 import { openShortcutList } from './shortcut-list.js';
+import { openStickerSettings } from './sticker-settings.js';
+import { isReadStickerEnabled, setReadStickerEnabled } from './sticker-store.js';
 import { SHORTCUT_ACTIONS, captureShortcutBinding } from './shortcut-bindings.js';
 import { IS_DEBUG_BUILD, SELECTORS } from './config.js';
 import {
@@ -23,6 +25,7 @@ import {
 import { announce, focusItem, getActiveModal, refreshAnnouncementReduction } from './chat-accessibility.js';
 import { refreshUnreadChatTotal } from './unread-chat-total.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
+import { refreshMessageMenuFit } from './message-menu-accessibility.js';
 import {
   getCustomText,
   getLanguage,
@@ -30,6 +33,7 @@ import {
   isAnnouncementReductionEnabled,
   isAutomaticReadingEnabled,
   isStatusReadingCleanupEnabled,
+  isMessageMenuFitEnabled,
   isSenderDeviceAnnouncementEnabled,
   isUnreadChatTotalAnnouncementEnabled,
   isVoiceMessageKeyboardPlaybackEnabled,
@@ -42,6 +46,7 @@ import {
   setLanguage,
   setOpenChatsAtFirstUnread,
   setStatusReadingCleanup,
+  setMessageMenuFit,
   setSenderDeviceAnnouncement,
   setUnreadChatTotalAnnouncement,
   setVoiceMessageKeyboardPlayback,
@@ -87,6 +92,7 @@ let rootMenu = null;
 let languageMenu = null;
 let languageItem = null;
 let privacyItem = null;
+let stickerConfigItem = null;
 const submenuMenus = new Map();
 const submenuItems = new Map();
 let activeSubmenuKey = '';
@@ -389,6 +395,17 @@ function createMenu() {
   statusReadingItem.dataset.labelKey = 'statusReadingCleanup';
   accessibility.menu.appendChild(statusReadingItem);
 
+  const messageMenuFitItem = createMenuItem('menuitemcheckbox', 'message-menu-fit');
+  messageMenuFitItem.dataset.labelKey = 'messageMenuFit';
+  accessibility.menu.appendChild(messageMenuFitItem);
+
+  const stickerItem = createMenuItem('menuitemcheckbox', 'read-sticker');
+  stickerItem.dataset.labelKey = 'readSticker';
+  stickerConfigItem = createMenuItem('menuitem', 'configure-read-sticker');
+  stickerConfigItem.dataset.labelKey = 'configureReadSticker';
+  stickerConfigItem.setAttribute('aria-haspopup', 'dialog');
+  accessibility.menu.append(stickerItem, stickerConfigItem);
+
   for (const [name, definition] of Object.entries(SHORTCUT_ACTIONS)) {
     const item = createMenuItem('menuitem', `remap-${name}`);
     item.dataset.labelKey = definition.label;
@@ -653,11 +670,14 @@ function updateMenu() {
     'voice-message-keyboard-playback': isVoiceMessageKeyboardPlaybackEnabled(),
     'open-chats-at-first-unread': shouldOpenChatsAtFirstUnread(),
     'status-reading-cleanup': isStatusReadingCleanupEnabled(),
+    'message-menu-fit': isMessageMenuFitEnabled(),
+    'read-sticker': isReadStickerEnabled(),
     'clean-ui': isCleanUiEnabled(),
     'original-dark': isOriginalDarkEnabled()
   };
   setMenuItemLabel(privacyItem, t(privacyItem.dataset.labelKey));
   privacyItem.setAttribute('aria-checked', String(states.privacy));
+  stickerConfigItem.hidden = !states['read-sticker'];
   for (const menu of submenuMenus.values()) {
     getMenuItems(menu).forEach(item => {
       const labelKey = item.dataset.labelKey;
@@ -988,6 +1008,22 @@ function activateItem(item, keepOpen) {
     openUpdatePage();
     return;
   }
+  if (action === 'configure-read-sticker') {
+    if (!isReadStickerEnabled()) return;
+    const source = invoker;
+    const anchor = rootMenu.getBoundingClientRect();
+    closeSettingsMenu(true);
+    openStickerSettings(() => {
+      restoreSettingsFocus(source);
+      openSettingsMenu(anchor.left, anchor.top, source);
+      openSubmenu('accessibility');
+      const menu = submenuMenus.get('accessibility');
+      const target = isReadStickerEnabled() ? stickerConfigItem :
+        getMenuItems(menu).find(candidate => candidate.dataset.action === 'read-sticker');
+      focusMenuItem(menu, getMenuItems(menu).indexOf(target));
+    });
+    return;
+  }
   if (IS_DEBUG_BUILD && action === 'copy-call-diagnostics') {
     closeSettingsMenu(true);
     void copyCallDiagnostics();
@@ -1041,6 +1077,11 @@ function activateItem(item, keepOpen) {
   } else if (action === 'status-reading-cleanup') {
     saved = setStatusReadingCleanup(!isStatusReadingCleanupEnabled());
     if (saved) refreshStatusAccessibility();
+  } else if (action === 'message-menu-fit') {
+    saved = setMessageMenuFit(!isMessageMenuFitEnabled());
+    if (saved) refreshMessageMenuFit();
+  } else if (action === 'read-sticker') {
+    saved = setReadStickerEnabled(!isReadStickerEnabled());
   } else if (action.startsWith('remap-')) {
     openShortcutDialog(item);
     return;

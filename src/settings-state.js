@@ -30,11 +30,12 @@ let language = LANGUAGES.some(item => item.value === savedLanguage)
   ? savedLanguage
   : (typeof navigator !== 'undefined' && navigator.language || '').toLowerCase().startsWith('id') ? 'id' : 'en';
 let reduceAnnouncements = readSetting(STORAGE_KEYS.reduceAnnouncements, 'true') !== 'false';
-let automaticReading = readSetting(STORAGE_KEYS.automaticReading, 'false') === 'true';
-let statusReadingCleanup = readSetting(STORAGE_KEYS.statusReadingCleanup, 'false') === 'true';
+let automaticReading = readSetting(STORAGE_KEYS.automaticReading, 'true') === 'true';
+let statusReadingCleanup = readSetting(STORAGE_KEYS.statusReadingCleanup, 'true') === 'true';
+let messageMenuFit = readSetting(STORAGE_KEYS.messageMenuFit, 'true') === 'true';
 let senderDeviceAnnouncements = readSetting(STORAGE_KEYS.senderDeviceAnnouncements, 'false') === 'true';
-let announceUnreadChatTotal = readSetting(STORAGE_KEYS.announceUnreadChatTotal, 'true') === 'true';
-let voiceMessageKeyboardPlayback = readSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, 'false') === 'true';
+let announceUnreadChatTotal = readSetting(STORAGE_KEYS.announceUnreadChatTotal, 'false') === 'true';
+let voiceMessageKeyboardPlayback = readSetting(STORAGE_KEYS.voiceMessageKeyboardPlayback, 'true') === 'true';
 let openChatsAtFirstUnread = readSetting(STORAGE_KEYS.openChatsAtFirstUnread, 'false') === 'true';
 const customTextStorageKeys = Object.freeze({
   'unread-divider': STORAGE_KEYS.customUnreadDivider,
@@ -426,6 +427,9 @@ export function setLanguage(value) {
   if (!LANGUAGES.some(item => item.value === value)) return false;
   if (!writeSetting(STORAGE_KEYS.language, value)) return false;
   language = value;
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new Event('wa-plus-language-changed'));
+  }
   return true;
 }
 
@@ -453,6 +457,17 @@ export function setAutomaticReading(value) {
 
 export function isStatusReadingCleanupEnabled() {
   return statusReadingCleanup;
+}
+
+export function isMessageMenuFitEnabled() {
+  return messageMenuFit;
+}
+
+export function setMessageMenuFit(value) {
+  const nextValue = !!value;
+  if (!writeSetting(STORAGE_KEYS.messageMenuFit, String(nextValue))) return false;
+  messageMenuFit = nextValue;
+  return true;
 }
 
 export function setStatusReadingCleanup(value) {

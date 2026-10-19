@@ -9,7 +9,7 @@ const bundle = buildSync({
       export { setAnnouncementReduction } from './src/settings-state.js';
       export { ownedAttributes } from './src/owned-attributes.js';
     `,
-    resolveDir: __dirname
+    resolveDir: require('node:path').resolve(__dirname, '..')
   },
   bundle: true,
   write: false,

@@ -71,7 +71,7 @@ Then rebuild the userscript and run all checks:
 npm test
 ```
 
-For a new language, add checks to `test_settings_state.js` for selecting the language, translating a plain message, and replacing at least one placeholder. If you are not comfortable editing test files, submit the translation anyway and mention it. A maintainer can add the checks.
+For a new language, add checks to `tests/test_settings_state.js` for selecting the language, translating a plain message, and replacing at least one placeholder. If you are not comfortable editing test files, submit the translation anyway and mention it. A maintainer can add the checks.
 
 Test the translation manually in WhatsApp Web:
 

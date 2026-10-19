@@ -3,7 +3,8 @@ export const SHORTCUT_ACTIONS = Object.freeze({
   'previous-chat': { label: 'shortcutPreviousChat', defaultBinding: 'Alt+ArrowUp' },
   'next-chat': { label: 'shortcutNextChat', defaultBinding: 'Alt+ArrowDown' },
   'voice-call': { label: 'shortcutVoiceCall', defaultBinding: '' },
-  'video-call': { label: 'shortcutVideoCall', defaultBinding: '' }
+  'video-call': { label: 'shortcutVideoCall', defaultBinding: '' },
+  'read-sticker': { label: 'shortcutReadSticker', defaultBinding: '' }
 });
 
 // App commands and common browser/editing commands must keep their existing meaning.

@@ -227,6 +227,8 @@ documentRef = document;
 
 const localStorage = {
     values: new Map([
+        ['wa-plus-announce-unread-chat-total', 'true'],
+        ['wa-plus-voice-message-keyboard-playback', 'false'],
         ['wa-plus-privacy', 'true'],
         ['wa-plus-automatic-reading', 'true'],
         ['wa-plus-chat-activity-monitor', 'true']
@@ -581,12 +583,15 @@ const readMoreClosest = selector => {
 };
 readMoreButton.closestHandler = readMoreClosest;
 readMoreBody.closestHandler = readMoreClosest;
+readMoreContainer.closestHandler = readMoreClosest;
+readMoreContainer.setAttribute('data-pre-plain-text', '[10:00] Member One: ');
 let readMorePresent = true;
 messageCell.queryAllHandler = selector => {
     if (selector === runtime.SELECTORS.messageReadMoreButton) {
         return readMorePresent ? [readMoreButton] : [];
     }
     if (selector === runtime.SELECTORS.messagePrimaryText) return [readMoreBody];
+    if (selector === runtime.SELECTORS.messageTextMetadata) return [readMoreContainer];
     return [];
 };
 messageCell.setAttribute(
@@ -673,6 +678,7 @@ messageCell.queryAllHandler = selector => {
         return readMorePresent ? [readMoreButton] : [];
     }
     if (selector === runtime.SELECTORS.messagePrimaryText) return [readMoreBody];
+    if (selector === runtime.SELECTORS.messageTextMetadata) return [readMoreContainer];
     return [];
 };
 
@@ -794,6 +800,7 @@ readMorePresent = true;
 runtime.setPrivacy(true);
 assert.equal(runtime.setSenderDeviceAnnouncement(true), true);
 const privatePhone = '+62 812-3456-7890';
+readMoreContainer.setAttribute('data-pre-plain-text', `[10:00] ${privatePhone}: `);
 messageCell.setAttribute(
     'aria-label',
     `${privatePhone} ${collapsedReadMoreText} Tampilkan selengkapnya 10:00`
@@ -831,6 +838,7 @@ runtime.releaseOwnedAttribute(
     runtime.OWNERS.messageExpandedName
 );
 
+readMoreContainer.setAttribute('data-pre-plain-text', '[10:00] Member One: ');
 const nestedReadMoreLink = new Element();
 nestedReadMoreLink.setAttribute('role', 'link');
 nestedReadMoreLink.closestHandler = readMoreClosest;
@@ -864,6 +872,7 @@ messageCell.queryAllHandler = selector => {
     if (selector === runtime.SELECTORS.messagePrimaryText) {
         return [readMoreBody, nestedReadMoreLink];
     }
+    if (selector === runtime.SELECTORS.messageTextMetadata) return [readMoreContainer];
     return [];
 };
 messageCell.setAttribute(
@@ -883,6 +892,18 @@ assert.equal(
     `Member One ${nestedExpandedText} 10:00`,
     'nested links and image alternatives remain while a nested Read more control is excluded'
 );
+const expandedReferenceId = messageCell.getAttribute('aria-labelledby');
+assert.match(expandedReferenceId, /^wa-plus-expanded-/);
+const expandedReference = messageCell.children.find(node => node.id === expandedReferenceId);
+assert.equal(expandedReference.hidden, true);
+assert.equal(expandedReference.getAttribute('role'), 'note');
+assert.equal(expandedReference.getAttribute('aria-label'), `Member One ${nestedExpandedText} 10:00`);
+assert.equal(secondMessageCell.getAttribute('aria-labelledby'), null,
+    'expansion does not add a reference to the neighboring message');
+messageCell.setAttribute('aria-label', 'Host truncated label Read more');
+MutationObserver.instances.at(-1).trigger([{type: 'attributes', target: messageCell}]);
+assert.equal(messageCell.getAttribute('aria-labelledby'), expandedReferenceId,
+    'native label rewrites leave the complete referenced name available');
 runtime.handleMessageReadMoreKeyup({ key: 'Enter' });
 runtime.releaseOwnedAttribute(
     messageCell,
@@ -891,6 +912,8 @@ runtime.releaseOwnedAttribute(
 );
 readMoreBody.children = [];
 readMoreBody.textContent = collapsedReadMoreText;
+MutationObserver.instances.at(-1).trigger([{ type: 'characterData', target: readMoreBody }]);
+assert.equal(messageCell.getAttribute('aria-labelledby'), null, 'recycled message releases its expanded reference');
 readMoreContainer.appendChild(readMoreButton);
 readMoreButton.closestHandler = readMoreClosest;
 readMorePresent = true;
@@ -2403,8 +2426,11 @@ assert.match(runtime.SELECTORS.messageMediaCaption,
     /\[data-testid~="video-caption"\]/,
     'video captions are matched as a tokenized WhatsApp data-testid value');
 assert.match(runtime.SELECTORS.messageMediaCaption,
-    /,\s*\[data-testid="msg-container"\]\s+\[data-testid~="document-caption"\]\s*$/,
+    /,\s*\[data-testid="msg-container"\]\s+\[data-testid~="document-caption"\](?:,|$)/,
     'document captions are matched without a data-pre-plain-text ancestor');
+assert.match(runtime.SELECTORS.messageMediaCaption,
+    /\[data-testid="media-album"\]\s+\[data-testid~="album-caption"\]/,
+    'album captions use the authored caption token inside their album');
 const imageSnapshot = runtime.getMessageReaderSnapshot(messageCell);
 assert.ok(imageSnapshot, 'a WhatsApp image-caption token produces a readable snapshot');
 assert.equal(imageSnapshot.sentAt, '21:25, 8/24/2026');
@@ -4064,22 +4090,23 @@ assert.equal(runtime.handleMessageGridKeydown(arrowAfterAltOne), true);
 assert.equal(arrowAfterAltOne.prevented, true);
 assert.equal(arrowAfterAltOne.immediateStopped, true);
 const rapidArrowAfterAltOne = gridKey(secondShortcutChat.rowActivator, 'ArrowUp', { repeat: true });
-assert.equal(runtime.handleMessageGridKeydown(rapidArrowAfterAltOne), false);
-assert.equal(rapidArrowAfterAltOne.prevented, false,
-    'only one Alt+1 recovery arrow is consumed before the focus frame runs');
+assert.equal(runtime.handleMessageGridKeydown(rapidArrowAfterAltOne), true);
+assert.equal(rapidArrowAfterAltOne.prevented, true,
+    'pending focus must not let repeated arrows reach stale native navigation');
 drainScheduledFrames();
 assert.equal(document.activeElement, firstShortcutChat.rowActivator,
     'ArrowUp after Alt+1 starts from the remembered chat instead of the first row');
 assert.equal(firstShortcutChat.rowActivator.getAttribute('aria-selected'), 'true');
 assert.equal(secondShortcutChat.rowActivator.getAttribute('aria-selected'), 'false');
 const arrowAcrossSelectedChat = gridKey(firstShortcutChat.rowActivator, 'ArrowDown');
-assert.equal(runtime.handleMessageGridKeydown(arrowAcrossSelectedChat), false);
-assert.equal(arrowAcrossSelectedChat.prevented, false,
-    'the second arrow returns to WhatsApp so native selected state can update');
-assert.equal(document.activeElement, firstShortcutChat.rowActivator);
+assert.equal(runtime.handleMessageGridKeydown(arrowAcrossSelectedChat), true);
+assert.equal(arrowAcrossSelectedChat.prevented, true,
+    'consecutive arrows continue from the actual focused chat');
+drainScheduledFrames();
+assert.equal(document.activeElement, secondShortcutChat.rowActivator);
 assert.equal(firstShortcutChat.rowActivator.getAttribute('aria-selected'), 'true');
 assert.equal(secondShortcutChat.rowActivator.getAttribute('aria-selected'), 'false',
-    'the one managed recovery arrow never changes WhatsApp selection state');
+    'managed arrows move focus without activating a different chat');
 
 scheduledFrames.length = 0;
 assert.equal(runtime.focusChatRow(secondShortcutChat.row), true);
@@ -5663,6 +5690,21 @@ for (const target of [promo, communityEmptyState, actionGroup, encryptionNotice]
     assert.equal(target.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
 }
 
+runtime.setCustomText('desktop-promo', '');
+titleSpan.textContent = 'Unduh WhatsApp untuk Windows';
+copySpan.textContent = 'Dapatkan fitur ekstra seperti menelepon suara dan video, berbagi layar, dan masih banyak lagi.';
+assert.equal(runtime.getDesktopAppPromo(), promo);
+runtime.setCleanUi(true);
+runtime.syncCleanUi();
+assert.equal(promo.getAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), 'true');
+assert.equal(document.activeElement, unrelatedFocus);
+copySpan.textContent = 'Dapatkan fitur ekstra seperti menelepon suara dan video, berbagi layar, dan masih banyak lagi';
+assert.equal(runtime.getDesktopAppPromo(), promo);
+copySpan.textContent = 'Unrelated introduction content';
+assert.equal(runtime.getDesktopAppPromo(), null);
+runtime.syncCleanUi();
+assert.equal(promo.hasAttribute(runtime.CLEAN_UI_HIDDEN_ATTRIBUTE), false);
+titleSpan.textContent = 'Download WhatsApp for Windows';
 copySpan.textContent = 'Unrelated introduction content';
 runtime.setCleanUi(true);
 assert.equal(runtime.getDesktopAppPromo(), null);
@@ -5870,7 +5912,7 @@ assert.match(originalSource, /stopImmediatePropagation\(\)/);
 assert.match(
     originalSource,
     /window\.addEventListener\(["']keydown["'], handleMessageGridKeydown, true\)/,
-    'message-grid navigation and Alt+1 one-arrow recovery must run before WhatsApp capture handlers'
+    'message-grid navigation and Alt+1 arrow recovery must run before WhatsApp capture handlers'
 );
 assert.doesNotMatch(
     originalSource,

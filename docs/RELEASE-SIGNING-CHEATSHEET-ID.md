@@ -45,7 +45,7 @@ Jika salah satu perintah gagal, selesaikan masalahnya sebelum melanjutkan. Tes j
 Pertahankan manifest dan signature lama pada commit pertama ini. Siapkan file rilis, lalu periksa daftarnya. Tambahkan file source, tes, atau dokumentasi lain yang memang ingin dirilis secara eksplisit.
 
 ```powershell
-git add -- src 'test_*.js' README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
+git add -- src tests README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
 ```
 
 Lihat ringkasan perubahan yang sudah masuk staging:

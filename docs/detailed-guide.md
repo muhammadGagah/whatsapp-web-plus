@@ -2,6 +2,12 @@
 
 [Back to the installation guide](../README.md). Use this reference for additional features, installation methods, and developer notes.
 
+## Testing download progress with NVDA
+
+Download a received document that displays a circular progress indicator. Confirm an initial percentage, occasional progress updates, and an accessible progress bar next to the original attachment control. The attachment's Enter/Space and cancel behavior should remain unchanged. Test two simultaneous downloads, switching chats, cancelling, and changing the script language while a report is pending. Hidden tabs should not produce stale reports when resumed.
+
+The enhancement reads the determinate two-circle indicator observed in WhatsApp; other transfer indicators are left unchanged. Unknown values and removed indicators do not imply completion. Automatic progress uses the existing polite message log and waits for explicit user feedback to finish. Verify NVDA speech and the browser accessibility tree manually; automated tests cannot establish actual speech timing.
+
 ## What Tampermonkey does
 
 Tampermonkey is a browser extension that installs, manages, updates, and runs userscripts. After the one-time setup below, Tampermonkey runs WhatsApp Web Plus automatically when you open WhatsApp Web.
@@ -77,7 +83,7 @@ Tampermonkey 5.3 and later requires one extra permission on Chrome-based browser
 
 Browser-internal addresses such as `chrome://extensions` and `edge://extensions` must be entered in the address bar. They usually cannot be opened as links from this page.
 
-**Developer mode** is a browser-wide extension setting. You do not need to create or edit code when using it for this purpose.
+**Developer mode** is a browser-wide extension setting.
 
 ### 3. Check site access if the script does not start
 
@@ -200,7 +206,7 @@ Use these keys to navigate the menu:
 - **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
 - **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to the end. The script does not pause, seek, or restart playback. WhatsApp then stays on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
 - **Shortcut remapping** lets you assign or disable shortcuts for recording, previous/next chat, and outgoing calls. See the [shortcut editing instructions](#assigning-shortcuts).
-- **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`. Selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural keeps raw 48 kHz input without equalization. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
+- **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`. Selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural applies only a 2 dB gain increase without equalization. All enhanced voice-message profiles receive a 2 dB output increase; WhatsApp default and call profiles are unchanged. Voice profiles preserve the sample rate and bit depth requested by WhatsApp; unspecified values are selected by the browser. Processed profiles try to match the actual input sample rate, with a browser-default fallback, and reserve output headroom for equalizer boosts. Echo cancellation follows WhatsApp/browser settings. These measures reduce avoidable processing artifacts but do not guarantee distortion-free recording on every device. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
 - **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually. Select **WhatsApp default** immediately if a call loses audio or develops echo.
 - **Custom language strings** lets users enter the exact WhatsApp text used for unread markers, activity, delivery states, navigation, privacy filtering, and appearance cleanup. The five navigation names control `Alt + Shift + 1` through `5`. See the reference below before changing these fields.
 - **Clean UI** hides promotional and extra controls while keeping the chat list and conversation available.

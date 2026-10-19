@@ -4,7 +4,7 @@ const vm = require('node:vm');
 
 // Reuse the existing synthetic DOM and generated-runtime loader, stopping before
 // its test cases. This exercises the same observer and modules as the main suite.
-const harness = fs.readFileSync('test_accessibility_runtime.js', 'utf8');
+const harness = fs.readFileSync('tests/test_accessibility_runtime.js', 'utf8');
 const marker = 'const runtime = sandbox.__runtime;';
 assert.ok(harness.includes(marker), 'runtime fixture setup must remain available');
 const fixture = harness.slice(0, harness.indexOf(marker) + marker.length);

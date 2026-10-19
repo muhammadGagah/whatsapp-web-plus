@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026.10.19 - 2026-10-19
+
+Clean UI now recognizes the Indonesian desktop promotion description, so the promotion is hidden without a custom title.
+
+### Read Sticker
+
+- Add opt-in sticker descriptions with a remappable shortcut and no default binding. Providers are ordered Gemini, Groq, Cloudflare Workers AI, then Custom, OpenAI-compatible.
+- Store per-provider credentials encrypted in the WhatsApp profile. Preserve saved credentials when the password field is blank and keep browser and Companion profiles separate.
+- Use Tampermonkey networking in browsers and a dedicated native HTTPS transport in Companion. No extra browser extension or deployed server is required.
+- Support configurable Cloudflare image models and account-bound tokens, retaining Llama 3.2 11B Vision as the default. Validate model IDs and endpoints in both transports.
+- Add explicit Llama 3.2 model agreement, success/error/timeout feedback, and a repeatable local preview that sends no agreement. Other model licenses remain handled through Cloudflare.
+- Recognize focused sticker buttons, opaque message IDs, and Lottie SVG still snapshots. Bound animation samples and explain unreadable motion.
+- Correct image loading, request completion, cancellation, and timeout handling. Preserve pending results across same-chat focus and status changes while rejecting stale results after chat, language, or settings changes.
+- Simplify English/Indonesian settings and waiting messages, and avoid duplicate Sticker prefixes.
+
+### Accessibility and navigation
+
+- Keep message menus and reaction strips inside smaller windows, including early focus handling for NVDA activation. The setting is on by default.
+- Expose document download progress with named progress bars and throttled percentage announcements, without treating indicator removal as success.
+- Read album captions in Focus Mode while preserving existing message details.
+- Correct Alt+1 chat-list selection and following arrow navigation.
+- Refresh expanded Read more message names after Shift+Enter, retaining sender/time and protecting adjacent messages.
+- Announce Escape closure of private chats, groups, channels, and community announcement chats after focus settles.
+- Default Privacy mode, automatic new-message reading, Enter/Space voice playback, Clean Status, message-menu fitting, and Clean UI to on. Default total unread-chat announcements to off. Preserve existing preferences.
+
+### Maintenance and versioning
+
+- Consolidate regression tests under tests/ and update test commands. Refresh both project guides and remove outdated comments.
+- Adopt year.month.day versioning with 2026.10.19, matching Companion. This version compares higher than 2.6.91. Publishing and signing remain separate steps.
+
 ## 2.6.91 - 2026-10-04
 
 ### Accessibility fixes

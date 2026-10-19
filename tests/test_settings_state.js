@@ -46,16 +46,39 @@ vm.runInNewContext(result.outputFiles[0].text, persistedFalseContext);
 assert.equal(
   persistedFalseContext.SettingsState.isUnreadChatTotalAnnouncementEnabled(),
   false,
-  'an explicitly saved Off preference must override the default-On fallback'
+  'an explicitly saved preference must be retained'
 );
+
+// Existing preferences override all newly changed state-module defaults.
+const savedPreferences = new Map([
+  ['wa-plus-automatic-reading', 'false'],
+  ['wa-plus-status-reading-cleanup', 'false'],
+  ['wa-plus-message-menu-fit', 'false'],
+  ['wa-plus-voice-message-keyboard-playback', 'false'],
+  ['wa-plus-announce-unread-chat-total', 'true']
+]);
+const savedContext = { ...context, localStorage: {
+  getItem(key) { return savedPreferences.get(key) ?? null; }, setItem() {}
+}};
+savedContext.globalThis = savedContext;
+vm.runInNewContext(result.outputFiles[0].text, savedContext);
+for (const name of ['AutomaticReading', 'StatusReadingCleanup', 'MessageMenuFit', 'VoiceMessageKeyboardPlayback']) {
+  assert.equal(savedContext.SettingsState[`is${name}Enabled`](), false);
+}
+assert.equal(savedContext.SettingsState.isUnreadChatTotalAnnouncementEnabled(), true);
 
 assert.equal(settings.getLanguage(), 'en');
 assert.equal(settings.isAnnouncementReductionEnabled(), true);
-assert.equal(settings.isAutomaticReadingEnabled(), false);
-assert.equal(settings.isStatusReadingCleanupEnabled(), false);
+assert.equal(settings.isAutomaticReadingEnabled(), true);
+assert.equal(settings.isStatusReadingCleanupEnabled(), true);
+assert.equal(settings.isMessageMenuFitEnabled(), true);
+assert.equal(settings.setMessageMenuFit(true), true);
+assert.equal(settings.isMessageMenuFitEnabled(), true);
+assert.equal(values.get('wa-plus-message-menu-fit'), 'true');
+assert.equal(settings.setMessageMenuFit(false), true);
 assert.equal(settings.isSenderDeviceAnnouncementEnabled(), false);
-assert.equal(settings.isUnreadChatTotalAnnouncementEnabled(), true);
-assert.equal(settings.isVoiceMessageKeyboardPlaybackEnabled(), false);
+assert.equal(settings.isUnreadChatTotalAnnouncementEnabled(), false);
+assert.equal(settings.isVoiceMessageKeyboardPlaybackEnabled(), true);
 assert.equal(settings.shouldOpenChatsAtFirstUnread(), false);
 assert.equal(settings.isShortcutRemapEnabled('voice-recording'), true);
 assert.equal(settings.isShortcutRemapEnabled('previous-chat'), false);
@@ -72,6 +95,8 @@ assert.equal(settings.isUnreadChatTotalAnnouncementEnabled(), false);
 assert.equal(values.get('wa-plus-announce-unread-chat-total'), 'false');
 const workingSetItem = context.localStorage.setItem;
 context.localStorage.setItem = () => { throw new Error('storage denied'); };
+assert.equal(settings.setMessageMenuFit(true), false);
+assert.equal(settings.isMessageMenuFitEnabled(), false);
 assert.equal(settings.setVoiceMessageKeyboardPlayback(true), false);
 assert.equal(settings.isVoiceMessageKeyboardPlaybackEnabled(), false);
 context.localStorage.setItem = workingSetItem;

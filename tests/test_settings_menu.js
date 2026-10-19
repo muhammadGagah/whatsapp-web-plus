@@ -168,6 +168,7 @@ document.head.parentElement = document.body.parentElement = null;
 const windowObject = {
     requestAnimationFrame(callback) { callback(); },
     addEventListener(type, listener) { windowListeners.set(type, listener); },
+    dispatchEvent(event) { windowListeners.get(event.type)?.(event); return true; },
     open(...args) {
         openCalls.push(args);
         return openHandler(...args);
@@ -189,6 +190,7 @@ const output = buildSync({
 }).outputFiles[0].text;
 
 const context = {
+    Event,
     document,
     window: windowObject,
     localStorage: {
@@ -328,19 +330,24 @@ const accessibilityMenu = document.getElementById('wa-plus-accessibility-menu');
 const keyboardShortcutsMenu = document.getElementById('wa-plus-keyboard-shortcuts-menu');
 const appearanceMenu = document.getElementById('wa-plus-appearance-menu');
 const statusReadingItem = accessibilityMenu.children.find(item => item.dataset.action === 'status-reading-cleanup');
+const messageMenuFitItem = accessibilityMenu.children.find(item => item.dataset.action === 'message-menu-fit');
+assert.ok(messageMenuFitItem);
+assert.equal(messageMenuFitItem.getAttribute('role'), 'menuitemcheckbox');
+assert.equal(messageMenuFitItem.getAttribute('aria-checked'), 'true');
+assert.equal(messageMenuFitItem.children[1].textContent, 'Keep message menus within the window');
 const unreadTotalItem = accessibilityMenu.children.find(item => item.dataset.action === 'announce-unread-chat-total');
 const voicePlaybackItem = accessibilityMenu.children.find(item => item.dataset.action === 'voice-message-keyboard-playback');
 assert.ok(statusReadingItem);
 assert.equal(statusReadingItem.getAttribute('role'), 'menuitemcheckbox');
-assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
+assert.equal(statusReadingItem.getAttribute('aria-checked'), 'true');
 assert.equal(statusReadingItem.children[1].textContent, 'Clean Status reading and stop automatic advancement');
 assert.ok(unreadTotalItem);
 assert.equal(unreadTotalItem.getAttribute('role'), 'menuitemcheckbox');
-assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'true');
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'false');
 assert.equal(unreadTotalItem.children[1].textContent, 'Announce total unread chats');
 assert.ok(voicePlaybackItem);
 assert.equal(voicePlaybackItem.getAttribute('role'), 'menuitemcheckbox');
-assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'false');
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'true');
 assert.equal(voicePlaybackItem.children[1].textContent, 'Play or pause focused voice messages with Enter or Space');
 assert.equal(privacyItem.getAttribute('role'), 'menuitemcheckbox');
 assert.equal(privacyItem.children[1].textContent, 'Privacy mode');
@@ -508,7 +515,8 @@ for (const [action, label] of [
     ['remap-previous-chat', 'Previous chat: Not assigned'],
     ['remap-next-chat', 'Next chat: Not assigned'],
     ['remap-voice-call', 'Start voice call: Not assigned'],
-    ['remap-video-call', 'Start video call: Not assigned']
+    ['remap-video-call', 'Start video call: Not assigned'],
+    ['remap-read-sticker', 'Read Sticker: Not assigned']
 ]) {
     const item = keyboardShortcutsMenu.children.find(child => child.dataset.action === action);
     assert.equal(item.tagName, 'BUTTON');
@@ -636,14 +644,14 @@ assert.equal(document.activeElement.dataset.action, 'reduce-announcements');
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement.dataset.action, 'automatic-reading');
 keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-automatic-reading'), 'false');
+assert.equal(document.activeElement.getAttribute('aria-checked'), 'false');
+assert.equal(rootMenu.hidden, false);
+keydown(keyboardEvent({ key: 'Enter' }));
 assert.equal(storedValues.get('wa-plus-automatic-reading'), 'true');
-assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
 assert.equal(rootMenu.hidden, false);
 keydown(keyboardEvent({ key: 'Enter' }));
 assert.equal(storedValues.get('wa-plus-automatic-reading'), 'false');
-assert.equal(rootMenu.hidden, false);
-keydown(keyboardEvent({ key: 'Enter' }));
-assert.equal(storedValues.get('wa-plus-automatic-reading'), 'true');
 assert.equal(rootMenu.hidden, false);
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
@@ -666,22 +674,22 @@ assert.equal(rootMenu.hidden, false);
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement, unreadTotalItem);
-assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'true');
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'false');
 const unreadTotalFocus = document.activeElement;
 keydown(keyboardEvent({ key: ' ' }));
-assert.equal(storedValues.get('wa-plus-announce-unread-chat-total'), 'false');
-assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'false');
+assert.equal(storedValues.get('wa-plus-announce-unread-chat-total'), 'true');
+assert.equal(unreadTotalItem.getAttribute('aria-checked'), 'true');
 assert.equal(document.activeElement, unreadTotalFocus);
 assert.equal(rootMenu.hidden, false);
 assert.equal(accessibilityMenu.hidden, false);
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement, voicePlaybackItem);
-assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'false');
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'true');
 const voicePlaybackFocus = document.activeElement;
 keydown(keyboardEvent({ key: 'Enter' }));
-assert.equal(storedValues.get('wa-plus-voice-message-keyboard-playback'), 'true');
-assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'true');
+assert.equal(storedValues.get('wa-plus-voice-message-keyboard-playback'), 'false');
+assert.equal(voicePlaybackItem.getAttribute('aria-checked'), 'false');
 assert.equal(document.activeElement, voicePlaybackFocus);
 assert.equal(rootMenu.hidden, false);
 assert.equal(accessibilityMenu.hidden, false);
@@ -698,11 +706,37 @@ assert.equal(rootMenu.hidden, false);
 
 keydown(keyboardEvent({ key: 'ArrowDown' }));
 assert.equal(document.activeElement, statusReadingItem);
-assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
-keydown(keyboardEvent({ key: ' ' }));
-assert.equal(storedValues.get('wa-plus-status-reading-cleanup'), 'true');
 assert.equal(statusReadingItem.getAttribute('aria-checked'), 'true');
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(storedValues.get('wa-plus-status-reading-cleanup'), 'false');
+assert.equal(statusReadingItem.getAttribute('aria-checked'), 'false');
 assert.equal(rootMenu.hidden, false);
+
+const readStickerItem = accessibilityMenu.children.find(item => item.dataset.action === 'read-sticker');
+const configureStickerItem = accessibilityMenu.children.find(item => item.dataset.action === 'configure-read-sticker');
+assert.equal(readStickerItem.getAttribute('aria-checked'), 'false');
+assert.equal(configureStickerItem.hidden, true);
+document.activeElement = readStickerItem;
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(readStickerItem.getAttribute('aria-checked'), 'true');
+assert.equal(configureStickerItem.hidden, false);
+assert.equal(document.activeElement, readStickerItem);
+assert.equal(configureStickerItem.children[1].textContent, 'Configure provider and API key');
+assert.equal(configureStickerItem.getAttribute('aria-haspopup'), 'dialog');
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement, configureStickerItem);
+keydown(keyboardEvent({ key: 'Enter' }));
+const stickerDialog = document.getElementById('wa-plus-sticker-dialog');
+assert.equal(stickerDialog.open, true);
+assert.equal(document.activeElement.id, 'wa-plus-sticker-provider');
+stickerDialog.close();
+assert.equal(rootMenu.hidden, false);
+assert.equal(accessibilityMenu.hidden, false);
+assert.equal(document.activeElement, configureStickerItem, 'dialog returns focus to the configuration trigger');
+keydown(keyboardEvent({ key: 'ArrowUp' }));
+keydown(keyboardEvent({ key: ' ' }));
+assert.equal(readStickerItem.getAttribute('aria-checked'), 'false');
+assert.equal(configureStickerItem.hidden, true);
 
 keydown(keyboardEvent({ key: 'Escape' }));
 keydown(keyboardEvent({ key: 'ArrowDown' }));
@@ -844,12 +878,12 @@ const automaticItem = document.activeElement;
 const repeatedSpace = keyboardEvent({ key: ' ', repeat: true });
 keydown(repeatedSpace);
 assert.equal(repeatedSpace.prevented, true);
-assert.equal(automaticItem.getAttribute('aria-checked'), 'true');
+assert.equal(automaticItem.getAttribute('aria-checked'), 'false');
 const workingSetItem = context.localStorage.setItem;
 context.localStorage.setItem = () => { throw new Error('storage denied'); };
 const saveErrorTimerStart = scheduledTimers.length;
 keydown(keyboardEvent({ key: ' ' }));
-assert.equal(automaticItem.getAttribute('aria-checked'), 'true');
+assert.equal(automaticItem.getAttribute('aria-checked'), 'false');
 assert.equal(rootMenu.hidden, false);
 const immediateAlert = scheduledTimers
     .slice(saveErrorTimerStart)

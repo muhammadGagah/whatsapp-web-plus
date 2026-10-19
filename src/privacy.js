@@ -24,13 +24,13 @@ import {
   writeSetting
 } from './settings-state.js';
 
-let isPrivacyMode = readSetting(STORAGE_KEYS.privacy, 'false') === 'true';
+let isPrivacyMode = readSetting(STORAGE_KEYS.privacy, 'true') === 'true';
 
 export const _origSetAttribute = Element.prototype.setAttribute;
 export const _origRemoveAttribute = Element.prototype.removeAttribute;
 export const privacyAttributes = new Map();
 const senderDeviceLabels = new Map();
-const documentCaptionLabels = new Map();
+const messageCaptionLabels = new Map();
 const messageMentionLabels = new Map();
 
 export function hasActiveState(el) {
@@ -286,6 +286,34 @@ function insertDocumentCaption(text, filename, caption) {
     text: `${text.slice(0, filenameEnd)} ${caption}${text.slice(filenameEnd)}`,
     inserted: true
   };
+}
+
+function getAlbumCaption(message) {
+  const caption = message.querySelector?.(
+    '[data-testid="media-album"] [data-testid~="album-caption"]'
+  );
+  if (!caption || caption.closest('.focusable-list-item') !== message ||
+    caption.closest('[data-testid="quoted-message"]')) return '';
+  const parts = [];
+  const collect = node => {
+    if (node.nodeType === 3) {
+      parts.push(node.nodeValue || '');
+      return;
+    }
+    if (node.getAttribute?.('aria-hidden') === 'true' || node.hasAttribute?.('hidden') ||
+      node.matches?.(SELECTORS.messageReadMoreButton)) return;
+    const tag = node.tagName?.toLowerCase();
+    if (tag === 'img') {
+      parts.push(node.getAttribute('alt') || '');
+      return;
+    }
+    if (tag === 'br') parts.push(' ');
+    const children = Array.from(node.childNodes || []);
+    if (children.length) children.forEach(collect);
+    else parts.push(node.textContent || '');
+  };
+  collect(caption);
+  return normalizeText(parts.join(''));
 }
 
 function getAccessibleMentionText(mention, el) {
@@ -644,12 +672,12 @@ export function prepareNamedAttribute(el, name, value) {
   } else if (mentionState && (!isMessageLabel || raw !== mentionState.baseValue)) {
     messageMentionLabels.delete(el);
   }
-  const documentState = name === 'aria-label' && documentCaptionLabels.get(el);
-  if (isMessageLabel && documentState &&
-    (raw === documentState.appliedValue || raw === documentState.rawValue)) {
-    raw = documentState.baseValue;
-  } else if (documentState && (!isMessageLabel || raw !== documentState.baseValue)) {
-    documentCaptionLabels.delete(el);
+  const captionState = name === 'aria-label' && messageCaptionLabels.get(el);
+  if (isMessageLabel && captionState &&
+    (raw === captionState.appliedValue || raw === captionState.rawValue)) {
+    raw = captionState.baseValue;
+  } else if (captionState && (!isMessageLabel || raw !== captionState.baseValue)) {
+    messageCaptionLabels.delete(el);
   }
   const deviceState = name === 'aria-label' && senderDeviceLabels.get(el);
   if (isMessageLabel && deviceState && raw === deviceState.appliedValue) {
@@ -670,8 +698,8 @@ export function prepareNamedAttribute(el, name, value) {
   const mentionBaseValue = raw;
   if (isMessageLabel) raw = restoreMessageMentionNames(raw, el);
   const mentionsRestored = raw !== mentionBaseValue;
-  const documentBaseValue = raw;
-  let documentCaptionInserted = false;
+  const captionBaseValue = raw;
+  let captionInserted = false;
   if (isMessageLabel) {
     const documentAttachment = getDocumentAttachmentContent(el);
     if (documentAttachment) {
@@ -681,7 +709,13 @@ export function prepareNamedAttribute(el, name, value) {
         documentAttachment.caption
       );
       raw = captionResult.text;
-      documentCaptionInserted = captionResult.inserted;
+      captionInserted = captionResult.inserted;
+    }
+    const albumCaption = getAlbumCaption(el);
+    const captionLabel = albumCaption && tForHost('albumCaption', el, { caption: albumCaption });
+    if (captionLabel && !normalizeText(raw).endsWith(captionLabel)) {
+      raw = `${raw}${/[.!?]$/.test(raw) ? '' : '.'} ${captionLabel}`;
+      captionInserted = true;
     }
   }
   const hostLanguage = isMessageLabel && getHostLanguage(el);
@@ -700,14 +734,14 @@ export function prepareNamedAttribute(el, name, value) {
     : raw;
   if (decorated !== raw) senderDeviceLabels.set(el, { baseValue, appliedValue: decorated });
   else senderDeviceLabels.delete(el);
-  if (documentCaptionInserted) {
-    documentCaptionLabels.set(el, {
-      baseValue: documentBaseValue,
+  if (captionInserted) {
+    messageCaptionLabels.set(el, {
+      baseValue: captionBaseValue,
       rawValue: baseValue,
       appliedValue: decorated
     });
   } else {
-    documentCaptionLabels.delete(el);
+    messageCaptionLabels.delete(el);
   }
   if (mentionsRestored) {
     messageMentionLabels.set(el, { baseValue: mentionBaseValue, appliedValue: decorated });
@@ -728,8 +762,8 @@ export function getNamedAttributeSource(el, name) {
   const privacyState = privacyAttributes.get(el)?.get(name);
   if (privacyState && current === privacyState.masked) return privacyState.raw;
 
-  const documentState = name === 'aria-label' && documentCaptionLabels.get(el);
-  if (documentState && current === documentState.appliedValue) return documentState.rawValue;
+  const captionState = name === 'aria-label' && messageCaptionLabels.get(el);
+  if (captionState && current === captionState.appliedValue) return captionState.rawValue;
 
   // Preserve presented mention names instead of WhatsApp's private identity tokens.
   return current;
@@ -771,9 +805,9 @@ export function cleanNamedAttribute(el, attrName) {
     !isMessageLabel &&
     !hasPendingMessageInstruction &&
     !isSenderDeviceAnnouncementEnabled()) return;
-  const documentState = attrName === 'aria-label' && documentCaptionLabels.get(el);
-  const sourceValue = documentState && value === documentState.appliedValue
-    ? documentState.baseValue
+  const captionState = attrName === 'aria-label' && messageCaptionLabels.get(el);
+  const sourceValue = captionState && value === captionState.appliedValue
+    ? captionState.baseValue
     : isPrivacyMode && privacyState && value === privacyState.masked && !deviceState
       ? privacyState.raw
       : value;
@@ -837,9 +871,9 @@ export function forgetPrivacyState(rootEl) {
       senderDeviceLabels.delete(el);
     }
   }
-  for (const el of [...documentCaptionLabels.keys()]) {
+  for (const el of [...messageCaptionLabels.keys()]) {
     if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
-      documentCaptionLabels.delete(el);
+      messageCaptionLabels.delete(el);
     }
   }
   for (const el of [...messageMentionLabels.keys()]) {

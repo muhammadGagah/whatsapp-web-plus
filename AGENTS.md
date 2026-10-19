@@ -32,14 +32,14 @@ user will hear and where keyboard focus will land.
 - `whatsapp_web_plus.user.js` / `whatsapp_web_plus.debug.js` — **generated** by
   `npm run build` / `npm run build:debug`. Never edit them directly; always
   rebuild after changing `src/`.
-- `test_*.js` — Node regression suites (no test framework; plain asserts).
+- `tests/test_*.js` — Node regression suites (no test framework; plain asserts).
 - `debug*.txt`, `scriptLama.js` — local artifacts, git-ignored.
 
 ## Commands
 
 ```powershell
 npm run build      # regenerate the userscript from src/
-npm test           # build + all four test suites; must pass before release
+npm test           # build + all regression suites; must pass before release
 git diff --check
 ```
 
