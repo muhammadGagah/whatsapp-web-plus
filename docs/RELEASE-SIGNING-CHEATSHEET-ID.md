@@ -12,7 +12,7 @@ Jalankan perintah satu per satu sesuai urutan. Tekan Enter setelah setiap baris 
 
 **Semua path lokal dalam panduan ini hanyalah contoh.** Ganti `D:\whatsapp\whatsapp-web-plus` dengan lokasi project script Anda. Ganti path private key dengan lokasi key yang sudah Anda gunakan, di luar kedua repository. Variabel path memakai tanda kutip agar lokasi dengan spasi tetap bisa digunakan. Path relatif pada langkah berikut dihitung dari root project script, bukan dari `docs`.
 
-Versi dibaca dari `package.json`. Perbarui file tersebut, `package-lock.json`, `src/metadata.txt`, `README.md`, dan `CHANGELOG.md` sebelum menjalankan blok berikut. Ganti contoh release sequence dengan angka yang lebih besar daripada **semua sequence yang pernah dipublikasikan**. `2026092101` hanya contoh. Gunakan key ID yang sudah dipercaya versi Companion yang didukung. Jangan membuat key baru setiap kali rilis.
+Versi dibaca dari `package.json`. Perbarui file tersebut, `package-lock.json`, `src/metadata.txt`, `README.md`, dan `CHANGELOG.md` sebelum menjalankan blok berikut. Ganti contoh release sequence dengan angka yang lebih besar daripada **semua sequence yang pernah dipublikasikan**. `2026102601` hanya contoh. Gunakan key ID yang sudah dipercaya versi Companion yang didukung. Jangan membuat key baru setiap kali rilis.
 
 URL berikut adalah endpoint resmi project, bukan contoh path lokal. Untuk fork, perubahan penerbitan dan verifikasi Companion harus dilakukan bersama. Mengganti variabel URL saja tidak cukup.
 
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = 'D:\whatsapp\whatsapp-web-plus'
 $privateKeyPath = 'D:\secure\whatsapp-companion\release-ed25519-private.pem'
 $keyId = 'wwp-userscript-ed25519-2026-01'
-$releaseSequence = '2026092101'
+$releaseSequence = '2026102601'
 Set-Location -LiteralPath $scriptRoot
 $publicKeyPath = Join-Path $scriptRoot 'update-public-key.pem'
 $releaseVersion = (Get-Content -LiteralPath '.\package.json' -Raw | ConvertFrom-Json).version
@@ -42,10 +42,10 @@ Jika salah satu perintah gagal, selesaikan masalahnya sebelum melanjutkan. Tes j
 
 ## 3. Publikasikan userscript terlebih dahulu
 
-Pertahankan manifest dan signature lama pada commit pertama ini. Siapkan file rilis, lalu periksa daftarnya. Tambahkan file source, tes, atau dokumentasi lain yang memang ingin dirilis secara eksplisit.
+Pertahankan manifest dan signature lama pada commit pertama ini. Siapkan file rilis, lalu periksa daftarnya. Tambahkan perubahan lain yang memang ingin dirilis secara eksplisit, misalnya `.gitignore` atau `debug-entry.js`. Jangan pernah menandatangani build lokal: GreasyFork memformat ulang metadata, sehingga hash file publik berbeda.
 
 ```powershell
-git add -- src tests README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
+git add -- src tests docs README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
 ```
 
 Lihat ringkasan perubahan yang sudah masuk staging:
@@ -60,7 +60,7 @@ Lalu periksa daftar nama filenya:
 git --no-pager diff --cached --name-only
 ```
 
-Lanjutkan hanya jika daftar staging berisi file yang memang diinginkan dan tidak menyertakan manifest serta signature baru. Perintah berikut memakai branch rilis resmi `main`.
+Lanjutkan hanya jika daftar staging berisi file yang memang diinginkan dan tidak menyertakan manifest serta signature baru. Perintah berikut melakukan push langsung ke `main`. Jika Anda merilis melalui branch dan pull request, push branch tersebut lalu merge pull request-nya, dan lanjutkan hanya setelah merge selesai. GreasyFork mengimpor dari `main`, dan Companion membaca manifest dari `main`.
 
 ```powershell
 git commit -m "Release WhatsApp Web Plus $releaseVersion"
@@ -141,3 +141,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Public release verification failed' }
 Periksa lagi `verified=true`, versi, sequence, dan key ID. Jika file publik masih lama atau sementara belum cocok, tunggu sampai file terbaru tersedia lalu ulangi langkah 8 dengan directory sementara baru. Jangan menurunkan sequence untuk mengatasi masalah.
 
 Jika PowerShell ditutup, variabelnya hilang. Mulai lagi dari langkah 1 dan gunakan directory staging baru. Jangan memublikasikan sisa percobaan yang belum diverifikasi.
+
+## 9. Masukkan rilis ke Companion
+
+Setelah langkah 8 berhasil, ikuti `docs/update-bundled-userscript.id.md` di repository Companion. Panduan itu mengunduh file publik yang sama, memverifikasinya dengan manifest ini, lalu menyalinnya ke add-on. Jangan memasukkan build lokal.

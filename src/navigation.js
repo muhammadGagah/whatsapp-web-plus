@@ -1,5 +1,5 @@
 import { SHORTCUT_ACTIONS, matchesShortcutBinding } from './shortcut-bindings.js';
-import { getChatContextKey } from './chat-context.js';
+import { getChatContextKey, isSameChatContext } from './chat-context.js';
 import {
   ALT_T_DOUBLE_PRESS_MS,
   MESSAGE_MEDIA_CONTENT_SELECTOR,
@@ -49,6 +49,7 @@ import {
   isChatMainActive,
   isRenderedElement,
   refreshMessageMentionNames,
+  refreshStickerMessageNames,
   scheduleRoleFix
 } from './chat-accessibility.js';
 import {
@@ -272,21 +273,29 @@ function pruneChatPulseHistory(entries) {
   }
 }
 
-function isChatAtLatestMessages() {
-  const main = document.querySelector(SELECTORS.main);
-  const container = main?.querySelector(SELECTORS.conversationMessages);
-  if (!container || container.clientHeight <= 0) return false;
-  if (isRenderedElement(main.querySelector(getScrollToBottomSelector()))) return false;
-  let viewport = container;
+function getMessageScrollViewport(container, main) {
   // Some layouts put the message list inside the actual scroll viewport.
   // A non-scrolling inner list must not turn older history into a live tail.
   for (let node = container; node && node !== main; node = node.parentElement) {
     if (node.scrollHeight > node.clientHeight ||
       /^(auto|scroll)$/.test(window.getComputedStyle?.(node)?.overflowY || '')) {
-      viewport = node;
-      break;
+      return node;
     }
   }
+  return container;
+}
+
+function getUnreadViewport(messageContainer) {
+  const main = document.querySelector(SELECTORS.main);
+  return main && messageContainer !== main ? getMessageScrollViewport(messageContainer, main) : messageContainer;
+}
+
+function isChatAtLatestMessages() {
+  const main = document.querySelector(SELECTORS.main);
+  const container = main?.querySelector(SELECTORS.conversationMessages);
+  if (!container || container.clientHeight <= 0) return false;
+  if (isRenderedElement(main.querySelector(getScrollToBottomSelector()))) return false;
+  const viewport = getMessageScrollViewport(container, main);
   if (viewport.clientHeight <= 0) return false;
   if (window.getComputedStyle?.(viewport)?.flexDirection === 'column-reverse') {
     return Math.abs(viewport.scrollTop) <= 4;
@@ -308,7 +317,7 @@ function schedulePassiveAnnouncements() {
     const ready = passiveAnnouncements.filter(entry =>
       entry.generation === generation &&
       ((entry.source === 'pulse' && isAutomaticReadingEnabled()) ||
-      (entry.source === 'activity' && isStatusTracking) ||
+      ((entry.source === 'activity' || entry.source === 'receipt') && isStatusTracking) ||
       (entry.source === 'download' && entry.isCurrent())));
     passiveAnnouncements = [];
     if (generation !== passiveAnnouncementGeneration) return;
@@ -355,11 +364,12 @@ export function discardAllPassiveAnnouncements() {
   invalidatePassiveAnnouncements();
 }
 
-export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false } = {}) {
+export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false, receipts = [] } = {}) {
   if (chatTitle !== chatPulseContext) {
     passiveAnnouncementGeneration++;
     invalidatePassiveAnnouncements();
     discardPassiveAnnouncements('pulse');
+    discardPassiveAnnouncements('receipt');
     setChatPulseBaseline(chatTitle, entries);
     return [];
   }
@@ -418,7 +428,7 @@ export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false
 
   receiptCounts.forEach((count, status) => {
     const translatedStatus = translateDeliveryStatus(status);
-    announcements.push(count === 1
+    receipts.push(count === 1
       ? t('messageStatusSingle', { status: translatedStatus })
       : t('messageStatusPlural', { count, status: translatedStatus }));
   });
@@ -431,29 +441,34 @@ function followChatPulseTail(container, previousTailId, nextTailId) {
   const previous = findMessageById(container, previousTailId);
   const next = findMessageById(container, nextTailId);
   if (!previous || !next) return;
-  const viewport = container.getBoundingClientRect();
+  const viewport = getMessageScrollViewport(container,
+    document.querySelector(SELECTORS.main)).getBoundingClientRect();
   const previousRect = previous.getBoundingClientRect();
   if (viewport.height <= 0 || previousRect.height <= 0 ||
     previousRect.bottom <= viewport.top || previousRect.top >= viewport.bottom) return;
   next.scrollIntoView({ block: 'end', behavior: 'instant' });
 }
 
+export function syncChatPulseEntries(chatTitle, entries, options = {}) {
+  if (!isAutomaticReadingEnabled() && !isStatusTracking) return;
+  const receipts = [];
+  const messages = reconcileChatPulseEntries(chatTitle, entries, { ...options, receipts });
+  if (isAutomaticReadingEnabled()) queuePassiveAnnouncements('pulse', messages);
+  if (isStatusTracking) queuePassiveAnnouncements('receipt', receipts);
+}
+
 export function syncChatPulse() {
-  if (!isAutomaticReadingEnabled()) return;
+  if (!isAutomaticReadingEnabled() && !isStatusTracking) return;
   const chatTitle = getCurrentChatContext();
   const previousTailId = chatTitle === chatPulseContext ? chatPulseTailId : '';
-  queuePassiveAnnouncements('pulse', reconcileChatPulseEntries(
-    chatTitle,
-    getChatPulseEntries(),
-    { atLatest: isChatAtLatestMessages() }
-  ));
-  followChatPulseTail(
+  syncChatPulseEntries(chatTitle, getChatPulseEntries(), { atLatest: isChatAtLatestMessages() });
+  if (isAutomaticReadingEnabled()) followChatPulseTail(
     document.querySelector(SELECTORS.conversationMessages), previousTailId, chatPulseTailId
   );
 }
 
 export function scheduleChatPulseSync() {
-  if (!isAutomaticReadingEnabled()) return;
+  if (!isAutomaticReadingEnabled() && !isStatusTracking) return;
   if (chatPulseSyncTimer !== null) return;
   chatPulseSyncTimer = setTimeout(() => {
     chatPulseSyncTimer = null;
@@ -467,23 +482,16 @@ export function toggleChatPulse(announceChange = true) {
     if (announceChange) announce(t('saveError'));
     return false;
   }
-  if (enabled) captureChatPulseBaseline();
-  else {
-    if (chatPulseSyncTimer !== null) clearTimeout(chatPulseSyncTimer);
-    chatPulseSyncTimer = null;
-    chatPulseContext = '';
-    chatPulseTailId = '';
-    chatPulseSeenIds.clear();
-    chatPulseStatuses.clear();
-    chatPulsePendingIds.clear();
-    discardPassiveAnnouncements('pulse');
-  }
+  if (chatPulseSyncTimer !== null) clearTimeout(chatPulseSyncTimer);
+  chatPulseSyncTimer = null;
+  captureChatPulseBaseline();
+  if (!enabled) discardPassiveAnnouncements('pulse');
   if (announceChange) announce(t(enabled ? 'automaticReadingOn' : 'automaticReadingOff'));
   return true;
 }
 
 function refreshPassiveBaselines() {
-  if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
+  if (isAutomaticReadingEnabled() || isStatusTracking) captureChatPulseBaseline();
   lastTypingActivity = getSelectedChatTypingActivity();
   lastTypingChatTitle = getChatRowTitle(getSelectedChatRow(getChatListRows()));
   const infoBtn = getHeaderInfoButton();
@@ -509,7 +517,11 @@ export function togglePrivacyWithQueueReset(announceChange = true) {
   clearStatusRegion();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   schedule(() => {
-    if (isPrivacyModeEnabled() === enabled) refreshPassiveBaselines();
+    if (isPrivacyModeEnabled() !== enabled) return;
+    refreshPassiveBaselines();
+    // Sticker labels embed the sender, so rebuild them after privacy attributes were restored or masked.
+    const currentMessages = document.querySelector(SELECTORS.conversationMessages);
+    if (currentMessages) refreshStickerMessageNames(currentMessages);
   });
   if (announceChange) announce(t(enabled ? 'privacyOn' : 'privacyOff'));
   return true;
@@ -528,7 +540,8 @@ export function captureNextRowId(dividerEl) {
     chatTitle,
     chatContext,
     messageId: message.getAttribute('data-id'),
-    scrollTop: messageContainer.scrollTop,
+    // Nested layouts scroll an ancestor, so remember the position of the real viewport.
+    scrollTop: getUnreadViewport(messageContainer).scrollTop,
     dividerEl
   };
 }
@@ -1191,10 +1204,18 @@ export function toggleStatusTracking(announceChange = true) {
     return false;
   }
   isStatusTracking = enabled;
+  // Automatic reading shares the pulse baseline. Keep its seen and pending messages, and only
+  // restart delivery-status tracking, so a message still waiting to be read is not dropped.
+  if (isAutomaticReadingEnabled() && isSameChatContext(chatPulseContext, getCurrentChatContext())) {
+    chatPulseStatuses = new Map(getChatPulseEntries().map(entry => [entry.id, entry.status]));
+  } else {
+    captureChatPulseBaseline();
+  }
   if (enabled) startStatusTracking();
   else {
     stopStatusTracking();
     discardPassiveAnnouncements('activity');
+    discardPassiveAnnouncements('receipt');
   }
   if (announceChange) announce(t(enabled ? 'chatActivityOn' : 'chatActivityOff'));
   return true;
@@ -1251,10 +1272,13 @@ function handleFocusChatListShortcut(origin) {
 
 export function focusLastMessageShortcut() {
   const request = beginFocusRequest();
+  const chatContext = getCurrentChatContext();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   let clickedScrollToBottom = false;
   const tryFocus = attempt => {
     if (!isFocusRequestCurrent(request) || getActiveModal()) return;
+    // The chat changed while the shortcut waited. Say so instead of staying silent.
+    if (!isSameChatContext(chatContext, getCurrentChatContext())) { announce(t('messageNotReady')); return; }
     const main = document.querySelector(SELECTORS.main);
     if (!isChatMainActive(main)) {
       announce(t('noMessages'));
@@ -1273,10 +1297,13 @@ export function focusLastMessageShortcut() {
     }
 
     const messageContainer = main.querySelector(SELECTORS.conversationMessages) || main;
-    const hasMoreBelow = messageContainer.scrollHeight > messageContainer.clientHeight &&
-      messageContainer.scrollTop + messageContainer.clientHeight < messageContainer.scrollHeight - 1;
+    const viewport = getMessageScrollViewport(messageContainer, main);
+    const reversed = window.getComputedStyle?.(viewport)?.flexDirection === 'column-reverse';
+    const hasMoreBelow = viewport.scrollHeight > viewport.clientHeight &&
+      (reversed ? Math.abs(viewport.scrollTop) > 1 :
+        viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1);
     if (hasMoreBelow) {
-      messageContainer.scrollTop = messageContainer.scrollHeight;
+      viewport.scrollTop = reversed ? 0 : viewport.scrollHeight;
       if (attempt < SHORTCUT_RENDER_RETRIES) schedule(() => tryFocus(attempt + 1));
       else announce(t('messageNotReady'));
       return;
@@ -1336,16 +1363,22 @@ function focusUnreadMessageTarget(target, messageContainer, request, announceFai
   // message is focused, rather than consuming a focusable empty placeholder.
   if (messageId) unreadTarget = {
     chatTitle: getCurrentChatTitle(), chatContext, messageId,
-    scrollTop: unreadTarget?.scrollTop ?? messageContainer.scrollTop
+    scrollTop: unreadTarget?.scrollTop ?? getUnreadViewport(messageContainer).scrollTop
   };
   const isCurrent = () => {
     const main = document.querySelector(SELECTORS.main);
     const currentContainer = main?.querySelector(SELECTORS.conversationMessages) || main;
     return isFocusRequestCurrent(request) && !getActiveModal() &&
-      messageContainer.isConnected && getCurrentChatContext() === chatContext &&
+      messageContainer.isConnected && isSameChatContext(chatContext, getCurrentChatContext()) &&
       currentContainer === messageContainer;
   };
   const tryFocus = attempt => {
+    if (isFocusRequestCurrent(request) && !getActiveModal() &&
+      !isSameChatContext(chatContext, getCurrentChatContext())) {
+      // The chat changed while the unread message was loading. Say so instead of staying silent.
+      if (announceFailure) announce(t('unreadNotReady'));
+      return;
+    }
     if (!isCurrent()) return;
     const currentWrapper = messageId ? findMessageById(messageContainer, messageId) : null;
     const row = messageId ? currentWrapper?.closest('div[role="row"]') : target;
@@ -1371,9 +1404,12 @@ function focusUnreadMessageTarget(target, messageContainer, request, announceFai
 
 export function jumpToUnreadShortcut() {
   const request = beginFocusRequest();
+  const chatContext = getCurrentChatContext();
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const tryJump = attempt => {
     if (!isFocusRequestCurrent(request) || getActiveModal()) return;
+    // The chat changed while the shortcut waited. Say so instead of staying silent.
+    if (!isSameChatContext(chatContext, getCurrentChatContext())) { announce(t('unreadNotReady')); return; }
     const side = document.querySelector(SELECTORS.side);
     if (side && side.contains(document.activeElement)) {
       announce(t('unreadHistoryOnly'));
@@ -1389,7 +1425,7 @@ export function jumpToUnreadShortcut() {
     const messageContainer = main.querySelector(SELECTORS.conversationMessages) || main;
     const target = findUnreadMessageTarget(messageContainer);
     if (!target && unreadTarget && attempt < SHORTCUT_RENDER_RETRIES) {
-      messageContainer.scrollTop = unreadTarget.scrollTop;
+      getUnreadViewport(messageContainer).scrollTop = unreadTarget.scrollTop;
       schedule(() => tryJump(attempt + 1));
       return;
     }
@@ -1487,6 +1523,7 @@ export function closeMediaPlayerShortcut(origin = document.activeElement) {
 
 function focusMessageInputShortcut() {
   const request = beginFocusRequest();
+  const chatContext = getCurrentChatContext();
   const input = document.querySelector(SELECTORS.messageInput);
   if (input && (document.activeElement === input || input.contains(document.activeElement))) {
     const main = document.querySelector(SELECTORS.main);
@@ -1507,6 +1544,8 @@ function focusMessageInputShortcut() {
   const schedule = window.requestAnimationFrame || ((fn) => setTimeout(fn, 0));
   const tryFocus = attempt => {
     if (!isFocusRequestCurrent(request) || getActiveModal()) return;
+    // The chat changed while the shortcut waited. Say so instead of staying silent.
+    if (!isSameChatContext(chatContext, getCurrentChatContext())) { announce(t('messageBoxNotReady')); return; }
     const currentInput = document.querySelector(SELECTORS.messageInput);
     if (currentInput && focusItem(currentInput)) return;
     if (attempt < SHORTCUT_RENDER_RETRIES && isChatMainActive()) {

@@ -4,7 +4,7 @@ import { getFocusedPrimaryMessageItem, isPrimaryMessageItem, announce } from './
 import { getChatContextKey } from './chat-context.js';
 import { getLanguage, t } from './settings-state.js';
 import { isReadStickerEnabled, getStickerConfig, decryptStickerCredential, STICKER_CHANGED, STICKER_STORAGE, STICKER_ENABLED } from './sticker-store.js';
-import { readBoundedBody, decodeSticker, decodeStickerSvg, encodeStickerInput, STICKER_LIMITS } from './sticker-media.js';
+import { readBoundedBody, decodeSticker, decodeStickerSvg, snapshotStickerSvg, encodeStickerInput, encodeStickerGroup, STICKER_LIMITS } from './sticker-media.js';
 import { makeStickerRequest, parseStickerResponse } from './sticker-provider.js';
 import { installStickerTransport, requestStickerTransport } from './sticker-transport.js';
 
@@ -62,16 +62,32 @@ export function resolveStickerTarget(event){
   }
   if(!item || !item.closest(SELECTORS.conversationMessages))return null;
   const candidates=Array.from(item.querySelectorAll('[data-testid="sticker-container"] img, [data-testid="sticker-container"] [data-testid="lottie-animated-emoji-container"] svg')).filter(img=>
-    img.closest('.focusable-list-item')===item && !img.closest('[data-testid="quoted-message"]'));
-  if(candidates.length!==1)return null;
-  const img=candidates[0],svg=img.localName==='svg',src=svg?'svg-snapshot':img.currentSrc||img.src;
-  if(focusedStickerButton && img.closest('button, [role="button"]')!==focusedStickerButton)return null;
-  const wrapper=item.closest('[data-id]');
-  const id=wrapper?.getAttribute('data-id');
-  if(!id||!src||(!svg&&(!img.complete||!img.naturalWidth)))return null;
-  // The observed sticker bytes are a page-decoded blob, never WhatsApp's encrypted download URL.
-  if(!svg&&!src.startsWith(`blob:${location.origin}/`))return null;
-  return {item,img,src,id,wrapper,svg};
+    img.closest('.focusable-list-item')===item && !img.closest('[data-testid="quoted-message"], [aria-hidden="true"], [hidden]'));
+  if(!candidates.length)return null;
+  if(focusedStickerButton && !candidates.some(img=>img.closest('button, [role="button"]')===focusedStickerButton))return null;
+  const wrapper=item.closest('[data-id]'),id=wrapper?.getAttribute('data-id');
+  if(!id)return null;
+  const seen=new Map(),targets=[];
+  for(const img of candidates){
+    const svg=img.localName==='svg',src=svg?'svg-snapshot':img.currentSrc||img.src;
+    const occurrence=img.closest('button, [role="button"]')||img;
+    if(typeof getComputedStyle==='function'){
+      const style=getComputedStyle(img);
+      if(style.display==='none'||style.visibility==='hidden'||!img.getClientRects().length)continue;
+    }
+    if(!svg && seen.has(src)){
+      const previous=seen.get(src);
+      if(!previous.occurrences.has(occurrence)){
+        previous.occurrences.add(occurrence);previous.count++;
+      }
+      continue;
+    }
+    if(!src || (!svg && (!img.complete || !img.naturalWidth || !src.startsWith(`blob:${location.origin}/`))))return null;
+    const target={img,src,svg,count:1,occurrences:new Set([occurrence])};
+    seen.set(src,target);targets.push(target);
+  }
+  if(!targets.length)return null;
+  return {item,...targets[0],targets,id,wrapper};
 }
 function valid(op){
   refreshStickerContext();
@@ -87,7 +103,7 @@ export function handleReadStickerShortcut(event){
   const target=resolveStickerTarget(event),chat=currentChat();
   if(!target||!chat){announce(t('stickerTarget'));return true;}
   refreshStickerContext();
-  if(operation && !operation.done && operation.target.id===target.id && operation.target.src===target.src)return true;
+  if(operation && !operation.done && operation.target.id===target.id && operation.target.targets.length===target.targets.length && operation.target.targets.every((entry,i)=>entry.src===target.targets[i].src && entry.count===target.targets[i].count))return true;
   cancel();
   const main=document.querySelector(SELECTORS.main);
   const header=main?.querySelector('header');
@@ -99,41 +115,112 @@ export function handleReadStickerShortcut(event){
   return true;
 }
 async function execute(op){
-  let timedOut=false;
-  const timer=setTimeout(()=>{timedOut=true;op.controller.abort();},45000);
-  let key='',request;
+  let timedOut=false,key='',request;
+  const mediaItems=[];
+  const releaseFrames=()=>{for(const media of mediaItems)for(const frame of media.frames||[]){frame.canvas.width=0;frame.canvas.height=0;}};
+  const timer=setTimeout(()=>{
+    timedOut=true;op.done=true;op.controller.abort();key='';if(request)request.key='';
+    // Some browser decode promises do not settle promptly after cancellation.
+    announce(t('stickerTimeout'),()=>operation===op && op.epoch===epoch && isReadStickerEnabled() &&
+      currentChat()===op.chat && op.language===getLanguage() && op.configFingerprint===JSON.stringify(getStickerConfig()));
+  },45000);
+  const cleanupCancelled=()=>{clearTimeout(timer);key='';if(request)request.key='';releaseFrames();};
+  op.controller.signal.addEventListener('abort',cleanupCancelled,{once:true});
   try{
     const signal=op.controller.signal;
     key=await decryptStickerCredential(op.config.provider,op.config.providers[op.config.provider]);
     signal.throwIfAborted();if(!valid(op))return;
-    let media;
-    if(op.target.svg){
-      if(!op.target.img.isConnected || op.target.wrapper.getAttribute('data-id')!==op.target.id)throw new Error('stickerMediaError');
-      media=await decodeStickerSvg(op.target.img,signal);
-    }else{
-      const response=await fetch(op.target.src,{signal,credentials:'omit',redirect:'error'});
-      const bytes=await readBoundedBody(response,STICKER_LIMITS.sourceBytes,signal);
-      if(!op.target.img.isConnected || op.target.wrapper.getAttribute('data-id')!==op.target.id || (op.target.img.currentSrc||op.target.img.src)!==op.target.src)throw new Error('stickerMediaError');
-      media=await decodeSticker(bytes,signal);
+    if(op.target.targets.length>6)throw new Error('stickerTooLarge');
+    const occurrences=[],seenBytes=[],seenSvg=new Map();
+    let input;
+    try{
+      for(const target of op.target.targets){
+        signal.throwIfAborted();if(!valid(op))return;
+        if(!target.img.isConnected || op.target.wrapper.getAttribute('data-id')!==op.target.id)throw new Error('stickerMediaError');
+        if(target.svg){
+          const source=snapshotStickerSvg(target.img).source;
+          if(seenSvg.has(source)){for(const node of target.occurrences)occurrences[seenSvg.get(source)].add(node);continue;}
+          seenSvg.set(source,mediaItems.length);
+          mediaItems.push(await decodeStickerSvg(target.img,signal));occurrences.push(new Set(target.occurrences));
+        }else{
+          const response=await fetch(target.src,{signal,credentials:'omit',redirect:'error'});
+          const bytes=await readBoundedBody(response,STICKER_LIMITS.sourceBytes,signal);
+          if(!target.img.isConnected || op.target.wrapper.getAttribute('data-id')!==op.target.id || (target.img.currentSrc||target.img.src)!==target.src)throw new Error('stickerMediaError');
+          const duplicate=seenBytes.find(old=>old.bytes.length===bytes.length && old.bytes.every((value,i)=>value===bytes[i]));
+          if(duplicate){for(const node of target.occurrences)occurrences[duplicate.index].add(node);continue;}
+          seenBytes.push({bytes,index:mediaItems.length});
+          mediaItems.push(await decodeSticker(bytes,signal));occurrences.push(new Set(target.occurrences));
+        }
+      }
+      signal.throwIfAborted();if(!valid(op))return;
+      input=mediaItems.length===1
+        ? encodeStickerInput(mediaItems[0],op.config.provider,op.config.providers[op.config.provider].model)
+        : encodeStickerGroup(mediaItems);
+    }finally{
+      releaseFrames();
     }
-    const input=encodeStickerInput(media,op.config.provider,op.config.providers[op.config.provider].model);
     signal.throwIfAborted();if(!valid(op))return;
     request=makeStickerRequest(op.config,key,input,op.language,op.id);key='';
     const result=await requestStickerTransport(request,signal);
     const text=parseStickerResponse(op.config.provider,result);
     if(!valid(op))return;
+    const output=formatStickerResult(text,input,occurrences.map(nodes=>nodes.size));
     op.done=true;
-    const prefix=t(input.animated?'stickerAnimatedPrefix':'stickerStaticPrefix');
-    const limitation=input.unclear?t('stickerMotionUnclear'):'';
-    announce(t('stickerResult',{text:prefix+limitation+text}),()=>{
+    announce(t('stickerResult',{text:output}),()=>{
       if(!valid(op)||op.announced)return false;op.announced=true;return true;
     });
   }catch(error){
-    if(operation!==op || (!timedOut&&op.controller.signal.aborted) || op.language!==getLanguage() || currentChat()!==op.chat)return;
+    if(timedOut || !valid(op))return;
     op.done=true;
-    const allowed=['stickerKeyUnreadable','stickerMediaError','stickerAnimationError','stickerTooLarge','stickerAuthError','stickerModelAgreement','stickerQuotaError','stickerModelError','stickerTimeout','stickerNetworkError','stickerResponseError','stickerRefused','stickerTransportMissing'];
-    const message=timedOut?'stickerTimeout':allowed.includes(error.message)?error.message:'stickerNetworkError';
+    const allowed=['stickerKeyUnreadable','stickerMediaError','stickerAnimationError','stickerTooLarge','stickerAuthError','stickerModelAgreement','stickerQuotaError','stickerModelError','stickerTimeout','stickerNetworkError','stickerResponseError','stickerRefused','stickerTransportMissing','stickerBusy'];
+    const message=allowed.includes(error.message)?error.message:'stickerNetworkError';
     if(message==='stickerModelAgreement' && valid(op) && openStickerAgreement(op.config, document.activeElement))return;
-    announce(t(message),()=>operation===op && isReadStickerEnabled() && currentChat()===op.chat && op.language===getLanguage());
-  }finally{clearTimeout(timer);key='';if(request)request.key='';}
+    announce(t(message),()=>valid(op));
+  }finally{op.controller.signal.removeEventListener('abort',cleanupCancelled);cleanupCancelled();}
+}
+
+export function formatStickerResult(text,input,counts){
+  let descriptions;
+  if(counts.length>1){
+    // Tolerate light Markdown and list markers such as "**Sticker 1:**", "1. Sticker 1:" or
+    // "Sticker 1 (animated):". Newlines were already flattened by parseStickerResponse.
+    // A bold list number such as "**2.**" is still just a list number.
+    text=text.replace(/(\*\*|__)(\d+[.)])\1/g,'$2');
+    const matches=[...text.matchAll(
+      /(?:\*\*|__)?\s*(?:Sticker|Stiker)\s+(\d+)\s*(?:\([^()]{0,30}\))?\s*(?:\*\*|__)?\s*:(?:\*\*|__)?\s*/gi)];
+    const prefix=text.slice(0,matches[0]?.index);
+    // A reply cut off by the length limit (marked "…") keeps the stickers it did describe, in order.
+    const truncated=text.endsWith('…') && matches.length>0 && matches.length<counts.length;
+    if((matches.length!==counts.length && !truncated) || prefix.replace(/[\s*_#>•\-\d.)]+/g,''))
+      throw new Error('stickerResponseError');
+    // A list marker can only precede the next sticker, so the last description is never stripped.
+    // Treat "2." as a list number only when the list starts with "1." and every later sticker
+    // follows its own number, so a real number at the end of a description survives.
+    const numbered=/^\s*1[.)]\s*$/.test(prefix) && matches.slice(1).every((match,index)=>
+      new RegExp(`\\s${index+2}[.)][\\s*_]*$`).test(text.slice(0,match.index)));
+    descriptions=matches.map((match,index)=>{
+      if(Number(match[1])!==index+1)throw new Error('stickerResponseError');
+      let description=text.slice(match.index+match[0].length,matches[index+1]?.index??text.length);
+      if(index<matches.length-1){
+        description=description.replace(/\s+[-*•]\s*$/,'');
+        if(numbered)description=description.replace(new RegExp(`\\s+${index+2}[.)][\\s*_]*$`),'');
+      }
+      description=description.replace(/^[*_\s]+|[*_\s]+$/g,'').trim();
+      // Only the ellipsis of a cut-off reply means this sticker was never described.
+      if(text.endsWith('…') && index===matches.length-1 && description==='…')return t('stickerDescriptionMissing');
+      if(!description)throw new Error('stickerResponseError');
+      return description;
+    });
+    while(descriptions.length<counts.length)descriptions.push(t('stickerDescriptionMissing'));
+  }else{
+    descriptions=[text.replace(/^(?:(?:Animated sticker|Sticker|Stiker animasi|Stiker)\s*:\s*)+/i,'').trim()];
+  }
+  if(descriptions.some(description=>!description))throw new Error('stickerResponseError');
+  return descriptions.map((description,index)=>{
+    const header=counts.length>1?t('stickerNumberedPrefix',{number:index+1})
+      :t(input.animated?'stickerAnimatedPrefix':'stickerStaticPrefix');
+    const repetition=counts[index]>1?t('stickerRepeated',{count:counts[index]}):'';
+    const limitation=counts.length===1 && input.unclear?t('stickerMotionUnclear'):'';
+    return header.trimEnd()+' \n'+repetition+limitation+description;
+  }).join('\n\n');
 }

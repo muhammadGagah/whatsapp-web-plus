@@ -277,6 +277,7 @@ async function testLanguageCancellation() {
     if (phase === 'announcement') await f.respond();
     f.changeLanguage('id');
     assert.equal(f.signal.aborted, true, `language change must immediately abort during ${phase}`);
+    assert.equal(f.timers.size, 0, 'context cancellation clears timeout even before pending decode settles');
     f.changeLanguage('en');
     assert.equal(f.signal.aborted, true, 'changing language back must not revive the operation');
     if (phase === 'decode') {
@@ -290,7 +291,107 @@ async function testLanguageCancellation() {
   }
 }
 
+async function testCancelReleasesEarlierStickerFrames() {
+  const f = createRuntime();
+  const second = f.item.append(node('image'));
+  Object.assign(second, { currentSrc: 'blob:https://web.whatsapp.com/second', complete: true, naturalWidth: 32 });
+  let reads = 0, decodes = 0;
+  const canvas = { width: 512, height: 512 };
+  const stalled = deferred();
+  f.context.readBoundedBody = async () => new Uint8Array([++reads]);
+  f.context.decodeSticker = () => ++decodes === 1 ? Promise.resolve({ frames: [{ canvas }] }) : stalled.promise;
+  f.shortcut();
+  await turn();
+  assert.equal(decodes, 2);
+  f.changeLanguage('id');
+  assert.equal(canvas.width, 0, 'cancellation releases earlier frames while another decoder remains pending');
+  assert.equal(canvas.height, 0);
+  stalled.resolve({ frames: [] });
+  await turn();
+  assert.equal(f.requests.length, 0);
+}
+
+async function testCancelledDecodeSkipsEncoding() {
+  const f = createRuntime();
+  let encodes = 0;
+  f.context.encodeStickerInput = () => { encodes++; return {}; };
+  await f.begin();
+  f.changeLanguage('id');
+  await f.finishDecode();
+  assert.equal(encodes, 0, 'late cancelled decode must not encode image data');
+}
+
+async function testStaleConfigErrorIsSuppressed() {
+  const f = await ready();
+  f.state.config = { ...f.state.config, changed: true };
+  await f.failTransport();
+  const stale = f.announcements.find(entry => entry.text === 'stickerTimeout');
+  assert.ok(!stale || !f.deliver(stale), 'old provider error must not speak after configuration changed');
+}
+
+async function testDeadlineWhileDecodeIsPending() {
+  const f = createRuntime();
+  await f.begin();
+  const deadline = [...f.timers.values()].find(timer => timer.delay === 45000);
+  deadline.callback();
+  await turn();
+  assert.equal(f.signal.aborted, true);
+  assert.equal(f.timers.size, 0, 'aborted decode must not retain the deadline');
+  const timeouts = () => f.announcements.filter(entry => entry.text === 'stickerTimeout');
+  assert.equal(timeouts().length, 1, 'deadline must announce even when decoder never settles');
+  assert.equal(f.deliver(timeouts()[0]), true);
+  await f.finishDecode();
+  assert.equal(f.requests.length, 0, 'late decoder completion must not contact provider');
+  assert.equal(timeouts().length, 1, 'late abort rejection must not announce timeout twice');
+  assert.equal(f.timers.size, 0);
+
+  const retry = createRuntime();
+  await retry.begin();
+  [...retry.timers.values()].find(timer => timer.delay === 45000).callback();
+  const queuedTimeout = retry.announcements.at(-1);
+  retry.shortcut();
+  await turn();
+  assert.equal(retry.fetches.length, 2, 'an unresolved timed-out decode must not block retry');
+  assert.equal(retry.deliver(queuedTimeout), false, 'retry suppresses old queued timeout');
+  retry.changeLanguage('id');
+  await retry.finishDecode();
+  assert.equal(retry.requests.length, 0);
+}
+
+async function testMultipleStickers() {
+  for(const duplicateBytes of [false,true]) for(const repeats of [1,3]) {
+    const f=createRuntime();
+    const second=f.item.append(node('image'));
+    Object.assign(second,{currentSrc:'blob:https://web.whatsapp.com/second',complete:true,naturalWidth:32});
+    for(let i=1;i<repeats;i++){
+      const repeated=f.item.append(node('image'));
+      Object.assign(repeated,{currentSrc:f.image.currentSrc,complete:true,naturalWidth:32});
+    }
+    let reads=0,decodes=0,groups=0;
+    f.context.readBoundedBody=async()=>new Uint8Array([duplicateBytes?1:++reads]);
+    f.context.decodeSticker=async()=>{decodes++;return {frames:[]};};
+    f.context.encodeStickerGroup=items=>{groups++;assert.equal(items.length,2);return {stickerCount:2,images:[]};};
+    f.shortcut();await turn();
+    assert.equal(decodes,duplicateBytes?1:2);
+    assert.equal(groups,duplicateBytes?0:1);
+    assert.equal(f.requests.length,1,'one transport request for the message');
+    assert.equal(f.announcements.filter(entry=>entry.text==='stickerReading').length,1);
+    f.context.parseStickerResponse=()=>duplicateBytes?'Cup.':'Sticker 1: Cup. Sticker 2: Cat.';
+    let capturedCounts;
+    const format=f.context.formatStickerResult;
+    f.context.formatStickerResult=(text,input,counts)=>{capturedCounts=Array.from(counts);return format(text,input,counts);};
+    await f.respond();
+    assert.deepEqual(capturedCounts,duplicateBytes?[repeats+1]:[repeats,1]);
+    assert.ok(f.result());
+  }
+}
+
 (async () => {
+  await testCancelReleasesEarlierStickerFrames();
+  await testCancelledDecodeSkipsEncoding();
+  await testStaleConfigErrorIsSuppressed();
+  await testDeadlineWhileDecodeIsPending();
+  await testMultipleStickers();
   await testSnapshotFocusAndDeduplication();
   await testContextBoundaries();
   await testOpaqueChatStatusUpdates();

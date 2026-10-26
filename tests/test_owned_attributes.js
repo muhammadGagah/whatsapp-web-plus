@@ -14,6 +14,7 @@ class Element {
 }
 
 const context = vm.createContext({
+  ownedAttributes: new WeakMap(),
   Element,
   _origSetAttribute: Element.prototype.setAttribute,
   _origRemoveAttribute: Element.prototype.removeAttribute
@@ -60,5 +61,22 @@ applyOwnedAttribute(rewrittenByHost, 'aria-labelledby', null, owner);
 releaseOwnedAttribute(rewrittenByHost, 'aria-labelledby', owner);
 assert.equal(rewrittenByHost.getAttribute('aria-labelledby'), 'new-host-id',
   'a subsequent host write replaces the restoration baseline');
+
+const transferred = new Element();
+transferred.setAttribute('aria-label', 'Host label');
+applyOwnedAttribute(transferred, 'aria-label', 'First feature label', 'feature-a');
+applyOwnedAttribute(transferred, 'aria-label', 'Second feature label', 'feature-b');
+releaseOwnedAttribute(transferred, 'aria-label', 'feature-a');
+assert.equal(transferred.getAttribute('aria-label'), 'Second feature label');
+releaseOwnedAttribute(transferred, 'aria-label', 'feature-b');
+assert.equal(transferred.getAttribute('aria-label'), 'Host label',
+  'Transferring ownership must not mistake the previous feature value for host content');
+
+const removedDuringTransfer = makeMaskedElement();
+removedDuringTransfer.removeAttribute('aria-labelledby');
+applyOwnedAttribute(removedDuringTransfer, 'aria-labelledby', 'new-feature-id', 'feature-b');
+releaseOwnedAttribute(removedDuringTransfer, 'aria-labelledby', 'feature-b');
+assert.equal(removedDuringTransfer.hasAttribute('aria-labelledby'), false,
+  'Host removal stays the restore baseline across ownership transfer');
 
 console.log('Owned attribute restoration tests passed.');

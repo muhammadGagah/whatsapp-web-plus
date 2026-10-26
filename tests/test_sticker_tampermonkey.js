@@ -1,9 +1,11 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');const vm=require('node:vm');const {buildSync}=require('esbuild');
-const code=buildSync({entryPoints:['src/sticker-transport.js'],bundle:true,write:false,format:'cjs'}).outputFiles[0].text;
-function setup(gm=true){
+const code=buildSync({entryPoints:['src/sticker-transport.js'],bundle:true,write:false,format:'cjs',define:{__SCRIPT_VERSION__:'"test"',__BUNDLE_IDENTIFIER__:'"test"',__DEBUG_BUILD__:'false'}}).outputFiles[0].text;
+function setup(gm=true,{companion=false,clock=null}={}){
  const calls=[];let aborts=0;
- const sandbox={module:{exports:{}},exports:{},URL,Date,Map,TextEncoder,TextDecoder,setTimeout,clearTimeout};
+ const ClockDate=clock?class extends Date{static now(){return clock.now;}}:Date;
+ const sandbox={module:{exports:{}},exports:{},URL,Date:ClockDate,Map,TextEncoder,TextDecoder,setTimeout,clearTimeout};
+ if(companion)sandbox.__whatsappWebPlusBundleHash='a'.repeat(64);
  if(gm)sandbox.GM_xmlhttpRequest=options=>{calls.push(options);return {abort(){aborts++;options.onabort();}};};
  vm.runInNewContext(code,sandbox);
  return {api:sandbox.module.exports,sandbox,calls,get aborts(){return aborts;}};
@@ -41,6 +43,55 @@ const reply=async(call,status,text)=>{
  const missing=setup(false);await assert.rejects(missing.api.requestStickerTransport(create(),signal().signal),/stickerTransportMissing/);
  const native=setup();native.api.installStickerTransport();native.sandbox.__waPlusStickerNative.poll();const nr=create();const np=native.api.requestStickerTransport(nr,signal().signal);const polled=native.sandbox.__waPlusStickerNative.poll();assert.equal(polled.request.id,nr.id);assert.equal(native.calls.length,0);native.sandbox.__waPlusStickerNative.resolve(nr.id,{result:{status:200,body:{ok:true}}});assert.equal((await np).body.ok,true);
  const nativeCancel=signal(),nc=create();const ncp=native.api.requestStickerTransport(nc,nativeCancel.signal);const ncr=assert.rejects(ncp,/stickerTimeout/);nativeCancel.abort();await ncr;assert.equal(native.sandbox.__waPlusStickerNative.poll().request,null);
+ // Native transport must not strand a request when polling stops or a second caller arrives.
+ const expire=setup();expire.api.installStickerTransport();expire.sandbox.__waPlusStickerNative.poll();
+ const expiring=create();expiring.expiresAt=Date.now()+20;
+ await assert.rejects(expire.api.requestStickerTransport(expiring,signal().signal),/stickerTimeout/);
+ assert.equal(expiring.key,'');assert.equal(expire.sandbox.__waPlusStickerNative.poll().request,null);
+ const overlap=setup();overlap.api.installStickerTransport();overlap.sandbox.__waPlusStickerNative.poll();
+ const original=create(),originalPromise=overlap.api.requestStickerTransport(original,signal().signal);
+ const second=create(); // Even reusing an ID must not delete the first request's callback.
+ await assert.rejects(overlap.api.requestStickerTransport(second,signal().signal),/stickerBusy/);
+ assert.equal(second.key,'');assert.equal(overlap.sandbox.__waPlusStickerNative.poll().request,original);
+ overlap.sandbox.__waPlusStickerNative.resolve(original.id,{result:{status:200,body:{ok:true}}});
+ assert.equal((await originalPromise).body.ok,true);assert.equal(original.key,'');
+ const already=signal();already.abort();const preaborted=create();
+ await assert.rejects(overlap.api.requestStickerTransport(preaborted,already.signal),/stickerTimeout/);
+ assert.equal(preaborted.key,'');assert.equal(overlap.sandbox.__waPlusStickerNative.poll().activeId,null);
+ const malformed=create(),malformedPromise=overlap.api.requestStickerTransport(malformed,signal().signal);
+ const malformedRejection=assert.rejects(malformedPromise,/stickerResponseError/);
+ overlap.sandbox.__waPlusStickerNative.resolve(malformed.id,null);await malformedRejection;
+ assert.equal(malformed.key,'');assert.equal(overlap.sandbox.__waPlusStickerNative.poll().activeId,null);
+ const invalid=create();invalid.body.messages[0].content[1].image_url.url='https://private.example/image';
+ await assert.rejects(overlap.api.requestStickerTransport(invalid,signal().signal),/stickerNetworkError/);
+ assert.equal(invalid.key,'');assert.equal(overlap.sandbox.__waPlusStickerNative.poll().request,null);
+ for(const expiresAt of [Date.now()-1,Date.now()+90000,Infinity]){
+  const invalidDeadline=create();invalidDeadline.expiresAt=expiresAt;
+  await assert.rejects(overlap.api.requestStickerTransport(invalidDeadline,signal().signal),/stickerNetworkError/);
+  assert.equal(invalidDeadline.key,'');assert.equal(overlap.sandbox.__waPlusStickerNative.poll().request,null);
+ }
+ // Companion keeps the native path when its poll loop is briefly late; a browser without
+ // GM_xmlhttpRequest still reports the missing transport.
+ for(const companion of [true,false]){
+  const clock={now:Date.now()};
+  const late=setup(false,{companion,clock});late.api.installStickerTransport();late.sandbox.__waPlusStickerNative.poll();
+  clock.now+=5000;
+  const request=create();request.expiresAt=clock.now+45000;
+  const pending=late.api.requestStickerTransport(request,signal().signal);
+  if(companion){
+   assert.equal(late.sandbox.__waPlusStickerNative.poll().request,request,'late poll still receives the request');
+   late.sandbox.__waPlusStickerNative.resolve(request.id,{result:{status:200,body:{ok:true}}});
+   assert.equal((await pending).body.ok,true);
+  }else await assert.rejects(pending,/stickerTransportMissing/);
+ }
+ {
+  // A Companion that stopped polling long ago is reported promptly as a missing transport.
+  const clock={now:Date.now()};
+  const stale=setup(false,{companion:true,clock});stale.api.installStickerTransport();stale.sandbox.__waPlusStickerNative.poll();
+  clock.now+=30000;
+  const request=create();request.expiresAt=clock.now+45000;
+  await assert.rejects(stale.api.requestStickerTransport(request,signal().signal),/stickerTransportMissing/);
+ }
  const meta=fs.readFileSync('src/metadata.txt','utf8');assert.match(meta,/@sandbox\s+raw/);assert.match(meta,/@grant\s+GM_xmlhttpRequest/);assert.doesNotMatch(meta,/@grant\s+none/);
  console.log('Tampermonkey and native sticker transport tests passed.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -30,7 +30,79 @@ const create=()=>load('src/sticker-store.js',{'./settings-state.js':settings});
  const external=svg.cloneNode(true);external.querySelector('g').setAttribute('filter','url(https://example.invalid/filter.svg#alpha)');
  assert.throws(()=>media.snapshotStickerSvg(external),/stickerMediaError/);
 }
+{
+ const drawn=[],labels=[];
+ const board={width:0,height:0,toDataURL:()=> 'data:image/png;base64,YQ==',getContext:()=>({fillRect(){},drawImage(...args){drawn.push(args);},fillText(text){labels.push(text);}})};
+ const media=load('src/sticker-media.js',{}, {document:{createElement:()=>board}});
+ const frame=()=>({canvas:{width:128,height:128}});
+ const input=media.encodeStickerGroup([{frames:[frame()],animated:false,mode:'frames'},{frames:[frame(),frame()],animated:true,mode:'frames'}]);
+ assert.equal(input.stickerCount,2);assert.equal(input.images.length,1);
+ assert.deepEqual(labels,['1','2']);assert.equal(drawn.length,3);assert.equal(board.width,0);
+ const provider=load('src/sticker-provider.js',{'./sticker-store.js':{normalizeStickerEndpoint:()=> 'https://example.invalid'}});
+ const request=provider.makeStickerRequest({provider:'gemini',providers:{gemini:{model:'test'}}},'test',input,'en','id');
+ assert.match(request.body.contents[0].parts[0].text,/Sticker 2/);
+ assert.doesNotMatch(request.body.contents[0].parts[0].text,/ONE proven animated sticker/);
+ assert.throws(()=>provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{finishReason:'MAX_TOKENS'}]}}),/stickerResponseError/);
+ assert.equal(provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:'A cat holding'}]}}]}}),'A cat holding…','truncated text is kept and marked');
+ assert.equal(provider.parseStickerResponse('groq',{status:200,body:{choices:[{finish_reason:'length',message:{content:'A dog'}}]}}),'A dog…');
+ assert.throws(()=>provider.parseStickerResponse('groq',{status:200,body:{choices:[{finish_reason:'length',message:{content:'<think>unfinished'}}]}}),/stickerResponseError/);
+}
+{
+ // Multi-sticker parsing tolerates light Markdown and list markers but keeps real numbers.
+ const source=fs.readFileSync('src/read-sticker.js','utf8');
+ const start=source.indexOf('export function formatStickerResult(');
+ const sandbox={t:(key,values)=>key==='stickerNumberedPrefix'?`Sticker ${values.number}:`:key==='stickerDescriptionMissing'?'missing':''};
+ vm.runInNewContext(source.slice(start,source.indexOf('\n}\n',start)+3).replace('export ',''),sandbox);
+ const format=text=>sandbox.formatStickerResult(text,{},[1,1]).split('\n\n').map(entry=>entry.split('\n')[1]);
+ assert.deepEqual(format('Sticker 1: Cup. Sticker 2: Cat.'),['Cup.','Cat.']);
+ assert.deepEqual(format('**Sticker 1:** Cup. **Sticker 2:** Cat.'),['Cup.','Cat.']);
+ assert.deepEqual(format('**Stiker 1**: Cangkir. **Stiker 2**: Kucing.'),['Cangkir.','Kucing.']);
+ assert.deepEqual(format('1. Sticker 1: Cup. 2. Sticker 2: Cat.'),['Cup.','Cat.']);
+ assert.deepEqual(format('- Sticker 1 (animated): Cup waving. - Sticker 2: Cat.'),['Cup waving.','Cat.']);
+ assert.deepEqual(format('Sticker 1: Cat holding 2. Sticker 2: Dog.'),['Cat holding 2.','Dog.'],'real numbers survive');
+ assert.deepEqual(format('1. Sticker 1: a cat 2. Sticker 2: a sign reading Top 10.'),['a cat','a sign reading Top 10.'],'the last description keeps its trailing number');
+ assert.deepEqual(format('1. Sticker 1: count 3, 2, 1. 2. Sticker 2: Go.'),['count 3, 2, 1.','Go.'],'only the next list number is a marker');
+ assert.throws(()=>format('Sticker 1 shows a cat: Cup. Sticker 2: Cat.'),/stickerResponseError/,'free text is not a qualifier');
+ assert.throws(()=>format('Here you go. Sticker 1: Cup. Sticker 2: Cat.'),/stickerResponseError/);
+ assert.deepEqual(format('**1.** **Sticker 1:** A cat. **2.** **Sticker 2:** A dog.'),['A cat.','A dog.'],'bold list numbers are not spoken');
+ assert.deepEqual(format('1. Sticker 1: Shirt with number 2. Sticker 2: Dog.'),['Shirt with number','Dog.'],'a list numbered 1., 2. is a list');
+ assert.deepEqual(format('Sticker 1: Shirt with number 2. Sticker 2: Dog.'),['Shirt with number 2.','Dog.'],'without a numbered list the number stays');
+ {
+  // A reply cut off by the length limit keeps the stickers it did describe.
+  const partial=sandbox.formatStickerResult('Sticker 1: A cat. Sticker 2: A dog wav…',{},[1,1,1]).split('\n\n').map(entry=>entry.split('\n')[1]);
+  assert.deepEqual(partial,['A cat.','A dog wav…','missing']);
+  const ellipsisOnly=sandbox.formatStickerResult('Sticker 1: A cat. Sticker 2:…',{},[1,1]).split('\n\n').map(entry=>entry.split('\n')[1]);
+  assert.deepEqual(ellipsisOnly,['A cat.','missing'],'a description that is only the cut-off mark is missing');
+  assert.throws(()=>format('Sticker 1: A cat.'),/stickerResponseError/,'a complete reply must describe every sticker');
+ }
+ assert.throws(()=>format('Sticker 1: Cup.'),/stickerResponseError/);
+ assert.throws(()=>format('Sticker 2: Cup. Sticker 1: Cat.'),/stickerResponseError/);
+}
 (async()=>{
+ {
+  const canvases=[];
+  let rejectDecode, closed=0;
+  const pending=new Promise((resolve,reject)=>{rejectDecode=reject;});
+  class Decoder {
+   static async isTypeSupported(){return true;}
+   constructor(){this.tracks={ready:Promise.resolve(),selectedTrack:{frameCount:2,animated:true}};}
+   decode({frameIndex}){return frameIndex===0?Promise.resolve({image:{duration:1,close(){}}}):pending;}
+   close(){closed++;}
+  }
+  const media=load('src/sticker-media.js',{}, {ImageDecoder:Decoder,document:{createElement(){
+   const canvas={width:0,height:0,getContext:()=>({drawImage(){},getImageData:()=>({data:[0,0,0,255]})})};
+   canvases.push(canvas);return canvas;
+  }}});
+  const bytes=new Uint8Array(24);bytes.set([137,80,78,71]);new DataView(bytes.buffer).setUint32(16,1);new DataView(bytes.buffer).setUint32(20,1);
+  const controller=new AbortController();
+  const decode=media.decodeSticker(bytes,controller.signal);
+  await new Promise(setImmediate);
+  assert.equal(canvases.length,1);
+  controller.abort();
+  assert.equal(canvases[0].width,0,'abort releases sampled decoder frames before pending decode settles');
+  assert.ok(closed>0);
+  const rejected=assert.rejects(decode,/cancelled/);rejectDecode(new Error('cancelled'));await rejected;
+ }
  let store=create();assert.equal(store.isReadStickerEnabled(),false);
  const input={provider:'gemini',model:'ignored',key:'test-secret-123'};
  await store.saveStickerConfig(input);
@@ -76,6 +148,10 @@ const create=()=>load('src/sticker-store.js',{'./settings-state.js':settings});
  for(const [status,error] of [[401,'Auth'],[403,'Auth'],[429,'Quota'],[404,'Model'],[500,'Network']])assert.throws(()=>provider.parseStickerResponse('groq',{status,body:{}}),new RegExp(error));
  assert.throws(()=>provider.parseStickerResponse('groq',{status:200,body:{choices:[{message:{refusal:'no'}}]}}),/Refused/);
  assert.throws(()=>provider.parseStickerResponse('gemini',{status:200,body:{}}),/Response/);
+ for(const parts of [null,{},'bad',[null]])assert.throws(()=>provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{content:{parts}}]}}),/stickerResponseError/);
+ assert.equal(provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{content:{parts:[null,{text:'A cat'}]}}]}}),'A cat');
+ for(const content of ['<THINK>Unfinished private reasoning','<Think>Unfinished','<think class="reasoning">Unfinished'])assert.throws(()=>provider.parseStickerResponse('custom',{status:200,body:{choices:[{message:{content}}]}}),/stickerResponseError/);
+ assert.equal(provider.parseStickerResponse('custom',{status:200,body:{choices:[{message:{content:'<THINK>Private reasoning</THINK>A cat'}}]}}),'A cat');
  values.clear();
  const freshDb=new IDBFactory();
  const tab=()=>load('src/sticker-store.js',{'./settings-state.js':settings},{indexedDB:freshDb});

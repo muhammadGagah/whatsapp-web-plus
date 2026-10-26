@@ -1,6 +1,12 @@
 # Read Sticker validation
 
-## Automated evidence
+## Current validation status
+
+The October 2026 release reviews passed the full script regression suite and the Companion Python tests. A user confirmed one successful Gemini description in Chrome with NVDA earlier in development. This does not validate all providers, images, or the current installed runtime.
+
+## Earlier validation records
+
+The following records describe earlier development checks. They were not all repeated during the October 23 audits. The current audit results are summarized above.
 
 - `npm test`: existing userscript regressions plus sticker settings, shortcuts, real Web Crypto with IndexedDB fixture, provider parsing, Tampermonkey/native transport contract and lifecycle tests.
 - Companion `npm test`: Python regressions, Ruff checks, generated help/add-on build and release identity checks.
@@ -11,8 +17,8 @@
 
 | Environment | Media decoder | Provider transport | Real AI response | NVDA speech/braille |
 | --- | --- | --- | --- | --- |
-| Chrome | Synthetic PNG/WebP/GIF passed | Tampermonkey API mocked; actual permission/page-context integration pending | Gemini/Groq/Custom not tested with credentials | Pending |
-| Companion WebView2 | Implementation shared; installed runtime pending | Native contract tested; real provider connection pending | Gemini/Groq/Custom pending | Pending |
+| Chrome | Synthetic PNG/WebP/GIF passed | Tampermonkey regression tests passed and one live Gemini request succeeded | Gemini confirmed for one user test. Groq, Custom and current Cloudflare configuration require live validation | One Gemini description confirmed by the user. Broader speech and braille testing pending |
+| Companion WebView2 | Shared implementation. Installed runtime testing pending | Native contract tests passed. Real provider connection testing pending | Gemini, Groq, Cloudflare and Custom require current runtime validation | Pending |
 
 Direct page requests to Gemini and Groq were tested without keys/images and blocked by WhatsApp `connect-src`. User approved the Tampermonkey/native transports; no CSP or signed-update protection was disabled.
 
@@ -46,7 +52,7 @@ Opaque-ID target regression: a sanitized structural fixture from the current Wha
 
 Live browser diagnosis: a user-triggered Gemini request reached decode/encode/transport, then onloadstart reported status 0 and delivered a 906-byte chunk before timing out. No key, image bytes or response contents were inspected. The adapter now returns synchronously from onloadstart and combines body EOF with onload final status. Regression tests cover callback-dispatch ordering and both completion orders. The revised adapter still requires live user validation.
 
-## Follow-up audit, 2026-10-18
+## Historical follow-up audit, 2026-10-18
 
 Both repository npm test suites passed again, including 432 Companion Python tests, Ruff, builds and package identity verification. git diff --check passed in both repositories; source, bundle lock and packaged userscript match.
 
@@ -54,9 +60,9 @@ The live 906-byte chunk is evidence of received bytes only: no final HTTP status
 
 The terminal error announcement guard differs from the success guard, but the actual announce function invokes its delivery guard once. Repeatedly invoking that guard in a synthetic test is not evidence of duplicate real speech.
 
-## Text callback fix after audit
+## Historical text callback fix after audit
 
-The current Tampermonkey adapter uses responseType text and final onload status/body. It no longer waits for a ReadableStream or EOF. Progress callbacks reject responses exceeding 64 KiB when size/text is available; final UTF-8 byte length is always checked before parsing. Tampermonkey/browser can buffer data before progress is delivered, so this is an accepted-response bound and best-effort early abort, not a hard browser-memory allocation cap. Native Companion transport remains unchanged.
+The current Tampermonkey adapter uses responseType text and final onload status/body. It no longer waits for a ReadableStream or EOF. Progress callbacks reject responses exceeding 64 KiB when size/text is available; final UTF-8 byte length is always checked before parsing. Tampermonkey/browser can buffer data before progress is delivered, so this is an accepted-response bound and best-effort early abort, not a hard browser-memory allocation cap. This change replaced the browser response adapter. Native transport later received deadline, overlap, validation, and cleanup fixes during the October 23 audits.
 
 Regression coverage includes progress status 0 without early completion, final onload without any stream, exactly 64 KiB, multibyte UTF-8 overflow, loaded/total overflow, malformed HTTP error bodies, duplicate completion, and late success after cancellation/error. Full installed-browser behavior still requires the user's real test.
 
@@ -65,3 +71,5 @@ Regression coverage includes progress status 0 without early completion, final o
 The user's second HTML capture contains a focusable DIV role=button with a Lottie SVG rather than an IMG. The resolver now accepts that exact sticker control or its primary message cell. SVG is copied, limited to passive vector elements with local references, rasterized locally and sent only as PNG. This is one snapshot, explicitly marked as motion unreadable. It is not full Lottie animation analysis. Synthetic Chrome tests passed clipping, transparency, PNG payload and rejection of active/external SVG content. Live Lottie/NVDA validation remains pending.
 
 The installed text-response transport returned HTTP 200 in the user's Chrome test, and the user confirmed NVDA spoke the Gemini sticker description. This validates that tested image/request, not every provider/environment. Temporary browser logpoints were removed. No key or response text was read by the diagnostics.
+
+Multiple stickers in one focused message use a single numbered image with one row per sticker and up to three animation samples per row. Up to six distinct sources are processed. Duplicate sources and identical file bytes are grouped independently of alternative text. Each group counts distinct sticker controls, so duplicate image elements inside one control are not counted twice. Repeated groups include their occurrence count. Different encodings are not assumed identical just because they look similar. Output headings use a colon, space and newline. The same total deadline and payload limits apply. Responses must include every numbered sticker or report an error.

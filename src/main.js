@@ -31,6 +31,7 @@ import {
   isMetaAIReply,
   normalizeChatListTabStops,
   refreshMessageMentionNames,
+  refreshStickerMessageNames,
   rememberFocusedRow,
   scheduleRoleFix
 } from './chat-accessibility.js';
@@ -150,6 +151,7 @@ function recleanMessageAncestor(node) {
   if (message) {
     cleanNamedAttribute(message, 'aria-label');
     refreshMessageMentionNames(message);
+    refreshStickerMessageNames(message);
   }
 }
 
@@ -159,6 +161,11 @@ function handleAttributeMutation(mutation) {
   const previousOwner = ownedAttributes.get(el)?.get(attrName)?.owner;
   if (isOwnedMutation(el, attrName)) return null;
 
+  if (attrName === 'alt') {
+    recleanMessageAncestor(el);
+    return null;
+  }
+
   if (attrName === 'aria-label' || attrName === 'title') {
     cleanNamedAttribute(el, attrName);
     return attrName === 'aria-label' ? getRoleFixRoot(el) : null;
@@ -167,6 +174,8 @@ function handleAttributeMutation(mutation) {
   if (attrName === 'aria-labelledby' || attrName === 'id') {
     const message = el.matches?.('.focusable-list-item') ? el : el.closest?.('.focusable-list-item');
     return [OWNERS.metaAIMessageName, OWNERS.chatLabel, OWNERS.messageGrid].includes(previousOwner) ||
+      ownedAttributes.get(message)?.get('aria-label')?.owner === OWNERS.stickerMessageName ||
+      !!message?.querySelector?.('[data-testid="sticker-container"]') ||
       isMetaAIReply(message)
       ? getRoleFixRoot(el)
       : null;
@@ -279,6 +288,7 @@ function createCleanupObserver() {
       }
 
       if (mutation.type === 'childList') {
+        if (target?.matches?.('span[data-testid="author"]')) cleanElementAttributes(target);
         if (target?.closest?.(SELECTORS.chatListInSide)) scheduleRoleFix(getRoleFixRoot(target));
         mutation.addedNodes.forEach(node => {
           scheduleRoleFix(handleAddedNode(node));
@@ -327,7 +337,7 @@ function startCleanupObserver() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['aria-label', 'aria-labelledby', 'aria-live', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'hidden', 'style', 'disabled', 'aria-disabled', 'aria-hidden', 'aria-pressed', 'aria-selected', 'aria-expanded', 'src', 'poster', 'data-testid', 'data-tab', 'data-virtualized', 'data-status-id', 'data-media-id', 'data-animate-status-viewer', 'data-navbar-item-selected', 'data-pre-plain-text', 'data-plain-text', 'data-app-text-template']
+      attributeFilter: ['alt', 'aria-label', 'aria-labelledby', 'aria-live', 'id', 'data-id', 'title', 'role', 'class', 'tabindex', 'hidden', 'style', 'disabled', 'aria-disabled', 'aria-hidden', 'aria-pressed', 'aria-selected', 'aria-expanded', 'src', 'poster', 'data-testid', 'data-tab', 'data-virtualized', 'data-status-id', 'data-media-id', 'data-animate-status-viewer', 'data-navbar-item-selected', 'data-pre-plain-text', 'data-plain-text', 'data-app-text-template']
     });
     cleanElementAttributes(document.body);
     refreshUnreadChatTotal();
@@ -367,7 +377,7 @@ onDomReady(function() {
     scheduleStatusAccessibilitySync();
 
     if (isChatActivityEnabled()) startStatusTracking();
-    if (isAutomaticReadingEnabled()) captureChatPulseBaseline();
+    if (isAutomaticReadingEnabled() || isChatActivityEnabled()) captureChatPulseBaseline();
     const { requiredNodes } = getRequiredNodeHealth();
     const requiredNodesReady = Object.values(requiredNodes).every(Boolean);
     if (!requiredNodesReady) {

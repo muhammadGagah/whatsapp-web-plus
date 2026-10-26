@@ -1,6 +1,7 @@
 import { _origRemoveAttribute, _origSetAttribute } from './privacy.js';
 
-export const ownedAttributes = new WeakMap();
+import { ownedAttributes } from './owned-state.js';
+export { ownedAttributes };
 export const ownedElements = new Set();
 const ownedMutationCounts = new WeakMap();
 
@@ -57,7 +58,7 @@ export function applyOwnedAttribute(el, name, value, owner) {
     attributes.delete(name);
     state = null;
   }
-  if (!state || state.owner !== owner) {
+  if (!state) {
     state = {
       owner,
       originalPresent: el.hasAttribute(name),
@@ -73,6 +74,7 @@ export function applyOwnedAttribute(el, name, value, owner) {
       state.originalPresent = false;
       state.originalValue = null;
     }
+    state.owner = owner;
     state.appliedValue = value;
     state.hostRemoved = false;
   }

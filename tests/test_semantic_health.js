@@ -155,7 +155,7 @@ function runScenario({ owned = makeOwnedNodes(), chat = null, reduction = true, 
     },
     isAnnouncementReductionEnabled: () => reduction,
     isChatMainActive: main => !!main,
-    getComputedStyle: () => ({ display: 'block', visibility: 'visible' })
+    getComputedStyle: element => ({ display: 'block', visibility: 'visible', ...element.computedStyle })
   });
   vm.runInContext(moduleSource, context);
   const before = JSON.stringify(all.map(node => ({
@@ -243,6 +243,17 @@ hiddenOwned.log.setAttribute('aria-hidden', 'true');
 const hiddenHealth = runScenario({ owned: hiddenOwned });
 assert.equal(hiddenHealth.checks.messageLog, 'fail');
 assert.equal(hiddenHealth.errorCode, 'semantic.messageLog');
+
+const cssHiddenOwned = makeOwnedNodes();
+const cssHiddenParent = new Element('div');
+cssHiddenParent.computedStyle = { display: 'none' };
+cssHiddenParent.append(cssHiddenOwned.status);
+assert.equal(runScenario({ owned: cssHiddenOwned }).checks.statusRegion, 'fail',
+  'a live region inside a CSS-hidden ancestor cannot announce');
+const cssHiddenChat = makeChat();
+cssHiddenParent.append(cssHiddenChat.input);
+assert.equal(runScenario({ chat: cssHiddenChat }).checks.messageInputFocusTarget, 'fail',
+  'an input inside a CSS-hidden ancestor is not a usable focus target');
 
 const serialized = JSON.stringify(healthyChat);
 for (const forbidden of ['Type a message', 'Message history', 'textContent', 'aria-label']) {

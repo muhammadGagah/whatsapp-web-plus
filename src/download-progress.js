@@ -44,6 +44,13 @@ export function createDownloadProgress(deps = {}) {
       (typeof svg.getClientRects !== 'function' || svg.getClientRects().length > 0);
   }
 
+  function sameTransfer(svg, record) {
+    const button = svg.closest('[data-testid="document-thumb"]');
+    const message = button?.closest?.('[data-id]') || null;
+    return button === record.button && message === record.message &&
+      (message?.getAttribute('data-id') || '') === record.messageId;
+  }
+
   function forget(svg) {
     const record = records.get(svg);
     records.delete(svg);
@@ -67,7 +74,11 @@ export function createDownloadProgress(deps = {}) {
       if (percent === null || !visibleSource(svg)) continue;
       seen.add(svg);
       let record = records.get(svg);
-      if (!record) {
+      if (record && !sameTransfer(svg, record)) {
+        forget(svg);
+        record = null;
+      }
+      if (!record || !record.proxy.isConnected) {
         const button = svg.closest('[data-testid="document-thumb"]');
         if (!button?.parentElement) continue;
         const proxy = doc.createElement('span');
@@ -76,7 +87,14 @@ export function createDownloadProgress(deps = {}) {
           whiteSpace: 'nowrap', border: '0' });
         // A progressbar nested in a button can be flattened by accessibility APIs.
         button.parentElement.insertBefore(proxy, button.nextSibling);
-        record = { id: ++nextId, proxy, percent, lastPercent: -1, lastTime: -Infinity, context };
+        if (record) {
+          for (const name of ATTRIBUTES) release(record.proxy, name, OWNER);
+          record.proxy = proxy;
+        } else {
+          const message = button.closest?.('[data-id]') || null;
+          record = { id: ++nextId, proxy, percent, lastPercent: -1, lastTime: -Infinity, context,
+            button, message, messageId: message?.getAttribute('data-id') || '' };
+        }
         records.set(svg, record);
       }
       record.percent = percent;
@@ -101,7 +119,7 @@ export function createDownloadProgress(deps = {}) {
           return translate('downloadProgressValue', { number: record.id, percent: deliveredPercent });
         },
           () => records.get(svg) === record && svg.isConnected && !doc.hidden && visibleSource(svg) &&
-            contextKey() === record.context && readDownloadPercent(svg) !== null &&
+            contextKey() === record.context && sameTransfer(svg, record) && readDownloadPercent(svg) !== null &&
             doc.activeElement !== record.proxy);
       }
     }

@@ -18,11 +18,11 @@ const source = originalSource.replace('function handleMessageReaderShortcut(even
         getChatPulseStatus, getChatPulseSummary, setChatPulseBaseline, reconcileChatPulseEntries,
         getCurrentChatContext, consumeUnreadTarget, isChatAtLatestMessages,
         getPulseHistorySize() { return [chatPulseSeenIds.size, chatPulseStatuses.size]; },
-        scheduleChatPulseSync, toggleChatPulse, followChatPulseTail,
+        scheduleChatPulseSync, syncChatPulseEntries, toggleChatPulse, followChatPulseTail,
         getSelectedChatTypingActivity, syncSelectedChatTypingActivity,
         queuePassiveAnnouncements, discardPassiveAnnouncements, discardAllPassiveAnnouncements,
         resetPassiveAnnouncementContext,
-        startStatusTracking, stopStatusTracking,
+        startStatusTracking, stopStatusTracking, toggleStatusTracking, isChatActivityEnabled,
         truncateList,
         announce, clearStatusRegion, getUserAnnouncementUntil,
         togglePrivacyWithQueueReset,
@@ -520,16 +520,19 @@ function gridKey(target, key, overrides = {}) {
         ...overrides
     };
 }
-let messageGridKey = gridKey(messageCell, 'ArrowDown');
-assert.equal(runtime.handleMessageGridKeydown(messageGridKey), true);
-assert.equal(document.activeElement, secondMessageCell);
-assert.equal(messageCell.getAttribute('tabindex'), '-1');
-assert.equal(secondMessageCell.getAttribute('tabindex'), '0');
-messageGridKey = gridKey(secondMessageCell, 'ArrowDown');
-assert.equal(runtime.handleMessageGridKeydown(messageGridKey), false);
-assert.equal(document.activeElement, secondMessageCell);
-assert.equal(messageGridKey.prevented, false);
-messageGridKey = gridKey(secondMessageCell, 'Home');
+for (const cell of [messageCell, secondMessageCell]) {
+    document.activeElement = cell;
+    for (const key of ['ArrowUp', 'ArrowDown']) {
+        const event = gridKey(cell, key);
+        const tabStops = [messageCell, secondMessageCell].map(item => item.getAttribute('tabindex'));
+        assert.equal(runtime.handleMessageGridKeydown(event), false);
+        assert.equal(document.activeElement, cell);
+        assert.equal(event.prevented, false);
+        assert.equal(event.stopped, false);
+        assert.deepEqual([messageCell, secondMessageCell].map(item => item.getAttribute('tabindex')), tabStops);
+    }
+}
+let messageGridKey = gridKey(secondMessageCell, 'Home');
 runtime.handleMessageGridKeydown(messageGridKey);
 assert.equal(document.activeElement, messageCell);
 messageGridKey = gridKey(messageCell, 'End');
@@ -1294,6 +1297,36 @@ assert.equal(voicePlayButton.clickCalls, 4);
 document.activeElement = messageCell;
 
 const incompleteRow = new Element();
+const voiceSvgTitle = new Element();
+voiceSvgTitle.textContent = 'ic-keyboard-voice-filled';
+voiceSvgTitle.closestHandler = () => null;
+voiceMessageContainer.appendChild(voiceSvgTitle);
+const legacyVoiceQueries = voiceMessageContainer.queryAllHandler;
+voiceMessageContainer.queryAllHandler = selector => {
+    if (selector === runtime.SELECTORS.voiceMessagePlaybackIdentity) return [];
+    if (selector === 'svg title') return [voiceSvgTitle];
+    return legacyVoiceQueries(selector);
+};
+runtime.setVoiceMessageKeyboardPlayback(true);
+const beforeSvgPlayback = voicePlayButton.clickCalls;
+for (const key of ['Enter', ' ']) {
+    const event = gridKey(messageCell, key);
+    assert.equal(runtime.handleMessageGridKeydown(event), true);
+    assert.equal(event.prevented, true);
+    assert.equal(document.activeElement, messageCell);
+}
+assert.equal(voicePlayButton.clickCalls, beforeSvgPlayback + 2);
+voiceSvgTitle.textContent = 'ic-play-arrow-filled';
+assert.equal(runtime.handleMessageGridKeydown(gridKey(messageCell, 'Enter')), false,
+    'a generic play icon does not identify a voice message');
+voiceSvgTitle.textContent = 'ic-keyboard-voice-filled';
+voiceSvgTitle.closestHandler = selector =>
+    selector === '[data-testid="quoted-message"]' ? quotedVoiceRoot : null;
+assert.equal(runtime.handleMessageGridKeydown(gridKey(messageCell, ' ')), false,
+    'a microphone icon inside a quote does not identify the primary message');
+assert.equal(voicePlayButton.clickCalls, beforeSvgPlayback + 2);
+voiceMessageContainer.queryAllHandler = legacyVoiceQueries;
+runtime.setVoiceMessageKeyboardPlayback(false);
 incompleteRow.setAttribute('role', 'row');
 // Real startup logs contain empty virtualized message rows before rendered ones.
 const virtualRow = new Element();
@@ -1652,6 +1685,11 @@ pulseMessage.queryHandler = selector => {
 pulseMessage.queryAllHandler = selector =>
     selector.includes('[data-testid="msg-meta"] [aria-label]') ? [pulseStatus] : [];
 assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Delivered');
+for (const language of ['id', 'en']) {
+    runtime.setLanguage(language);
+    pulseStatus.setAttribute('aria-label', 'Dikirim');
+    assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Sent');
+}
 assert.equal(runtime.getChatPulseSummary(pulseMessage), 'You test 15:54 Delivered');
 pulseStatus.setAttribute('aria-label', 'Pending');
 assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Pending');
@@ -1753,7 +1791,11 @@ metaPulseFinished = true;
 assert.equal(runtime.getChatPulseSummary(metaPulseMessage), 'Meta AI: Final Meta answer 16:29');
 
 const pulseEntry = (id, summary, status) => ({ id, summary, status });
-const reconcilePulse = (chatTitle, entries) => Array.from(runtime.reconcileChatPulseEntries(chatTitle, entries));
+const reconcilePulse = (chatTitle, entries) => {
+    const receipts = [];
+    const messages = runtime.reconcileChatPulseEntries(chatTitle, entries, { receipts });
+    return [...messages, ...receipts];
+};
 runtime.setLanguage('id');
 assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten, Member Eleven'), 'Member Seven, Member Eight, Member Nine dan 2 lainnya');
 assert.equal(runtime.truncateList('Member Seven, Member Eight, Member Nine, Member Ten'), 'Member Seven, Member Eight, Member Nine dan 1 lainnya');
@@ -1829,6 +1871,17 @@ assert.deepEqual(
     []
 );
 runtime.setCustomText('delivery-sent', 'envoyé');
+runtime.setLanguage('id');
+runtime.setChatPulseBaseline('Group receipt', [pulseEntry('group-status', 'Anda 15:58', 'Pending')]);
+assert.deepEqual(
+    reconcilePulse('Group receipt', [pulseEntry('group-status', 'Anda 15:58 Dikirim', 'Dikirim')]),
+    ['Status pesan: Terkirim']
+);
+assert.deepEqual(
+    reconcilePulse('Group receipt', [pulseEntry('group-status', 'Anda 15:58 Disampaikan', 'Disampaikan')]),
+    ['Status pesan: Disampaikan']
+);
+runtime.setLanguage('en');
 runtime.setCustomText('delivery-delivered', 'remis');
 runtime.setChatPulseBaseline('Custom receipt', [
     pulseEntry('custom-status', 'You first 15:58 envoyé', 'envoyé')
@@ -3315,7 +3368,8 @@ selectorAllResults.delete(modalSelector);
 selectorResults.clear();
 
 const retryMain = new Element();
-retryMain.queryHandler = selector => selector.includes('[data-testid="conversation-panel-messages"]') ? new Element() : null;
+const retryMessages = new Element();
+retryMain.queryHandler = selector => selector.includes('[data-testid="conversation-panel-messages"]') ? retryMessages : null;
 selectorResults.set('div#main', retryMain);
 document.activeElement = null;
 runtime.handleShortcuts(makeEvent({ altKey: true, shiftKey: true, code: 'KeyD' }));
@@ -6131,3 +6185,207 @@ historyViewport.scrollTop = 700;
 assert.equal(runtime.isChatAtLatestMessages(), true);
 
 console.log('accessibility runtime checks passed');
+
+// Receipt changes belong to Chat activity monitor, independently of new-message reading.
+const savedAuto = runtime.getChatPulseEnabled();
+const savedActivity = runtime.isChatActivityEnabled();
+for (const auto of [false, true]) {
+    for (const activity of [false, true]) {
+        if (runtime.getChatPulseEnabled() !== auto) runtime.toggleChatPulse(false);
+        if (runtime.isChatActivityEnabled() !== activity) runtime.toggleStatusTracking(false);
+        runtime.discardAllPassiveAnnouncements();
+        runtime.setChatPulseBaseline('routing', [pulseEntry('own', 'You sent', 'Sent')]);
+        runtime.syncChatPulseEntries('routing', [
+            pulseEntry('own', 'You delivered', 'Delivered'),
+            pulseEntry('new', 'New incoming message', '')
+        ]);
+        const queued = Array.from(runtime.getPassiveAnnouncements(), ({ source, text }) => ({ source, text }));
+        assert.deepEqual(queued, [
+            ...(auto ? [{ source: 'pulse', text: 'New incoming message' }] : []),
+            ...(activity ? [{ source: 'receipt', text: 'Message status: Delivered' }] : [])
+        ]);
+        if (activity) {
+            runtime.queuePassiveAnnouncements('activity', ['Typing']);
+            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'receipt').length, 1,
+                'typing must not replace delivery receipts');
+            runtime.toggleStatusTracking(false);
+            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'receipt').length, 0);
+            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'pulse').length, auto ? 1 : 0);
+        }
+    }
+}
+if (runtime.getChatPulseEnabled() !== savedAuto) runtime.toggleChatPulse(false);
+if (runtime.isChatActivityEnabled() !== savedActivity) runtime.toggleStatusTracking(false);
+runtime.discardAllPassiveAnnouncements();
+
+// Grid refreshes must not recreate identical label text on every mutation batch.
+{
+    const labelSource = fs.readFileSync('src/chat-accessibility.js', 'utf8');
+    const begin = labelSource.indexOf('function ensureMessageGridLabel()');
+    const end = labelSource.indexOf('function setMessageGridTabStop(', begin);
+    let content = '', writes = 0, translated = 'Message history';
+    const label = {
+        set textContent(value) { content = value; writes++; },
+        get textContent() { return content; }
+    };
+    const labelContext = vm.createContext({
+        document: { getElementById: () => label },
+        getLanguage: () => 'en', t: () => translated
+    });
+    vm.runInContext(labelSource.slice(begin, end), labelContext);
+    labelContext.ensureMessageGridLabel();
+    labelContext.ensureMessageGridLabel();
+    assert.equal(writes, 1, 'Unchanged grid names must not generate child-list mutations');
+    translated = 'Riwayat pesan';
+    labelContext.ensureMessageGridLabel();
+    assert.equal(writes, 2, 'Language changes update the grid name');
+}
+
+// Async results remain exposed inside native modal dialogs without moving focus.
+{
+    const { parseHTML } = require('linkedom');
+    const { document: modalDocument } = parseHTML('<html><body><button id="origin"></button></body></html>');
+    let modals = [];
+    const originalQueryAll = modalDocument.querySelectorAll.bind(modalDocument);
+    modalDocument.querySelectorAll = selector => selector === 'dialog:modal' ? modals : originalQueryAll(selector);
+    Object.defineProperty(modalDocument, 'activeElement', { value: modalDocument.getElementById('origin'), writable: true });
+    const modalObservers = [], timers = new Map(), published = [];
+    let timerId = 0;
+    class HostObserver {
+        constructor(callback) { this.callback = callback; this.active = false; modalObservers.push(this); }
+        observe() { this.active = true; }
+        disconnect() { this.active = false; }
+        trigger() { if (this.active) this.callback(); }
+    }
+    const sourceText = fs.readFileSync('src/chat-accessibility.js', 'utf8');
+    const section = sourceText.slice(sourceText.indexOf('function applyVisuallyHiddenStyle('), sourceText.indexOf('function hasRenderedBox('))
+        .replace(/^export /gm, '');
+    let modalClock = Date.now();
+    const modalContext = vm.createContext({
+        Date: class extends Date { static now() { return modalClock; } },
+        document: modalDocument, MutationObserver: HostObserver,
+        _origSetAttribute: modalDocument.body.setAttribute,
+        getLanguage: () => 'en', isPrivacyModeEnabled: () => false,
+        publishCompanionAnnouncement: message => published.push(message), invalidateCompanionAnnouncements() {},
+        setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
+        clearTimeout: id => timers.delete(id)
+    });
+    vm.runInContext('let announcementTimer = null, userAnnouncementUntil = 0, announcementGeneration = 0; const MESSAGE_LOG_LIMIT = 50;\n' + section, modalContext);
+    function flushStatus({ settle = true } = {}) {
+        // Delay 0 delivers; up to 150 ms lets a region that just moved into a modal settle first.
+        for (let round = 0; round < 5; round++) {
+            const due = [...timers].filter(([, timer]) =>
+                timer.delay === 0 || (settle && timer.delay > 0 && timer.delay <= 150));
+            if (!due.length) return;
+            for (const [id, timer] of due) { timers.delete(id); modalClock += timer.delay; timer.callback(); }
+        }
+    }
+    function addModal(parent = modalDocument.body) {
+        const dialog = modalDocument.createElement('dialog');
+        dialog.matches = selector => selector === ':modal' && modals.includes(dialog);
+        parent.appendChild(dialog);
+        modals.push(dialog);
+        modalDocument.activeElement = dialog;
+        return dialog;
+    }
+    modalContext.announce('Before dialog'); flushStatus();
+    const status = modalDocument.getElementById('wa-plus-live-region');
+    const log = modalDocument.getElementById('wa-plus-message-log');
+    assert.equal(status.parentElement, modalDocument.body);
+    modalContext.announce('Result arrives after modal opens');
+    const outer = addModal();
+    flushStatus({ settle: false });
+    assert.equal(status.parentElement, outer);
+    assert.equal(status.textContent, '', 'A region that just moved waits before it is written');
+    assert.ok([...timers.values()].some(timer => timer.delay > 0 && timer.delay <= 150));
+    flushStatus();
+    assert.equal(status.textContent, 'Result arrives after modal opens');
+    assert.equal(log.parentElement, outer);
+    assert.equal(modalDocument.activeElement, outer, 'Announcement must not move focus');
+    assert.equal(published.filter(entry => entry.text === status.textContent).length, 1);
+    modalContext.announcePassiveMessages(['Download 50 percent'], 0);
+    assert.equal(log.textContent, 'Download 50 percent');
+    const nested = addModal(outer);
+    modalContext.announce('Nested result'); flushStatus();
+    assert.equal(status.parentElement, nested);
+    assert.equal(log.textContent, '', 'Reparenting must not replay earlier log messages');
+    modals = [outer];
+    modalDocument.activeElement = outer;
+    modalObservers.at(-1).trigger();
+    assert.equal(status.parentElement, outer);
+    assert.equal(status.textContent, '', 'Closing a nested modal must not replay its result');
+    assert.equal(log.parentElement, outer);
+    // Removal can precede the observer callback. Recover the same nodes at delivery.
+    outer.remove(); modals = [];
+    modalDocument.activeElement = modalDocument.getElementById('origin');
+    modalContext.announce('After removal'); flushStatus();
+    assert.equal(modalDocument.getElementById('wa-plus-live-region'), status);
+    assert.equal(modalDocument.getElementById('wa-plus-message-log'), log);
+    assert.equal(status.parentElement, modalDocument.body);
+    assert.equal(status.textContent, 'After removal');
+    assert.equal(originalQueryAll('#wa-plus-live-region').length, 1);
+    assert.equal(modalObservers.some(observer => observer.active), false);
+    const last = addModal();
+    modalContext.announce('Pending modal result');
+    last.remove(); modals = [];
+    modalObservers.at(-1).trigger();
+    flushStatus();
+    assert.equal(status.textContent, 'Pending modal result', 'Pending callbacks keep the canonical region identity');
+    assert.equal(status.parentElement, modalDocument.body);
+    assert.equal(log.parentElement, modalDocument.body);
+    assert.equal(modalObservers.some(observer => observer.active), false);
+    const replacedChildrenDialog = addModal();
+    modalContext.announce('Status before host reconciliation'); flushStatus();
+    modalContext.announcePassiveMessages(['Message before host reconciliation'], 0);
+    const beforeRepairPublications = published.length;
+    status.remove(); log.remove();
+    modalObservers.at(-1).trigger();
+    assert.ok(status.parentElement === replacedChildrenDialog,
+        'An open modal replacing its children must not remove the required status region');
+    assert.equal(log.parentElement, replacedChildrenDialog);
+    assert.equal(status.textContent, '');
+    assert.equal(log.textContent, '');
+    assert.equal(published.length, beforeRepairPublications, 'Repair must not publish duplicate Companion messages');
+    modalContext.announcePassiveMessages(['Unaffected log entry'], 0);
+    assert.equal(log.textContent, '', 'A passive message waits until regions repaired into the modal settle');
+    flushStatus();
+    status.remove();
+    modalObservers.at(-1).trigger();
+    assert.equal(log.textContent, 'Unaffected log entry', 'Repairing the status node preserves the unaffected log');
+    modalContext.announce('Unaffected status'); flushStatus();
+    log.remove();
+    modalObservers.at(-1).trigger();
+    assert.equal(status.textContent, 'Unaffected status', 'Repairing the log preserves the unaffected current status');
+    modalContext.announce('Detached sensitive status'); flushStatus();
+    modalContext.announcePassiveMessages(['Detached sensitive message'], 0);
+    status.remove(); log.remove();
+    modalContext.clearStatusRegion();
+    modalContext.clearMessageLog();
+    assert.equal(status.textContent, '', 'Privacy invalidation also clears temporarily detached canonical regions');
+    assert.equal(log.textContent, '');
+    replacedChildrenDialog.appendChild(status);
+    replacedChildrenDialog.appendChild(log);
+    modalObservers.at(-1).trigger();
+    assert.equal(status.textContent, '');
+    assert.equal(log.textContent, '');
+    replacedChildrenDialog.remove(); modals = [];
+    modalObservers.at(-1).trigger();
+    modalContext.announce('Stale result', () => false); flushStatus();
+    assert.equal(published.some(entry => entry.text === 'Stale result'), false);
+    // Passive messages that arrive while the regions settle in a new modal keep their order.
+    const orderedDialog = addModal();
+    modalContext.announcePassiveMessages(['First message'], 0);
+    modalContext.announcePassiveMessages(['Second message'], 0);
+    assert.equal(log.parentElement, orderedDialog);
+    assert.equal(log.textContent, '');
+    flushStatus();
+    assert.deepEqual(Array.from(log.children, entry => entry.textContent), ['First message', 'Second message']);
+    // Clearing the log drops messages still waiting for the regions to settle.
+    orderedDialog.remove(); modals = [];
+    modalObservers.at(-1).trigger();
+    addModal();
+    modalContext.announcePassiveMessages(['Dropped message'], 0);
+    modalContext.clearMessageLog();
+    flushStatus();
+    assert.equal(log.textContent, '');
+}

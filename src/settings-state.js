@@ -100,6 +100,16 @@ try {
   }
 } catch {}
 
+// Resolve persisted conflicts in action order, including legacy defaults. Keep
+// the duplicate disabled in memory instead of silently restoring its default.
+const restoredBindings = new Set();
+for (const name of Object.keys(SHORTCUT_ACTIONS)) {
+  const binding = getShortcutBinding(name);
+  if (!binding) continue;
+  if (restoredBindings.has(binding)) shortcutBindings[name] = '';
+  else restoredBindings.add(binding);
+}
+
 export function getShortcutBinding(name) {
   if (!Object.hasOwn(SHORTCUT_ACTIONS, name)) return '';
   return Object.hasOwn(shortcutBindings, name) ? shortcutBindings[name]
@@ -127,7 +137,7 @@ const messages = Object.freeze({ en, id });
 const regexCache = new Map();
 const DELIVERY_STATUS_DEFINITIONS = Object.freeze([
   { key: 'deliveryPending', customKey: 'delivery-pending', rank: 0, values: ['Pending', 'Tertunda'] },
-  { key: 'deliverySent', customKey: 'delivery-sent', rank: 1, values: ['Sent', 'Terkirim'] },
+  { key: 'deliverySent', customKey: 'delivery-sent', rank: 1, values: ['Sent', 'Terkirim', 'Dikirim'] },
   { key: 'deliveryDelivered', customKey: 'delivery-delivered', rank: 2, values: ['Delivered', 'Disampaikan', 'Tersampaikan'] },
   { key: 'deliveryRead', customKey: 'delivery-read', rank: 3, values: ['Read', 'Dibaca'] }
 ]);
@@ -542,6 +552,7 @@ export function setShortcutRemap(name, value) {
   const storageKey = shortcutRemapStorageKeys[name];
   if (!storageKey) return false;
   const nextValue = !!value;
+  if (nextValue && validateShortcutBinding(name, SHORTCUT_ACTIONS[name].defaultBinding)) return false;
   if (!writeSetting(storageKey, String(nextValue))) return false;
   shortcutRemaps[name] = nextValue;
   return true;

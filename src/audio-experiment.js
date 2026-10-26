@@ -136,11 +136,17 @@ const CALL_AUDIO_PROFILES = Object.freeze({
 let hooksInstalled = false;
 let armingListenersInstalled = false;
 let nativeGetUserMedia = null;
-let nativeMediaRecorderStart = null;
+let activeGetUserMediaHook = null;
 let voiceCaptureArmedUntil = 0;
 const voiceMessageStreams = new WeakSet();
 const voiceMessageTracks = new WeakSet();
 const recorderSessions = new WeakMap();
+
+export function getNativeMicrophoneCapture() {
+  const devices = globalThis.navigator?.mediaDevices;
+  const capture = nativeGetUserMedia || devices?.getUserMedia;
+  return typeof capture === 'function' ? capture.bind(devices) : null;
+}
 
 export function isAudioExperimentEnabled() {
   return Boolean(globalThis.navigator?.mediaDevices?.getUserMedia?.__waPlusNativeVoice) &&
@@ -594,7 +600,7 @@ function installMediaRecorderDiagnosticsHook() {
   if (!prototype || typeof prototype.start !== 'function') return false;
   if (prototype.start.__waPlusNativeVoiceDiagnostics) return true;
 
-  nativeMediaRecorderStart = prototype.start;
+  const nativeMediaRecorderStart = prototype.start;
   const patchedStart = function(...args) {
     const result = nativeMediaRecorderStart.apply(this, args);
     if (consumeVoiceMessageStream(this.stream)) observeVoiceMessageRecorder(this, args[0]);
@@ -799,6 +805,9 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       }
     }
     if (context.state !== 'running') throw new Error('AudioContext is not running');
+    if (!(inputStream.getAudioTracks?.() || []).some(track => track.readyState === 'live')) {
+      throw new Error('Microphone ended during audio processing setup');
+    }
 
     const outputAudioTracks = destination.stream?.getAudioTracks?.() || [];
     if (!outputAudioTracks.length) throw new Error('Processed stream has no audio track');
@@ -822,7 +831,7 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
           try { track.stop?.(); } catch {}
         }
       }
-      try { context.close?.(); } catch {}
+      try { context.close?.()?.catch?.(() => {}); } catch {}
     };
 
     if (outputTrack && typeof outputTrack.stop === 'function') {
@@ -899,8 +908,10 @@ function installGetUserMediaHook() {
   if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') return false;
   if (mediaDevices.getUserMedia.__waPlusNativeVoice) return true;
 
-  nativeGetUserMedia = mediaDevices.getUserMedia;
+  const previousGetUserMedia = mediaDevices.getUserMedia;
+  nativeGetUserMedia ||= previousGetUserMedia;
   const patchedGetUserMedia = async function(constraints) {
+    if (activeGetUserMediaHook !== patchedGetUserMedia) return previousGetUserMedia.call(this, constraints);
     const hasAudio = constraints?.audio !== false && constraints?.audio != null;
     const voiceMessageArmed = hasAudio && consumeVoiceMessageCaptureArm();
     const captureKind = voiceMessageArmed ? 'voice-message' : 'voice-call';
@@ -908,14 +919,14 @@ function installGetUserMediaHook() {
       ? isAudioExperimentEnabled()
       : isCallAudioExperimentEnabled();
     if (!hasAudio) {
-      return nativeGetUserMedia.call(this, constraints);
+      return previousGetUserMedia.call(this, constraints);
     }
 
     if (!enabled) {
-      if (!IS_DEBUG_BUILD || voiceMessageArmed) return nativeGetUserMedia.call(this, constraints);
+      if (!IS_DEBUG_BUILD || voiceMessageArmed) return previousGetUserMedia.call(this, constraints);
       const startedAt = performance.now();
       try {
-        const inputStream = await nativeGetUserMedia.call(this, constraints);
+        const inputStream = await previousGetUserMedia.call(this, constraints);
         if (inputStream?.getAudioTracks?.().length) {
           saveReport({
             kind: 'voice-call-getUserMedia',
@@ -961,7 +972,7 @@ function installGetUserMediaHook() {
     for (let index = 0; index < attempts.length; index += 1) {
       const attempt = attempts[index];
       try {
-        const inputStream = await nativeGetUserMedia.call(this, attempt.constraints);
+        const inputStream = await previousGetUserMedia.call(this, attempt.constraints);
         let returnedStream = inputStream;
         let processing = { mode: 'natural', active: false };
         if (inputStream?.getAudioTracks?.().length && profiles[selectedProfile]?.processing) {
@@ -1046,7 +1057,9 @@ function installGetUserMediaHook() {
       return false;
     }
   }
-  return mediaDevices.getUserMedia === patchedGetUserMedia;
+  if (mediaDevices.getUserMedia !== patchedGetUserMedia) return false;
+  activeGetUserMediaHook = patchedGetUserMedia;
+  return true;
 }
 
 export function installAudioExperimentHooks() {

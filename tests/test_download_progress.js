@@ -9,7 +9,8 @@ vm.runInContext(source + '\nthis.factory = createDownloadProgress; this.percent 
 function fixture() {
   let time = 0, context = 'chat-a', language = 'en', timer = null;
   const pending = new Map(), spoken = [], proxies = [], originals = new Map();
-  const button = { parentElement: { insertBefore: el => { proxies.push(el); el.isConnected = true; } } };
+  const message = { id: 'file-a', getAttribute: () => message.id };
+  const button = { closest: () => message, parentElement: { insertBefore: el => { proxies.push(el); el.isConnected = true; } } };
   const circle = { style: { strokeDasharray: '126, 126', strokeDashoffset: '104.58' } };
   const svg = { attrs: { role: 'status' }, isConnected: true, visible: true,
     parentElement: { visible: true, isConnected: true, attrs: {} },
@@ -35,7 +36,7 @@ function fixture() {
   });
   const flush = () => { for (const entry of pending.values()) if (entry.isCurrent()) spoken.push(entry.getText()); pending.clear(); };
   const advance = (ms, percent) => { time += ms; circle.style.strokeDashoffset = String(126 * (1 - percent / 100)); controller.refresh(); };
-  return { controller, doc, svg, circle, button, pending, proxies, spoken, flush, advance,
+  return { controller, doc, svg, circle, button, message, pending, proxies, spoken, flush, advance,
     language: value => { language = value; }, context: value => { context = value; }, timer: () => timer };
 }
 
@@ -91,6 +92,30 @@ function fixture() {
   f.doc.rings = [f.svg]; f.controller.refresh(); f.doc.hidden = true; f.flush();
   assert.equal(f.spoken.length, 0); f.controller.refresh();
   assert.equal(f.proxies.at(-1).isConnected, false);
+}
+
+{
+  const f = fixture(); f.controller.start(); f.flush();
+  const previous = f.proxies[0];
+  previous.isConnected = false;
+  f.advance(3000, 52);
+  assert.equal(f.proxies.length, 2, 'Replace a progress proxy removed by host reconciliation');
+  assert.equal(f.proxies[1].attrs['aria-valuenow'], '52');
+  assert.equal(f.proxies[1].attrs['aria-label'], 'en:downloadProgressLabel:1:', 'Keep transfer identity');
+  f.flush(); assert.equal(f.spoken.at(-1), 'en:downloadProgressValue:1:52');
+  f.controller.stop();
+  assert.equal(f.proxies[1].isConnected, false);
+}
+
+{
+  const f = fixture(); f.controller.start();
+  f.message.id = 'file-b';
+  f.flush();
+  assert.deepEqual(f.spoken, [], 'A queued transfer must not describe a recycled message node');
+  f.advance(3000, 35); f.flush();
+  assert.equal(f.spoken.at(-1), 'en:downloadProgressValue:2:35', 'Recycled message starts a distinct transfer');
+  assert.equal(f.proxies[0].isConnected, false);
+  f.controller.stop();
 }
 
 // Exercise the real shared queue, including user feedback deferral and coalescing.

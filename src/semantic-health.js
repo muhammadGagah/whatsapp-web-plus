@@ -38,7 +38,11 @@ function isExcludedFromAccessibilityTree(element) {
   if (element.inert || element.closest?.('[hidden], [inert], [aria-hidden="true"]')) return true;
   if (typeof getComputedStyle !== 'function') return false;
   const style = getComputedStyle(element);
-  return style.display === 'none' || style.visibility === 'hidden';
+  if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)) return true;
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (getComputedStyle(ancestor).display === 'none') return true;
+  }
+  return false;
 }
 
 function isExplicitlyFocusable(element) {

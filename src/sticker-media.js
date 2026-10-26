@@ -111,9 +111,12 @@ export async function decodeSticker(bytes,signal) {
   if(typeof ImageDecoder!=='function' || !await ImageDecoder.isTypeSupported(meta.mime))return bad('stickerAnimationError');
   signal.throwIfAborted();
   const decoder=new ImageDecoder({data:bytes,type:meta.mime,preferAnimation:true});
-  const cancel=()=>{try{decoder.close();}catch{}};
-  signal.addEventListener('abort',cancel,{once:true});
   const frames=[];
+  const cancel=()=>{
+    if(signal.aborted)for(const frame of frames){frame.canvas.width=0;frame.canvas.height=0;}
+    try{decoder.close();}catch{}
+  };
+  signal.addEventListener('abort',cancel,{once:true});
   try {
     await decoder.tracks.ready;
     const track=decoder.tracks.selectedTrack;
@@ -127,6 +130,7 @@ export async function decodeSticker(bytes,signal) {
       signal.throwIfAborted();
       const result=await decoder.decode({frameIndex:i,completeFramesOnly:true});
       try {
+        signal.throwIfAborted();
         if(wanted.has(i)){
           const sample=canvasImage(result.image,meta.width,meta.height);
           frames.push({...sample,index:i,time:elapsed});
@@ -158,4 +162,30 @@ export function encodeStickerInput(media,provider,model) {
     if(images.reduce((n,i)=>n+i.data.length,0)>STICKER_LIMITS.payloadBytes)return bad('stickerTooLarge');
     return {images,animated:media.animated,mode,unclear:media.mode==='unclear'};
   }finally{for(const f of media.frames){f.canvas.width=0;f.canvas.height=0;}if(board){board.width=0;board.height=0;}}
+}
+
+export function encodeStickerGroup(items) {
+  if(items.length<2 || items.length>6)return bad('stickerTooLarge');
+  const board=document.createElement('canvas');
+  board.width=768;board.height=items.length*280;
+  try{
+    const ctx=board.getContext('2d');
+    if(!ctx)return bad();
+    ctx.fillStyle='#b0b0b0';ctx.fillRect(0,0,board.width,board.height);
+    items.forEach((media,row)=>{
+      const frames=media.frames.length>3
+        ? [media.frames[0],media.frames[Math.floor(media.frames.length/2)],media.frames.at(-1)] : media.frames;
+      frames.forEach((frame,column)=>{
+        const scale=Math.min(256/frame.canvas.width,256/frame.canvas.height);
+        ctx.drawImage(frame.canvas,column*256,row*280,frame.canvas.width*scale,frame.canvas.height*scale);
+      });
+      ctx.fillStyle='#000';ctx.font='16px sans-serif';
+      ctx.fillText(String(row+1),4,row*280+274);
+    });
+    const data=board.toDataURL('image/png').split(',')[1];
+    if(data.length>STICKER_LIMITS.payloadBytes)return bad('stickerTooLarge');
+    return {images:[{mime:'image/png',data,index:0,time:0}],stickerCount:items.length,
+      stickerModes:items.map(media=>media.animated?(media.mode==='unclear'?'snapshot':'animated'):'static'),
+      animated:false,unclear:false,mode:'stickers'};
+  }finally{board.width=0;board.height=0;}
 }

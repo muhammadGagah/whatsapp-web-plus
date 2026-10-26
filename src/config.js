@@ -118,6 +118,7 @@ export const OWNERS = Object.freeze({
   messageCell: 'message-cell',
   messagePlaceholder: 'message-placeholder',
   messageExpandedName: 'message-expanded-name',
+  stickerMessageName: 'sticker-message-name',
   messageMentionName: 'message-mention-name',
   temporaryFocus: 'temporary-focus',
   metaAIMessageName: 'meta-ai-message-name',

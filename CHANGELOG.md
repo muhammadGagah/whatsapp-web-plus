@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026.10.26 - 2026-10-26
+
+Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.
+
+Avoid jumping from older history when automatic reading is enabled in nested message lists. Prevent recursion and duplicate processing when audio hooks are reinstalled. Make repeated shortcut save errors readable, ignore hidden message popups during menu fitting, and route debug feedback through the shared announcement channel.
+
+Keep asynchronous announcements inside the active native dialog so sticker results and recording feedback remain accessible. Restore the shared announcement nodes after the dialog closes without moving keyboard focus or replaying old messages.
+
+Keep browser recording on the original microphone capture path even when audio enhancements are enabled. Cancel pending unread-message and input navigation after switching chats. Report sticker timeouts and allow retry even if image decoding stalls. Prevent stale download announcements after message nodes are reused. Preserve WhatsApp attribute values when script features change ownership, and restore author visibility when privacy masking no longer applies.
+
+Fix delayed recorder errors affecting a later recording, microphone loss during audio setup, and rejected audio cleanup promises. Correct navigation to the latest message in nested and reversed lists, and cancel pending navigation when switching chats. Reject conflicting shortcuts and resolve duplicate saved bindings. Restore accessible download progress after WhatsApp replaces its helper element, avoid redundant message-grid label updates, refresh privacy masking when author text is replaced, and exclude CSS-hidden controls from accessibility diagnostics. Bound native sticker requests, preserve pending requests, clear cancelled credentials, and handle malformed AI responses safely.
+
+Add manual browser call recording through the Record call menu. Enable Start only when the current tab shows a connected call. Recheck the call after capture permissions so a call that ended or changed during setup cannot start recording. Capture audio from the verified current WhatsApp tab and the default microphone without another extension. Provide cancellation, manual stop, audio download, and explicit discard. Release capture resources on errors and keep recorded audio available for download retries. The Companion continues to use its native recorder.
+
+Move delivery-status announcements to Chat activity monitor. Keep automatic reading of new messages independent, and preserve status announcements when typing activity updates.
+
+Help load older messages when Arrow Up stalls at the first available message. Scroll only after native navigation leaves focus unchanged, with bounded movement and no continuous polling.
+
+Announce how many times each identical sticker appears, including mixed messages with repeated and different stickers. Put each sticker description on a new line after its heading.
+
+Read up to six unique stickers in the focused message with one AI request and numbered descriptions. Filter duplicate images and keep the existing single-sticker reading behavior.
+
+Read existing sticker image descriptions in Focus Mode when WhatsApp leaves the message unnamed. Preserve the sender and time, avoid repeated descriptions, and update the label when the image description changes.
+
+Recognize the Indonesian message status Dikirim as Sent so delivery changes are announced in group chats as well.
+
+Restore Enter and Space voice-message playback for the new WhatsApp microphone icons while preserving support for the previous layout.
+
+### Release review fixes
+
+- Keep Alt+2, Alt+3 and Alt+Shift+D working when pressed while a chat is still loading. A chat that gains its identity during rendering is no longer mistaken for a chat switch.
+- Move the announcement regions into a newly opened dialog as soon as focus enters it, follow a nested dialog opened on top, and wait briefly after moving them, so the first announcement inside a dialog is not lost. Passive messages that arrive meanwhile keep their order.
+- Help load older messages in nested and reversed message lists as well.
+- Accept multi-sticker answers formatted with bold labels, list markers or a short note in parentheses. Keep a description cut off by the provider's length limit and mark it with an ellipsis instead of reporting an error.
+- Keep Companion's sticker transport when its polling is briefly delayed, and report a sticker request that is still in progress instead of a network error.
+- Keep the masked sender in sticker labels when Privacy Mode hides a phone number, and rebuild sticker labels after Privacy Mode changes.
+- Keep unavailable Record call items reachable with the arrow keys, as in a standard menu. Activating Start recording without a connected call explains why.
+- Continue recording setup when WhatsApp redraws the call timer, report a source that ends during setup as cancelled, treat the size limit as a normal stop without a gap at the end, speak the stop reason together with the result, and keep a finished browser recording when the page enters the back/forward cache.
+- Keep hidden items inside the settings menu hidden.
+- Stop a browser call recording by itself about 15 seconds after the call disappears from the tab, and say that the call ended. The audio stays available to save.
+- Say that a message, unread message or message box is not ready when Alt+2, Alt+3 or Alt+Shift+D is cancelled by a chat change, instead of staying silent.
+- Include the delivery status, such as Read, in sticker message labels.
+- Keep the stickers a cut-off reply did describe, and say which descriptions are missing. Do not read bold list numbers aloud, and keep real numbers at the end of a description.
+- Keep messages waiting for automatic reading when Chat activity monitor is turned on or off.
+- Use the real scroll viewport when Alt+3 restores the unread position in nested message lists.
+- Reduce layout work while a message menu is open by ignoring hover changes in the chat list and message history.
+
 ## 2026.10.19 - 2026-10-19
 
 Clean UI now recognizes the Indonesian desktop promotion description, so the promotion is hidden without a custom title.
@@ -28,7 +75,7 @@ Clean UI now recognizes the Indonesian desktop promotion description, so the pro
 ### Maintenance and versioning
 
 - Consolidate regression tests under tests/ and update test commands. Refresh both project guides and remove outdated comments.
-- Adopt year.month.day versioning with 2026.10.19, matching Companion. This version compares higher than 2.6.91. Publishing and signing remain separate steps.
+- Adopt year.month.day versioning with 2026.10.19, using the same version format as Companion. This version compares higher than 2.6.91. Publishing and signing remain separate steps.
 
 ## 2.6.91 - 2026-10-04
 

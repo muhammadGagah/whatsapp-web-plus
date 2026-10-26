@@ -83,11 +83,27 @@ For more options, read the [full keyboard shortcut list](docs/detailed-guide.md#
 
 ### Reading messages
 
+**Automatic reading of messages** announces new messages. **Chat activity monitor** announces delivery changes such as Sent, Delivered, and Read, along with chat activity. You can turn either setting on or off independently.
+
 For a long message with **Read more**, focus the message in WhatsApp and press `Shift+Enter` to expand it. NVDA can then read the expanded text in Focus Mode, including the sender and time. To open a message in the message reader, focus it and press `Alt+Shift+C`.
 
 Photo album captions are read with the message details. You will hear **Caption:** before the text, or **Keterangan:** when using Indonesian. This works automatically.
 
 Press `Alt+1` to return to the remembered chat in the chat list, then use the arrows to continue navigating. When Escape closes a private chat, group, channel, or community announcement chat, you will hear **Chat is now closed**. Closing a menu alone does not trigger that announcement.
+
+When Arrow Up stops at the earliest available message, the script briefly scrolls upward to help WhatsApp load older messages. Focus stays on the current message. Press Arrow Up again after loading to continue reading. This runs only in response to the key.
+
+### Recording a browser call
+
+Open **Shift+F8 > Record call > Recording instructions** before your first recording. Tell the participants that you will record the call and use headphones.
+
+The **Start recording** item is available only when a connected call shows its duration in this WhatsApp tab. It stays disabled before connection and after the call ends. Unavailable items can still be reached with the arrow keys and are announced as unavailable. Choosing Start recording without a connected call tells you that no call was found in this tab. A call moved into a separate window cannot be started from this tab's recording menu. Keep the call in this tab while setting up recording, then choose **Start recording**. Select this tab in the browser prompt and enable **Share tab audio**. Allow microphone access when asked. The recorder uses your default browser microphone, so check that it is the one you use for the call. It does not apply the script's voice-message or call microphone profiles. If the call ends during setup, recording does not start.
+
+Recording stops by itself about 15 seconds after the call disappears from this tab, and you hear that the call ended. You can also choose **Stop recording or cancel setup** at any time. Then choose **Save recording**. The audio is downloaded as a WebM file, or Ogg if that is the supported format. The recording stays available for another save attempt. Start stays disabled until you discard that recording. After checking the downloaded file, choose **Discard recording** to make room for a new recording.
+
+The recording includes sounds from this tab and your microphone. Muting yourself in WhatsApp does not mute this separate microphone recording. Closing or reloading the tab loses audio that has not been saved. Recording stops at four hours or 256 MB.
+
+This feature requires a supported Chrome or Edge browser. It does not record calls that open in the desktop app. Use the Companion recording menu for those calls. No additional extension is required.
 
 ### Keeping message menus open
 
@@ -109,7 +125,7 @@ Read Sticker asks an AI provider to describe the sticker you choose. It is off b
 4. Focus a sticker message or its sticker button and press your assigned shortcut.
 5. Wait for the description. If Tampermonkey asks for connection permission, allow the provider you selected.
 
-Only the selected sticker is sent when you use the shortcut. You can move to another message in the same chat while waiting. Changing chats, language, or provider settings cancels the previous request. The description is read once and does not replace the sticker's label. AI descriptions can be wrong.
+Only stickers in the focused message are sent when you use the shortcut. A message can contain up to six different stickers. Identical stickers are described once with their occurrence count. Different stickers are read as Sticker 1, Sticker 2, and so on in order of first appearance. Each heading is followed by a new line. You can move to another message in the same chat while waiting. Changing chats, language, or provider settings cancels the previous request. The description is read once and does not replace the sticker's label. AI descriptions can be wrong.
 
 Leave the key field blank to keep a saved key or token. The key is encrypted in this WhatsApp profile. Browser and Companion settings are separate. Clearing site data can remove the key, and encryption does not protect it from scripts running in the same page or someone controlling your profile. Saving settings does not test the key.
 
@@ -262,11 +278,11 @@ Use these shortcuts while call controls are available. The same key can have a d
 To open the update page yourself:
 
 1. Press `Shift + F8`.
-2. Choose **Open WhatsApp Web Plus update in Tampermonkey**.
+2. Choose **Open the WhatsApp Web Plus installer**.
 3. Review the version and confirm the update in Tampermonkey.
 4. Refresh WhatsApp Web.
 
-The source version is **2026.10.19**. Read the [release history](CHANGELOG.md) for changes.
+The source version is **2026.10.26**. Read the [release history](CHANGELOG.md) for changes.
 
 ## If WhatsApp Web Plus does not start
 

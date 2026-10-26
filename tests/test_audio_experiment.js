@@ -131,6 +131,7 @@ const mediaDevices = {
       rejectWithErrorOnce = null;
       throw error;
     }
+    for (const track of nativeStream.getTracks()) track.readyState = 'live';
     return nativeStream;
   },
   getSupportedConstraints() {
@@ -647,6 +648,79 @@ windowTarget.addEventListener('keydown', event => {
   lostOutput.stop();
   assert.equal(externalEndedEvents, 1, 'cleanup must not emit duplicate ended events');
   nativeStream.tracks = previousInputTracks;
+
+  // Device loss while resume is pending occurs before the processed track listeners exist.
+  const resumeInput = new FakeTrack();
+  nativeStream.tracks = [resumeInput];
+  windowTarget.AudioContext = class extends FakeAudioContext {
+    constructor(options) { super(options); this.state = 'suspended'; }
+    async resume() {
+      resumeInput.readyState = 'ended';
+      resumeInput.dispatchEvent(new Event('ended'));
+      this.state = 'running';
+    }
+  };
+  assert.equal(api.armNextCapture(), true);
+  const afterResumeLoss = await mediaDevices.getUserMedia({ audio: true });
+  assert.equal(afterResumeLoss, nativeStream, 'device loss during resume must not return a live silent replacement');
+  assert.equal(FakeAudioContext.instances.at(-1).state, 'closed');
+  assert.equal(FakeAudioContext.instances.at(-1).destination.stream.getAudioTracks()[0].readyState, 'ended');
+  windowTarget.AudioContext = FakeAudioContext;
+  nativeStream.tracks = previousInputTracks;
+
+  windowTarget.AudioContext = class extends FakeAudioContext {
+    close() { this.state = 'closed'; return Promise.reject(new Error('Context already closing')); }
+  };
+  assert.equal(api.armNextCapture(), true);
+  const closeFailureStream = await mediaDevices.getUserMedia({ audio: true });
+  const closeFailureContext = FakeAudioContext.instances.at(-1);
+  closeFailureStream.getAudioTracks()[0].stop();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closeFailureContext.state, 'closed');
+  assert.equal(nativeStream.getAudioTracks()[0].readyState, 'ended');
+  windowTarget.AudioContext = FakeAudioContext;
+
+  // Recorder capture must bypass hooks even when module initialization already installed them.
+  assert.equal(api.selectCallAudioProfile('clear'), true);
+  const contextsBeforeRawCapture = FakeAudioContext.instances.length;
+  const reportsBeforeRawCapture = eventReports.length;
+  const rawCapture = context.getNativeMicrophoneCapture();
+  assert.equal(await rawCapture({ audio: true, video: false }), nativeStream);
+  assert.deepEqual(plain(capturedConstraints), { audio: true, video: false });
+  assert.equal(FakeAudioContext.instances.length, contextsBeforeRawCapture);
+  assert.equal(eventReports.length, reportsBeforeRawCapture);
+
+  // A wrapper installed after WA+ must remain callable when settings reinstall our hooks.
+  api.selectProfile('whatsapp');
+  api.selectCallAudioProfile('whatsapp');
+  const firstCaptureHook = mediaDevices.getUserMedia;
+  let interposedCaptures = 0;
+  mediaDevices.getUserMedia = function(constraints) {
+    interposedCaptures++;
+    if (interposedCaptures > 3) throw new Error('Recursive microphone hook');
+    return firstCaptureHook.call(this, constraints);
+  };
+  const firstRecorderHook = FakeMediaRecorder.prototype.start;
+  let interposedStarts = 0;
+  FakeMediaRecorder.prototype.start = function(...args) {
+    interposedStarts++;
+    if (interposedStarts > 3) throw new Error('Recursive recorder hook');
+    return firstRecorderHook.apply(this, args);
+  };
+  context.installAudioExperimentHooks();
+  assert.equal(await mediaDevices.getUserMedia({ video: true }), nativeStream);
+  assert.equal(interposedCaptures, 1);
+  new FakeMediaRecorder(nativeStream).start();
+  assert.equal(interposedStarts, 1);
+  api.selectCallAudioProfile('clear');
+  const contextsBeforeReinstalledCapture = FakeAudioContext.instances.length;
+  const reinstalledCapture = await mediaDevices.getUserMedia({ audio: true });
+  assert.equal(FakeAudioContext.instances.length, contextsBeforeReinstalledCapture + 1,
+    'reinstalled hooks must apply the audio profile only once');
+  reinstalledCapture.getAudioTracks()[0].stop();
+  const capturesBeforeBypass = interposedCaptures;
+  assert.equal(await context.getNativeMicrophoneCapture()({ audio: true }), nativeStream);
+  assert.equal(interposedCaptures, capturesBeforeBypass, 'raw recorder capture stays bound to the original API');
 
   const unavailableStore = new Map();
   const unavailableWindow = new EventTarget();

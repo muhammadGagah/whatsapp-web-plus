@@ -6,7 +6,7 @@
 
 Download a received document that displays a circular progress indicator. Confirm an initial percentage, occasional progress updates, and an accessible progress bar next to the original attachment control. The attachment's Enter/Space and cancel behavior should remain unchanged. Test two simultaneous downloads, switching chats, cancelling, and changing the script language while a report is pending. Hidden tabs should not produce stale reports when resumed.
 
-The enhancement reads the determinate two-circle indicator observed in WhatsApp; other transfer indicators are left unchanged. Unknown values and removed indicators do not imply completion. Automatic progress uses the existing polite message log and waits for explicit user feedback to finish. Verify NVDA speech and the browser accessibility tree manually; automated tests cannot establish actual speech timing.
+The enhancement reads the determinate two-circle indicator observed in WhatsApp. Other transfer indicators are left unchanged. Unknown values and removed indicators do not imply completion. Automatic progress uses the existing polite message log and waits for explicit user feedback to finish. Verify NVDA speech and the browser accessibility tree manually. Automated tests cannot establish actual speech timing.
 
 ## What Tampermonkey does
 
@@ -117,12 +117,12 @@ If Tampermonkey reports that some URLs are restricted while you are on a browser
 - Lets you move through the message history with the arrow keys and keeps your place when WhatsApp refreshes the page.
 - Makes chats, messages, times, delivery status (sent, delivered, read), sender devices, and activity information easier to hear.
 - Removes repeated or unhelpful screen-reader announcements while retaining meaningful changes.
-- Automatic reading can announce new incoming or outgoing messages in the open chat and delivery changes for outgoing messages.
+- Automatic reading announces new incoming or outgoing messages in the open chat. Chat activity monitor separately announces delivery changes for outgoing messages.
 - Can open a chat at its first unread message instead of leaving focus in the message editor.
 - Announce sender device can add a detected device or platform to focused messages and automatic message announcements.
 - Adds shortcuts for navigation, voice recording, media players, and incoming calls.
 - Offers selectable Natural, Clear, Clear Plus, and Noise filter profiles for native WhatsApp voice-message recordings without replacing WhatsApp's recorder, preview, or send flow.
-- Offers separate Natural, Clear, and Noise filter microphone profiles for WhatsApp voice calls.
+- Offers separate Raw, Natural, Clear, and Noise filter microphone profiles for WhatsApp voice calls.
 - Privacy Mode keeps contact names available while masking phone numbers in conversation summaries and script announcements. Visible phone links keep their native name for speech-input compatibility.
 - Clean UI hides promotional and extra controls without hiding the chat list.
 - Original Dark Mode restores WhatsApp's older dark colors. It does not change screen-reader output.
@@ -150,7 +150,7 @@ You can use the script without memorizing these shortcuts. Learn only the ones y
 | `Alt + Down Arrow` | Open the next chat when enabled in Shortcut remapping |
 | `Alt + T` | Read the current chat title, press twice quickly to turn Chat activity monitor on or off |
 | `Alt + 0` | Close the open WhatsApp audio or video player, or dismiss the desktop app promotion |
-| `Alt + M` | Start recording a voice message when enabled in Shortcut remapping |
+| `Alt + M` | Start recording a voice message. Enabled by default; change it in Shortcut remapping |
 | `Shift + Enter` | Expand the focused message when it contains WhatsApp's Read more button, then expose the complete text to the screen reader |
 | `Alt + Shift + C` | Open the focused text message or authored image, video, or document caption in a clean browser tab |
 
@@ -183,7 +183,7 @@ Your optional feature choices are remembered after you refresh WhatsApp Web.
 
 ## Settings menu
 
-Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, **Voice message recording**, **Voice calls**, and a command to open the WhatsApp Web Plus update page. The update command stays in the main menu so it is easy to find.
+Press `Shift + F8` to open or close the accessible WhatsApp Web Plus settings menu. On keyboards that use the function keys for media controls, press `Fn + Shift + F8`. The main menu contains **Language**, **Privacy Mode**, **Accessibility**, **Shortcut remapping**, **Appearance**, **Custom language strings**, **Voice message recording**, **Voice calls**, **Record call**, **Shortcut list**, and a command to open the WhatsApp Web Plus update page. The browser recording menu is separate from voice-message and call microphone profiles. Companion uses its own native recording menu. The update command stays in the main menu so it is easy to find.
 
 Use these keys to navigate the menu:
 
@@ -196,21 +196,31 @@ Use these keys to navigate the menu:
 ### What each setting does
 
 - **Language** changes WhatsApp Web Plus menus and announcements between English and Indonesian. It does not change the language of WhatsApp itself.
-- **Privacy Mode** masks phone numbers in conversation summaries and script announcements. Visible phone links keep their native accessible name so speech input still matches the text shown on screen.
+- **Privacy Mode** is on by default and masks phone numbers in conversation summaries and script announcements. Visible phone links keep their native accessible name so speech input still matches the text shown on screen.
 - **Remove repeated or unhelpful screen-reader announcements** simplifies chat and message labels so the screen reader does not repeat the same information. It is on by default.
-- **Automatically read new messages** can announce new incoming and outgoing messages in the open chat, plus delivery changes such as Sent, Delivered, and Read for outgoing messages. It is off by default.
+- **Automatically read new messages** announces new incoming and outgoing messages in the open chat. It is on by default. Delivery changes belong to Chat activity monitor.
 - **Open chats at first unread message** moves focus to the first unread message when you press `Enter` on a chat in the chat list. If the chat has no unread messages, WhatsApp focuses the message editor as usual. It is off by default.
 - **Announce sender device** adds a best-effort indicator such as iPhone, iPad, Mac, Android, or WhatsApp Web or Desktop to focused messages and automatic message announcements. It is off by default, and no indicator is added when the device cannot be recognized.
-- **Announce total unread chats** keeps WhatsApp's total unread-chat count available to screen readers. It is on by default. Turn it off if the changing count interrupts message reading.
-- **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button. `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is off by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so move keyboard focus to the message or use focus mode for this shortcut.
-- **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity. It is off by default.
-- **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to the end. The script does not pause, seek, or restart playback. WhatsApp then stays on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually.
-- **Shortcut remapping** lets you assign or disable shortcuts for recording, previous/next chat, and outgoing calls. See the [shortcut editing instructions](#assigning-shortcuts).
+- **Announce total unread chats** announces changes to the total unread-chat count. It is off by default.
+- **Play or pause focused voice messages with Enter or Space** activates WhatsApp's own Play or Pause button when keyboard focus is on a voice message in the open conversation. `Enter` also works when focus is directly on that message's Play or Pause button. `Space` on the button remains WhatsApp's native behavior. Other nested controls, message action menus, and keys used outside the message history keep their normal behavior. It is on by default. NVDA browse-mode virtual-cursor position is not available to page scripts, so move keyboard focus to the message or use focus mode for this shortcut.
+- **Chat activity monitor** announces changes in the open chat, such as typing, recording audio, online, or last-seen activity, and delivery changes such as Sent, Delivered, and Read. It is off by default and works independently of automatic message reading.
+- **Clean Status reading and stop automatic advancement** gives each Status a concise accessible name and expands captions when possible. Video, audio, and music play to the end. The script does not pause, seek, or restart playback. WhatsApp then stays on the completed Status. Static image and text Status timers are paused after their content is ready. Use `Left Arrow` and `Right Arrow` to move manually. This setting is on by default.
+- **Shortcut remapping** lets you assign or disable shortcuts for Read Sticker, voice-message recording, previous/next chat, and outgoing calls. See the [shortcut editing instructions](#assigning-shortcuts).
 - **Voice message recording** offers **WhatsApp default**, **Natural**, **Clear**, **Clear Plus**, and **Noise filter**. Selecting a processed profile enables it for subsequent native WhatsApp voice-message captures started from the microphone button or `Alt+M`. Selecting **WhatsApp default** turns processing off. Clear is balanced, Clear Plus uses stronger equalization with light compression, Noise filter asks the browser to suppress background noise, and Natural applies only a 2 dB gain increase without equalization. All enhanced voice-message profiles receive a 2 dB output increase; WhatsApp default and call profiles are unchanged. Voice profiles preserve the sample rate and bit depth requested by WhatsApp; unspecified values are selected by the browser. Processed profiles try to match the actual input sample rate, with a browser-default fallback, and reserve output headroom for equalizer boosts. Echo cancellation follows WhatsApp/browser settings. These measures reduce avoidable processing artifacts but do not guarantee distortion-free recording on every device. These profiles do not replace WhatsApp's recorder, preview, encoder, or send flow. The **Copy voice-message diagnostics** command is available only in the debug build.
-- **Voice calls** offers **WhatsApp default**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Natural keeps the browser's call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually. Select **WhatsApp default** immediately if a call loses audio or develops echo.
+- **Voice calls** offers **WhatsApp default**, **Raw**, **Natural**, **Clear**, and **Noise filter** independently from voice-message recording. Raw requests browser input processing off and should be used with headphones. Natural requests browser call processing without equalization, Clear adds a light voice equalizer, and Noise filter requests stronger background-noise reduction. Because WhatsApp does not expose a public call hook, the feature applies to non-voice-message microphone captures while enabled. Test mute, microphone switching, reconnecting, and call ending manually. Select **WhatsApp default** immediately if a call loses audio or develops echo.
 - **Custom language strings** lets users enter the exact WhatsApp text used for unread markers, activity, delivery states, navigation, privacy filtering, and appearance cleanup. The five navigation names control `Alt + Shift + 1` through `5`. See the reference below before changing these fields.
-- **Clean UI** hides promotional and extra controls while keeping the chat list and conversation available.
+- **Clean UI** is on by default and hides promotional and extra controls while keeping the chat list and conversation available.
 - **Original Dark Mode** restores WhatsApp's older dark colors. It changes only the visual appearance, not screen-reader output.
+
+### Reading stickers and recording calls
+
+**Read Sticker** is under **Accessibility**. It is off by default and has no assigned shortcut. Configure a provider and credentials, then assign a shortcut in **Shortcut remapping**. See [Reading stickers with AI](../README.md#reading-stickers-with-ai) for setup, Gemini and Cloudflare instructions, multiple stickers, and privacy details.
+
+**Keep message menus within the window** is on by default under **Accessibility**. It fits message menus and reaction controls into the available browser window and lets long menus scroll.
+
+**Record call** is available in the browser settings menu. Start is enabled only while this tab shows a connected call timer and there is no recording waiting to be saved or discarded. Select the current WhatsApp tab, share its audio, and allow the default microphone. Recording stops by itself about 15 seconds after the call disappears from the tab, or earlier when you choose Stop. Then save the audio. Unavailable Record call items stay reachable with the arrow keys. This uses a separate microphone capture from the Voice calls profiles. Muting WhatsApp does not mute the recorded microphone. See [Recording a browser call](../README.md#recording-a-browser-call) for limits and the complete steps.
+
+**Shortcut list** opens a reference to default script shortcuts. Saved custom bindings are shown in **Shortcut remapping**.
 
 ### Custom language string reference
 
@@ -258,7 +268,7 @@ Navigation accessible names must match WhatsApp exactly, including capitalizatio
 
 ## Update WhatsApp Web Plus
 
-WhatsApp Web Plus does not install updates automatically. To update, press `Shift + F8`, choose **Open WhatsApp Web Plus update in Tampermonkey**, review the version shown, and confirm it in Tampermonkey.
+WhatsApp Web Plus does not install updates automatically. To update, press `Shift + F8`, choose **Open the WhatsApp Web Plus installer**, review the version shown, and confirm it in Tampermonkey.
 
 ## Open a message context menu with NVDA
 
@@ -335,7 +345,7 @@ WhatsApp Web Plus is available under the [MIT License](../LICENSE).
 
 ## Assigning shortcuts
 
-Choose **Shift+F8 > Shortcut remapping**, then select **Record voice message**, **Previous chat**, **Next chat**, **Start voice call**, or **Start video call**. Type a combination such as `Alt+C` or `Alt+V`, then choose **Save**. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Letters refer to physical keyboard positions. Leave the field blank to disable an action. **Restore default** only changes the field. Choose Save to apply or Cancel/Escape to discard. Existing enabled/disabled remaps are preserved. New call shortcuts start unassigned. The recording default is Alt+M. Previous/next defaults are Alt+ArrowUp/Alt+ArrowDown, initially disabled.
+Choose **Shift+F8 > Shortcut remapping**, then select **Read Sticker**, **Record voice message**, **Previous chat**, **Next chat**, **Start voice call**, or **Start video call**. Type a combination such as `Alt+C` or `Alt+V`, then choose **Save**. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Letters refer to physical keyboard positions. Leave the field blank to disable an action. **Restore default** only changes the field. Choose Save to apply or Cancel/Escape to discard. Existing enabled/disabled remaps are preserved. New call shortcuts start unassigned. The recording default is Alt+M. Previous/next defaults are Alt+ArrowUp/Alt+ArrowDown, initially disabled.
 
 Duplicate assignments and fixed script/Companion commands are rejected. Browser, system, NVDA, or extension shortcuts can still take priority. AltGr is not supported. Voice/video calls use the available button in the current conversation header, identified by its icon rather than translated text. No custom language string is required. Unavailable or ambiguous buttons are reported without starting a call.
 

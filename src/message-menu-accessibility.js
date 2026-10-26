@@ -52,7 +52,10 @@ function installPopupFocus() {
 }
 
 function visible(element) {
-  return !!element?.isConnected && element.getClientRects().length > 0;
+  if (!element?.isConnected || !element.getClientRects().length ||
+      element.closest?.('[hidden], [inert], [aria-hidden="true"]')) return false;
+  const style = getComputedStyle(element);
+  return style.visibility !== 'hidden' && style.visibility !== 'collapse';
 }
 
 function visibleMenus() {
@@ -208,7 +211,7 @@ function begin(event) {
       (message.querySelector('[data-testid="msg-container"]') || message).getBoundingClientRect().right - 180,
     expiry: setTimeout(() => { if (session && !session.action) releaseSession(); }, 1500)
   };
-  observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'hidden'] });
+  observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class', 'hidden', 'inert', 'aria-hidden'] });
 }
 
 export function refreshMessageMenuFit() {
@@ -221,7 +224,12 @@ export function startMessageMenuFit() {
   started = true;
   installPopupFocus();
   observer = new MutationObserver(records => {
-    if (!records.every(record => record.type === 'attributes' && record.attributeName === 'style' &&
+    // Hover and animation classes inside the chat list and message history are frequent and never
+    // open a menu, which WhatsApp renders elsewhere. Skip them to avoid forcing layout.
+    const relevant = records.filter(record => record.type !== 'attributes' ||
+      record.target.closest?.(MENU) || record.target.querySelector?.(MENU) ||
+      !record.target.closest?.('#pane-side, [data-testid="conversation-panel-messages"]'));
+    if (!relevant.every(record => record.type === 'attributes' && record.attributeName === 'style' &&
         styled.get(record.target) === record.target.getAttribute('style'))) discover();
   });
   for (const type of ['keydown', 'pointerdown', 'click', 'contextmenu']) window.addEventListener(type, begin, true);

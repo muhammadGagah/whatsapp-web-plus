@@ -16,7 +16,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(source + `
-this.api = {getMessageMenuBounds, startMessageMenuFit, begin,
+this.api = {getMessageMenuBounds, startMessageMenuFit, begin, visibleMenus,
  setSession(value) { session = value; }, getSession() { return session; },
  markStyle(el, value) { styled.set(el, value); },
  replaceDiscovery() { discover = countDiscovery; }};`, context);
@@ -53,6 +53,16 @@ context.HTMLElement = class {
 };
 context.document = {activeElement: null};
 context.getComputedStyle = () => ({visibility: 'visible'});
+const retainedHiddenMenu = {isConnected: true, getClientRects: () => [{}],
+  closest: () => null};
+context.document.querySelectorAll = () => [retainedHiddenMenu];
+context.getComputedStyle = () => ({visibility: 'hidden'});
+assert.equal(api.visibleMenus().length, 0,
+  'A visibility-hidden retained menu is not part of the pre-opening menu snapshot');
+context.getComputedStyle = () => ({visibility: 'visible'});
+assert.equal(api.visibleMenus().length, 1);
+retainedHiddenMenu.closest = () => ({});
+assert.equal(api.visibleMenus().length, 0, 'Hidden or inert menu ancestors exclude stale popups');
 const nativeFocus = context.HTMLElement.prototype.focus;
 vm.runInContext('installPopupFocus()', context);
 const popupTarget = new context.HTMLElement();

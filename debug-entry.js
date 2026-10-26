@@ -13,13 +13,7 @@ function announceDebug(message) {
     console.info(message);
     return;
   }
-  liveRegion.textContent = '';
-  setTimeout(() => {
-    liveRegion.textContent = message;
-    setTimeout(() => {
-      if (liveRegion.textContent === message) liveRegion.textContent = '';
-    }, 3500);
-  }, 0);
+  announce(message);
 }
 
 function copyTextFallback(text) {

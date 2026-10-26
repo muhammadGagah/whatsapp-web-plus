@@ -112,6 +112,14 @@ assert.equal(settings.t('messageStatusSingle', { status: 'Disampaikan' }), 'Stat
 assert.equal(settings.t('messageStatusPlural', { count: 2, status: 'Dibaca' }), '2 status pesan: Dibaca');
 assert.equal(settings.translateDeliveryStatus('Delivered'), 'Disampaikan');
 assert.equal(settings.translateDeliveryStatus('Tersampaikan'), 'Disampaikan');
+for (const label of ['Sent', 'Terkirim', 'Dikirim']) {
+  assert.equal(settings.getDeliveryStatusKey(label), 'deliverySent');
+  assert.equal(settings.getDeliveryStatusRank(label), 1);
+  assert.equal(settings.getDeliveryStatusRegex().test(label), true);
+  assert.equal(settings.translateDeliveryStatus(label), 'Terkirim');
+  assert.equal(settings.translateDeliveryStatus(label, 'en'), 'Sent');
+}
+assert.equal(settings.translateDeliveryStatusInText('Anda 15:54 Dikirim'), 'Anda 15:54 Terkirim');
 assert.equal(settings.translateDeliveryStatusInText('Contact A 15:54 Delivered'), 'Contact A 15:54 Disampaikan');
 assert.equal(settings.translateTypingActivity('Contact A is typing…'), 'Contact A sedang mengetik…');
 assert.equal(
@@ -320,6 +328,31 @@ assert.notEqual(legacyUnsafeContext.SettingsState.getShortcutBinding('previous-c
 values.set('wa-plus-shortcut-bindings', savedBindingData);
 assert.equal(settings.setShortcutBinding('video-call', ''), true);
 assert.equal(settings.getShortcutBinding('video-call'), '');
+
+// Legacy toggles must not re-enable a shortcut already assigned to another action.
+assert.equal(settings.setShortcutBinding('voice-call', 'Alt+M'), true);
+assert.equal(settings.setShortcutRemap('voice-recording', true), false);
+assert.equal(settings.getShortcutBinding('voice-recording'), '');
+assert.equal(values.get('wa-plus-remap-voice-recording'), 'false');
+assert.equal(settings.setShortcutBinding('voice-call', 'Alt+C'), true);
+
+// Restoring old or externally edited preferences must never activate two actions
+// on the same key, including conflicts with enabled legacy defaults.
+const duplicateContext = { ...context, localStorage: {
+  getItem(key) {
+    if (key === 'wa-plus-shortcut-bindings') return JSON.stringify({
+      'voice-call': 'Alt+M', 'next-chat': 'Alt+M', 'video-call': 'Alt+V', 'read-sticker': 'Alt+V'
+    });
+    return null;
+  }, setItem() { throw Error('loading must not write preferences'); }
+}};
+duplicateContext.globalThis = duplicateContext;
+vm.runInNewContext(result.outputFiles[0].text, duplicateContext);
+assert.equal(duplicateContext.SettingsState.getShortcutBinding('voice-recording'), 'Alt+M');
+assert.equal(duplicateContext.SettingsState.getShortcutBinding('next-chat'), '');
+assert.equal(duplicateContext.SettingsState.getShortcutBinding('voice-call'), '');
+assert.equal(duplicateContext.SettingsState.getShortcutBinding('video-call'), 'Alt+V');
+assert.equal(duplicateContext.SettingsState.getShortcutBinding('read-sticker'), '');
 
 context.localStorage.setItem = () => { throw new Error('storage denied'); };
 assert.equal(settings.setLanguage('en'), false);
