@@ -50,6 +50,7 @@ import {
   isRenderedElement,
   refreshMessageMentionNames,
   refreshStickerMessageNames,
+  refreshAnnouncementReduction,
   scheduleRoleFix
 } from './chat-accessibility.js';
 import {
@@ -241,7 +242,12 @@ export function getChatPulseEntries() {
   return Array.from(entries.values());
 }
 
-export function setChatPulseBaseline(chatTitle, entries) {
+// A baseline taken away from the latest message (for example at the first unread message) is
+// followed by older rows loading below it. Those are history, not new messages.
+let chatPulseAtLatestVerified = true;
+
+export function setChatPulseBaseline(chatTitle, entries, atLatest = true) {
+  chatPulseAtLatestVerified = atLatest !== false;
   chatPulseContext = chatTitle;
   chatPulseTailId = entries.length ? entries[entries.length - 1].id : '';
   chatPulseSeenIds = new Set(entries.map(entry => entry.id));
@@ -251,7 +257,13 @@ export function setChatPulseBaseline(chatTitle, entries) {
 }
 
 export function captureChatPulseBaseline() {
-  setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries());
+  setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries(), isChatAtLatestOrUnknown());
+}
+
+// Without a measurable message list, keep announcing as before rather than suppressing messages.
+function isChatAtLatestOrUnknown() {
+  const container = document.querySelector(SELECTORS.main)?.querySelector(SELECTORS.conversationMessages);
+  return !container || !(container.clientHeight > 0) || isChatAtLatestMessages();
 }
 
 export function getCurrentChatContext() {
@@ -364,7 +376,7 @@ export function discardAllPassiveAnnouncements() {
   invalidatePassiveAnnouncements();
 }
 
-export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false, receipts = [] } = {}) {
+export function reconcileChatPulseEntries(chatTitle, entries, { atLatest, receipts = [] } = {}) {
   // An empty chat gains its chat ID with its first message. One new message there is an append, but a
   // larger batch is history that is still loading, so it becomes the new baseline instead.
   if (chatTitle !== chatPulseContext && isSameChatContext(chatPulseContext, chatTitle) &&
@@ -376,10 +388,16 @@ export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false
     invalidatePassiveAnnouncements();
     discardPassiveAnnouncements('pulse');
     discardPassiveAnnouncements('receipt');
-    setChatPulseBaseline(chatTitle, entries);
+    setChatPulseBaseline(chatTitle, entries, atLatest);
     return [];
   }
   if (!chatTitle) return [];
+  if (!chatPulseAtLatestVerified && atLatest !== undefined) {
+    // Absorb rows loaded while the view is known to be away from the latest message, until it
+    // reaches the end. Callers that cannot measure the view keep the previous behavior.
+    setChatPulseBaseline(chatTitle, entries, atLatest === true);
+    return [];
+  }
 
   const tailIndex = chatPulseTailId
     ? entries.findIndex(entry => entry.id === chatPulseTailId)
@@ -528,6 +546,8 @@ export function togglePrivacyWithQueueReset(announceChange = true) {
     // Sticker labels embed the sender, so rebuild them after privacy attributes were restored or masked.
     const currentMessages = document.querySelector(SELECTORS.conversationMessages);
     if (currentMessages) refreshStickerMessageNames(currentMessages);
+    // Chat-list row labels are built with the privacy setting of that moment; rebuild them too.
+    refreshAnnouncementReduction();
   });
   if (announceChange) announce(t(enabled ? 'privacyOn' : 'privacyOff'));
   return true;
@@ -594,7 +614,7 @@ function consumeUnreadTarget() {
   if (chatTitle) consumedUnreadChatContext = chatTitle;
   if (!isAutomaticReadingEnabled()) return;
   discardPassiveAnnouncements('pulse');
-  setChatPulseBaseline(chatTitle, getChatPulseEntries());
+  setChatPulseBaseline(chatTitle, getChatPulseEntries(), isChatAtLatestOrUnknown());
 }
 
 export function findMessageById(container, messageId) {
@@ -1138,6 +1158,9 @@ export function getSelectedChatTypingActivity(rows = getChatListRows()) {
 
 export function syncSelectedChatTypingActivity(rows = getChatListRows()) {
   const row = getSelectedChatRow(rows);
+  // The selected row leaves the virtual chat list while the user scrolls it. That is not a chat
+  // change, so keep pending message announcements and the last activity.
+  if (!row) return '';
   const chatTitle = getChatRowTitle(row);
   if (chatTitle !== lastTypingChatTitle) {
     passiveAnnouncementGeneration++;

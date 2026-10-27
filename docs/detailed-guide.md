@@ -347,7 +347,7 @@ WhatsApp Web Plus is available under the [MIT License](../LICENSE).
 
 Choose **Shift+F8 > Shortcut remapping**, then select **Read Sticker**, **Record voice message**, **Previous chat**, **Next chat**, **Start voice call**, or **Start video call**. Type a combination such as `Alt+C` or `Alt+V`, then choose **Save**. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Letters refer to physical keyboard positions. Leave the field blank to disable an action. **Restore default** only changes the field. Choose Save to apply or Cancel/Escape to discard. Existing enabled/disabled remaps are preserved. New call shortcuts start unassigned. The recording default is Alt+M. Previous/next defaults are Alt+ArrowUp/Alt+ArrowDown, initially disabled.
 
-Duplicate assignments and fixed script/Companion commands are rejected. Browser, system, NVDA, or extension shortcuts can still take priority. AltGr is not supported. Voice/video calls use the available button in the current conversation header, identified by its icon rather than translated text. No custom language string is required. Unavailable or ambiguous buttons are reported without starting a call.
+Duplicate assignments, fixed script/Companion commands, and WhatsApp's own shortcuts are rejected. Browser, system, NVDA, or extension shortcuts can still take priority. AltGr is not supported. Voice/video calls use the available button in the current conversation header, identified by its icon rather than translated text. No custom language string is required. Unavailable or ambiguous buttons are reported without starting a call.
 
 ### Record a shortcut
 

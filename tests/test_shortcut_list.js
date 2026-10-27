@@ -97,4 +97,12 @@ console.log('Shortcut list tests passed.');
     if (parsed?.code) assert.equal(isReservedShortcut(parsed), false, `${defaultBinding} stays assignable`);
   }
 }
+for (const key of ['Ctrl+ArrowLeft', 'Ctrl+ArrowDown', 'Ctrl+Shift+ArrowRight', 'Ctrl+Alt+ArrowUp', 'Ctrl+D', 'Ctrl+E', 'Ctrl+G', 'Ctrl+J']) {
+  const { buildSync } = require('esbuild');
+  const code = buildSync({ entryPoints: ['src/shortcut-bindings.js'], bundle: true, write: false, format: 'cjs' }).outputFiles[0].text;
+  const sandbox = { module: { exports: {} }, exports: {} };
+  vm.runInNewContext(code, sandbox);
+  const { parseShortcutBinding, isReservedShortcut } = sandbox.module.exports;
+  assert.ok(isReservedShortcut(parseShortcutBinding(key)), `${key} keeps its editing or browser meaning`);
+}
 console.log('Reserved WhatsApp shortcut tests passed.');

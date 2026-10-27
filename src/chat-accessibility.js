@@ -311,7 +311,10 @@ export function applyMetaAIMessageName(message) {
   // Deep word-by-word markup can exceed Chromium's text-alternative traversal
   // limit. Supply the complete filtered text without changing descendant controls.
   applyOwnedAttribute(message, 'aria-labelledby', null, OWNERS.metaAIMessageName);
-  applyOwnedAttribute(message, 'aria-label', cleanString(label, false), OWNERS.metaAIMessageName);
+  // Route the label through privacy masking like other message labels, so numbers in a Meta AI
+  // reply stay masked and the cleanup observer does not fight the script over this attribute.
+  applyOwnedAttribute(message, 'aria-label',
+    prepareNamedAttribute(message, 'aria-label', cleanString(label, false)), OWNERS.metaAIMessageName);
   return true;
 }
 

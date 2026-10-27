@@ -7,11 +7,12 @@ const BRIDGE_TEXT_LIMIT = 1800;
 export const COMPANION_READER_LIMIT = 131072;
 const VALID_SOURCE = new Set(['status', 'message-log', 'alert']);
 const RANDOM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CHAT_TITLE_SELECTOR = [
+// Tried in priority order: a combined selector would return the first match in document order,
+// which is the header's "Profile details" button for every chat.
+const CHAT_TITLE_SELECTORS = [
   'header [data-testid="conversation-info-header-chat-title"]',
-  'header [data-testid="chat-title"]',
-  'header [title]'
-].join(', ');
+  'header [data-testid="chat-title"]'
+];
 const COMPANION_RUNTIME = /^[0-9a-f]{64}$/i.test(
   String(globalThis.__whatsappWebPlusBundleHash || '')
 );
@@ -45,7 +46,7 @@ function createRandomToken() {
 function readContextState() {
   const documentRef = globalThis.document;
   const main = documentRef?.querySelector?.('#main') || null;
-  const titleElement = main?.querySelector?.(CHAT_TITLE_SELECTOR) || null;
+  const titleElement = CHAT_TITLE_SELECTORS.map(selector => main?.querySelector?.(selector)).find(Boolean) || null;
   const title = String(
     titleElement?.getAttribute?.('title') || titleElement?.textContent || ''
   ).trim();

@@ -167,9 +167,13 @@ function fixture() {
   const titleNode = { textContent: 'Chat A', getAttribute: () => 'Chat A' };
   const header = { getAttribute: () => null };
   const container = { querySelector: () => message };
+  // Like WhatsApp, the header's "Profile details" button precedes the title in document order.
+  const profileDetails = { textContent: '', getAttribute: () => 'Profile details' };
   const main = { getAttribute: () => null,
     querySelector: selector => selector === 'header' ? header
-      : selector === '[data-testid="conversation-panel-messages"]' ? container : titleNode };
+      : selector === '[data-testid="conversation-panel-messages"]' ? container
+      : selector === 'header [data-testid="conversation-info-header-chat-title"]' ? titleNode
+      : profileDetails };
   const context = { SELECTORS: { conversationMessages: '[data-testid="conversation-panel-messages"]' },
     crypto: webcrypto, __whatsappWebPlusBundleHash: 'a'.repeat(64),
     document: { querySelector: () => main, documentElement: { lang: 'en' } },

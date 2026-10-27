@@ -51,6 +51,11 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 - Read the first message that arrives in an empty chat.
 - In Companion, shrink animated sticker samples until the request fits instead of reporting that the sticker is too large, and keep announcements queued while a chat is still loading.
 - Report a sticker that cannot be read or decoded as a media problem instead of a network problem, and speak a privacy placeholder for the sender in WhatsApp's page language.
+- Mask phone numbers in chat-list rows as soon as Privacy Mode is turned on, and in Meta AI reply labels.
+- When a chat opens at the first unread message, do not read older messages that load below it as new; announce new messages again once the view reaches the latest message. Keep pending announcements while the chat list is scrolled.
+- Also reserve text-editing and common browser combinations, such as Ctrl+Arrow keys, Ctrl+Shift+Arrow keys, Ctrl+D, Ctrl+E, Ctrl+G and Ctrl+J. Suggest Alt+V instead of a reserved example in the shortcut help.
+- Identify the open chat for Companion by its title instead of the header's Profile details button.
+- Refuse to sign a release sequence that Companion would reject or ignore.
 
 ## 2026.10.19 - 2026-10-19
 

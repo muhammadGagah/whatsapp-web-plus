@@ -6194,6 +6194,30 @@ assert.deepEqual(reconcilePulse(chatContextB, [
     ]), []);
     selectorResults.set(runtime.SELECTORS.main, contextMain);
 }
+{
+    // Opened at the first unread message: rows that load below are history until the view reaches the end.
+    runtime.setChatPulseBaseline('history', [pulseEntry('h1', 'First unread', '')], false);
+    assert.deepEqual(Array.from(runtime.reconcileChatPulseEntries('history', [
+        pulseEntry('h1', 'First unread', ''), pulseEntry('h2', 'Older loaded below', '')
+    ], { atLatest: false })), [], 'history loaded below a non-latest view is not announced');
+    assert.deepEqual(Array.from(runtime.reconcileChatPulseEntries('history', [
+        pulseEntry('h1', 'First unread', ''), pulseEntry('h2', 'Older loaded below', ''),
+        pulseEntry('h3', 'Last loaded at the end', '')
+    ], { atLatest: true })), [], 'the batch that reaches the end is still history');
+    assert.deepEqual(Array.from(runtime.reconcileChatPulseEntries('history', [
+        pulseEntry('h1', 'First unread', ''), pulseEntry('h2', 'Older loaded below', ''),
+        pulseEntry('h3', 'Last loaded at the end', ''), pulseEntry('h4', 'Really new', '')
+    ], { atLatest: true })), ['Really new'], 'messages after reaching the end are announced');
+}
+{
+    // The selected chat row scrolling out of the virtual chat list is not a chat change.
+    runtime.discardAllPassiveAnnouncements();
+    runtime.queuePassiveAnnouncements('pulse', ['Pending while browsing the chat list']);
+    runtime.syncSelectedChatTypingActivity([]);
+    assert.deepEqual(Array.from(runtime.getPassiveAnnouncements(), entry => entry.text),
+        ['Pending while browsing the chat list']);
+    runtime.discardAllPassiveAnnouncements();
+}
 runtime.setUnreadTarget({ chatTitle: 'Same display name', chatContext: chatContextB, messageId: 'B-unread' });
 assert.equal(runtime.findUnreadMessageTarget(contextContainer), contextMessage);
 contextMessage.setAttribute('data-id', 'true_chat-b@g.us_later');

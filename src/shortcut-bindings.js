@@ -27,7 +27,12 @@ const RESERVED_SHORTCUTS = new Set([
   'Ctrl+Alt+Shift+L', 'Ctrl+Alt+Shift+N', 'Ctrl+Alt+/', 'Ctrl+Alt+N', 'Ctrl+Alt+P', 'Ctrl+Alt+,',
   'Ctrl+Alt+E', 'Ctrl+Alt+G', 'Ctrl+Alt+L', 'Ctrl+Shift+F', 'Ctrl+Shift+M', 'Ctrl+Shift+U',
   'Ctrl+[', 'Ctrl+]', 'Ctrl+ArrowUp', 'Ctrl+=',
-  'Alt+A', 'Alt+I', 'Alt+K', 'Alt+L', 'Alt+P', 'Alt+R', 'Alt+S', 'Alt+8'
+  'Alt+A', 'Alt+I', 'Alt+K', 'Alt+L', 'Alt+P', 'Alt+R', 'Alt+S', 'Alt+8',
+  // Text editing and common browser commands: word and paragraph movement and selection,
+  // bookmark, address search, find next, and downloads.
+  ...['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].flatMap(key =>
+    [`Ctrl+${key}`, `Ctrl+Shift+${key}`, `Ctrl+Alt+${key}`]),
+  'Ctrl+D', 'Ctrl+E', 'Ctrl+G', 'Ctrl+J'
 ]);
 
 const PUNCTUATION_CODES = Object.freeze({

@@ -288,7 +288,14 @@
     "Alt+P",
     "Alt+R",
     "Alt+S",
-    "Alt+8"
+    "Alt+8",
+    // Text editing and common browser commands: word and paragraph movement and selection,
+    // bookmark, address search, find next, and downloads.
+    ...["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].flatMap((key) => [`Ctrl+${key}`, `Ctrl+Shift+${key}`, `Ctrl+Alt+${key}`]),
+    "Ctrl+D",
+    "Ctrl+E",
+    "Ctrl+G",
+    "Ctrl+J"
   ]);
   var PUNCTUATION_CODES = Object.freeze({
     ",": "Comma",
@@ -555,7 +562,7 @@
     shortcutDisabled: "Not assigned",
     editShortcut: "Shortcut: {name}",
     shortcutCombination: "Key combination",
-    shortcutInstruction: "Type a combination such as Alt+C or Ctrl+Shift+M. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1\u2013F12, or ArrowUp/Down/Left/Right. Key letters refer to physical keyboard positions. Leave blank to disable. Restore default changes the field. Choose Save to apply. Browser, system, and NVDA shortcuts may take priority.",
+    shortcutInstruction: "Type a combination such as Alt+C or Alt+V. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1\u2013F12, or ArrowUp/Down/Left/Right. Key letters refer to physical keyboard positions. Leave blank to disable. Restore default changes the field. Choose Save to apply. Browser, system, and NVDA shortcuts may take priority.",
     shortcutRestoreDefault: "Restore default",
     shortcutInvalid: "Enter a valid combination with Ctrl or Alt, or leave the field blank.",
     shortcutReserved: "This combination is reserved for an existing command. Choose another.",
@@ -836,7 +843,7 @@
     stickerKeyDeleted: "Key atau token lokal telah dihapus. Kredensial ini tetap aktif pada layanan penyedia.",
     stickerPrivacyHelp: "Hanya saat Anda menjalankan Baca Stiker, gambar atau sampel animasi stiker terpilih dikirim ke penyedia AI pilihan Anda. Deskripsi AI dapat keliru. Menyimpan pengaturan tidak mengirim stiker atau menguji key.",
     stickerTransportHelp: "Di browser, gunakan script terbaru melalui Tampermonkey dan izinkan koneksi ke penyedia pilihan Anda ketika diminta. Tidak perlu ekstensi tambahan. Di WhatsApp Companion, gunakan versi yang mendukung Baca Stiker.",
-    stickerShortcutHelp: "Shortcut belum ditetapkan secara bawaan. Atur Baca Stiker di menu Pemetaan ulang shortcut.",
+    stickerShortcutHelp: "Shortcut belum ditetapkan secara bawaan. Atur Baca Stiker di menu Pemetaan ulang pintasan.",
     stickerSaving: "Sedang menyimpan. Mohon tunggu.",
     stickerSettingsSaved: "Pengaturan Baca Stiker tersimpan.",
     stickerModelRequired: "Masukkan Model ID yang menerima gambar.",
@@ -965,7 +972,7 @@
     shortcutDisabled: "Belum ditetapkan",
     editShortcut: "Shortcut: {name}",
     shortcutCombination: "Kombinasi tombol",
-    shortcutInstruction: "Ketik kombinasi seperti Alt+C atau Ctrl+Shift+M. Gunakan Ctrl atau Alt, boleh ditambah Shift, diikuti huruf, angka, tombol tanda baca seperti koma atau titik, F1\u2013F12, atau ArrowUp/Down/Left/Right. Huruf merujuk ke posisi fisik tombol keyboard. Kosongkan untuk menonaktifkan. Kembalikan bawaan mengubah kolom. Pilih Simpan untuk menerapkan. Shortcut browser, sistem, dan NVDA mungkin lebih diutamakan.",
+    shortcutInstruction: "Ketik kombinasi seperti Alt+C atau Alt+V. Gunakan Ctrl atau Alt, boleh ditambah Shift, diikuti huruf, angka, tombol tanda baca seperti koma atau titik, F1\u2013F12, atau ArrowUp/Down/Left/Right. Huruf merujuk ke posisi fisik tombol keyboard. Kosongkan untuk menonaktifkan. Kembalikan bawaan mengubah kolom. Pilih Simpan untuk menerapkan. Shortcut browser, sistem, dan NVDA mungkin lebih diutamakan.",
     shortcutRestoreDefault: "Kembalikan bawaan",
     shortcutInvalid: "Masukkan kombinasi yang valid dengan Ctrl atau Alt, atau kosongkan kolom.",
     shortcutReserved: "Kombinasi ini sudah digunakan oleh perintah tetap. Pilih kombinasi lain.",
@@ -2641,11 +2648,10 @@
   var COMPANION_READER_LIMIT = 131072;
   var VALID_SOURCE = /* @__PURE__ */ new Set(["status", "message-log", "alert"]);
   var RANDOM_TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  var CHAT_TITLE_SELECTOR = [
+  var CHAT_TITLE_SELECTORS = [
     'header [data-testid="conversation-info-header-chat-title"]',
-    'header [data-testid="chat-title"]',
-    "header [title]"
-  ].join(", ");
+    'header [data-testid="chat-title"]'
+  ];
   var COMPANION_RUNTIME = /^[0-9a-f]{64}$/i.test(
     String(globalThis.__whatsappWebPlusBundleHash || "")
   );
@@ -2678,7 +2684,7 @@
   function readContextState() {
     const documentRef = globalThis.document;
     const main = documentRef?.querySelector?.("#main") || null;
-    const titleElement = main?.querySelector?.(CHAT_TITLE_SELECTOR) || null;
+    const titleElement = CHAT_TITLE_SELECTORS.map((selector) => main?.querySelector?.(selector)).find(Boolean) || null;
     const title = String(
       titleElement?.getAttribute?.("title") || titleElement?.textContent || ""
     ).trim();
@@ -3110,7 +3116,12 @@
       metadata ? collectReaderText(metadata, message, true) : ""
     ].filter(Boolean).join(" ");
     applyOwnedAttribute(message, "aria-labelledby", null, OWNERS.metaAIMessageName);
-    applyOwnedAttribute(message, "aria-label", cleanString(label, false), OWNERS.metaAIMessageName);
+    applyOwnedAttribute(
+      message,
+      "aria-label",
+      prepareNamedAttribute(message, "aria-label", cleanString(label, false)),
+      OWNERS.metaAIMessageName
+    );
     return true;
   }
   function applyOwnedMessageRole(el, role, owner) {
@@ -8752,7 +8763,9 @@
     });
     return Array.from(entries.values());
   }
-  function setChatPulseBaseline(chatTitle, entries) {
+  var chatPulseAtLatestVerified = true;
+  function setChatPulseBaseline(chatTitle, entries, atLatest = true) {
+    chatPulseAtLatestVerified = atLatest !== false;
     chatPulseContext = chatTitle;
     chatPulseTailId = entries.length ? entries[entries.length - 1].id : "";
     chatPulseSeenIds = new Set(entries.map((entry) => entry.id));
@@ -8761,7 +8774,11 @@
     pruneChatPulseHistory(entries);
   }
   function captureChatPulseBaseline() {
-    setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries());
+    setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries(), isChatAtLatestOrUnknown());
+  }
+  function isChatAtLatestOrUnknown() {
+    const container = document.querySelector(SELECTORS.main)?.querySelector(SELECTORS.conversationMessages);
+    return !container || !(container.clientHeight > 0) || isChatAtLatestMessages();
   }
   function getCurrentChatContext() {
     return getChatContextKey(document.querySelector(SELECTORS.main), getCurrentChatTitle());
@@ -8859,7 +8876,7 @@
     passiveAnnouncementGeneration++;
     invalidatePassiveAnnouncements();
   }
-  function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false, receipts = [] } = {}) {
+  function reconcileChatPulseEntries(chatTitle, entries, { atLatest, receipts = [] } = {}) {
     if (chatTitle !== chatPulseContext && isSameChatContext(chatPulseContext, chatTitle) && !chatPulseTailId && chatPulseSeenIds.size === 0 && entries.length === 1) {
       chatPulseContext = chatTitle;
     }
@@ -8868,10 +8885,14 @@
       invalidatePassiveAnnouncements();
       discardPassiveAnnouncements("pulse");
       discardPassiveAnnouncements("receipt");
-      setChatPulseBaseline(chatTitle, entries);
+      setChatPulseBaseline(chatTitle, entries, atLatest);
       return [];
     }
     if (!chatTitle) return [];
+    if (!chatPulseAtLatestVerified && atLatest !== void 0) {
+      setChatPulseBaseline(chatTitle, entries, atLatest === true);
+      return [];
+    }
     const tailIndex = chatPulseTailId ? entries.findIndex((entry) => entry.id === chatPulseTailId) : -1;
     const canDetectAppend = !chatPulseTailId && chatPulseSeenIds.size === 0 || tailIndex >= 0;
     if (!canDetectAppend && atLatest && !chatPulsePendingIds.size) {
@@ -8998,6 +9019,7 @@
       refreshPassiveBaselines();
       const currentMessages = document.querySelector(SELECTORS.conversationMessages);
       if (currentMessages) refreshStickerMessageNames(currentMessages);
+      refreshAnnouncementReduction();
     });
     if (announceChange) announce(t(enabled ? "privacyOn" : "privacyOff"));
     return true;
@@ -9054,7 +9076,7 @@
     if (chatTitle) consumedUnreadChatContext = chatTitle;
     if (!isAutomaticReadingEnabled()) return;
     discardPassiveAnnouncements("pulse");
-    setChatPulseBaseline(chatTitle, getChatPulseEntries());
+    setChatPulseBaseline(chatTitle, getChatPulseEntries(), isChatAtLatestOrUnknown());
   }
   function findMessageById(container, messageId) {
     if (!container || !messageId) return null;
@@ -9482,6 +9504,7 @@
   }
   function syncSelectedChatTypingActivity(rows = getChatListRows()) {
     const row = getSelectedChatRow(rows);
+    if (!row) return "";
     const chatTitle = getChatRowTitle(row);
     if (chatTitle !== lastTypingChatTitle) {
       passiveAnnouncementGeneration++;

@@ -220,6 +220,7 @@ These are defaults, not your saved remappings.
 | `Alt+ArrowDown` | Next chat. Disabled until enabled in Shortcut remapping |
 | Not assigned | Start voice call: no default shortcut. Assign in Shortcut remapping |
 | Not assigned | Start video call: no default shortcut. Assign in Shortcut remapping |
+| Not assigned | Read Sticker: no default shortcut. Assign in Shortcut remapping |
 
 ## WhatsApp built-in shortcuts
 

@@ -209,7 +209,7 @@ export default {
   shortcutDisabled: "Not assigned",
   editShortcut: "Shortcut: {name}",
   shortcutCombination: "Key combination",
-  shortcutInstruction: "Type a combination such as Alt+C or Ctrl+Shift+M. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Key letters refer to physical keyboard positions. Leave blank to disable. Restore default changes the field. Choose Save to apply. Browser, system, and NVDA shortcuts may take priority.",
+  shortcutInstruction: "Type a combination such as Alt+C or Alt+V. Use Ctrl or Alt, optionally Shift, followed by a letter, digit, punctuation key such as comma or period, F1–F12, or ArrowUp/Down/Left/Right. Key letters refer to physical keyboard positions. Leave blank to disable. Restore default changes the field. Choose Save to apply. Browser, system, and NVDA shortcuts may take priority.",
   shortcutRestoreDefault: "Restore default",
   shortcutInvalid: "Enter a valid combination with Ctrl or Alt, or leave the field blank.",
   shortcutReserved: "This combination is reserved for an existing command. Choose another.",
