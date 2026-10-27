@@ -104,6 +104,8 @@ function createRuntime() {
       return decode.promise;
     },
     encodeStickerInput: media => ({ snapshot: media.snapshot }),
+    usesNativeStickerTransport: () => false,
+    NATIVE_REQUEST_LIMIT: 768 * 1024,
     makeStickerRequest: (config, key, input, language, id) => ({ key, input, language, id }),
     requestStickerTransport(request, signal) {
       requests.push({ request, signal });
@@ -321,6 +323,40 @@ async function testCancelledDecodeSkipsEncoding() {
   assert.equal(encodes, 0, 'late cancelled decode must not encode image data');
 }
 
+async function testNativeTransportShrinksLargeImages() {
+  // Companion carries one bounded request, so large animated samples are re-encoded smaller.
+  const f = createRuntime();
+  const scales = [];
+  f.context.usesNativeStickerTransport = () => true;
+  f.context.encodeStickerInput = (media, provider, model, scale) => {
+    scales.push(scale);
+    return { images: [{ data: 'x'.repeat(scale >= 0.55 ? 900 * 1024 : 400 * 1024) }] };
+  };
+  await f.begin();
+  await f.finishDecode();
+  assert.deepEqual(scales, [1, 0.75, 0.55, 0.4], 'shrinks until the request fits');
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].request.input.images[0].data.length, 400 * 1024);
+  const browser = createRuntime();
+  const browserScales = [];
+  browser.context.encodeStickerInput = (media, provider, model, scale) => {
+    browserScales.push(scale);
+    return { images: [{ data: 'x'.repeat(900 * 1024) }] };
+  };
+  await browser.begin();
+  await browser.finishDecode();
+  assert.deepEqual(browserScales, [1], 'the browser transport keeps full-size images');
+}
+
+async function testLocalDecodeErrorIsAMediaError() {
+  const f = createRuntime();
+  f.context.decodeSticker = async () => { throw new TypeError('Failed to decode'); };
+  f.shortcut();
+  await turn();
+  const spokenError = f.announcements.find(entry => entry.text.startsWith('sticker') && entry.text !== 'stickerReading');
+  assert.equal(spokenError?.text, 'stickerMediaError', 'a browser decode failure is not a network problem');
+}
+
 async function testStaleConfigErrorIsSuppressed() {
   const f = await ready();
   f.state.config = { ...f.state.config, changed: true };
@@ -390,6 +426,8 @@ async function testMultipleStickers() {
   await testCancelReleasesEarlierStickerFrames();
   await testCancelledDecodeSkipsEncoding();
   await testStaleConfigErrorIsSuppressed();
+  await testNativeTransportShrinksLargeImages();
+  await testLocalDecodeErrorIsAMediaError();
   await testDeadlineWhileDecodeIsPending();
   await testMultipleStickers();
   await testSnapshotFocusAndDeduplication();

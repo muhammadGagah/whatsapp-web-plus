@@ -1416,7 +1416,8 @@ export function refreshStickerMessageNames(rootEl = document) {
     const hostLanguage = getSupportedLanguage(
       message.closest?.('[lang]')?.getAttribute?.('lang') || document.documentElement?.lang || '');
     const label = [
-      sender && cleanString(sender.getAttribute('aria-label') || sender.textContent || '', 'identity'),
+      // Pass the author element so a privacy placeholder uses the same page language as the label.
+      sender && cleanString(sender.getAttribute('aria-label') || sender.textContent || '', 'identity', sender),
       `${hostLanguage ? tForLanguage('sticker', hostLanguage) : t('sticker')}: ${descriptions.join('. ')}`,
       ...times,
       status && translateDeliveryStatus(status, hostLanguage)

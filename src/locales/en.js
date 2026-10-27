@@ -199,6 +199,7 @@ export default {
   shortcutDescription4_2: "Next chat. Disabled until enabled in Shortcut remapping",
   shortcutDescription4_3: "Start voice call: no default shortcut. Assign in Shortcut remapping",
   shortcutDescription4_4: "Start video call: no default shortcut. Assign in Shortcut remapping",
+  shortcutDescription4_5: "Read Sticker: no default shortcut. Assign in Shortcut remapping",
 
   shortcutVoiceRecording: "Record voice message",
   shortcutPreviousChat: "Previous chat",

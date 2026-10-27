@@ -46,6 +46,11 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 - Keep messages waiting for automatic reading when Chat activity monitor is turned on or off.
 - Use the real scroll viewport when Alt+3 restores the unread position in nested message lists.
 - Reduce layout work while a message menu is open by ignoring hover changes in the chat list and message history.
+- Reject custom shortcuts that would take over WhatsApp's own shortcuts, such as Alt+R for Reply. A saved binding that conflicts is ignored, so the WhatsApp shortcut works again.
+- List Read Sticker among the remappable shortcuts in the shortcut list, and use the menu's own names in the Indonesian recording instructions and Clean UI shortcut description.
+- Read the first message that arrives in an empty chat.
+- In Companion, shrink animated sticker samples until the request fits instead of reporting that the sticker is too large, and keep announcements queued while a chat is still loading.
+- Report a sticker that cannot be read or decoded as a media problem instead of a network problem, and speak a privacy placeholder for the sender in WhatsApp's page language.
 
 ## 2026.10.19 - 2026-10-19
 

@@ -5533,15 +5533,15 @@ runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowDown', target: rem
 assert.equal(remapTarget.dispatchedEvents.length, afterFailure + 1, 'guard clears after dispatch failure');
 
 // User assignments dispatch exact modifiers and identify call controls by header icons, not language.
-assert.equal(runtime.setShortcutBinding('voice-recording', 'Ctrl+Shift+M'), true);
+assert.equal(runtime.setShortcutBinding('voice-recording', 'Ctrl+Shift+Q'), true);
 const previousDispatchCount = remapTarget.dispatchedEvents.length;
 runtime.handleShortcuts(makeEvent({ altKey: true, code: 'KeyM', target: remapTarget }));
 assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount, 'old binding stops working after reassignment');
-runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyM', target: remapTarget }));
+runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyQ', target: remapTarget }));
 assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount + 1);
 assert.equal(remapTarget.dispatchedEvents.at(-1).code, 'KeyR');
 assert.equal(runtime.setShortcutBinding('voice-recording', ''), true);
-runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyM', target: remapTarget }));
+runtime.handleShortcuts(makeEvent({ ctrlKey: true, shiftKey: true, code: 'KeyQ', target: remapTarget }));
 assert.equal(remapTarget.dispatchedEvents.length, previousDispatchCount + 1);
 statusNavButton.setAttribute('aria-pressed', 'false');
 const savedCallMain = selectorResults.get(runtime.SELECTORS.main);
@@ -6167,6 +6167,33 @@ assert.deepEqual(reconcilePulse(chatContextB, [pulseEntry('B-last', 'Old B', '')
 assert.deepEqual(reconcilePulse(chatContextB, [
     pulseEntry('B-last', 'Old B', ''), pulseEntry('B-new', 'New B', '')
 ]), ['New B']);
+{
+    // The first message in an empty chat is read although the chat key gains its chat ID at that moment.
+    let emptyMessage = null;
+    const emptyMain = new Element(), emptyHeader = new Element(), emptyTitle = new Element(), emptyContainer = new Element();
+    emptyTitle.textContent = 'New contact';
+    emptyMain.queryHandler = selector => selector === 'header' ? emptyHeader : emptyContainer;
+    emptyHeader.queryHandler = () => emptyTitle;
+    emptyContainer.queryHandler = () => emptyMessage;
+    selectorResults.set(runtime.SELECTORS.main, emptyMain);
+    const emptyKey = runtime.getCurrentChatContext();
+    runtime.setChatPulseBaseline(emptyKey, []);
+    emptyMessage = new Element();
+    emptyMessage.setAttribute('data-id', 'false_new-contact@c.us_first');
+    const firstKey = runtime.getCurrentChatContext();
+    assert.notEqual(firstKey, emptyKey);
+    assert.deepEqual(reconcilePulse(firstKey, [pulseEntry('first', 'First message', '')]), ['First message']);
+    // A larger batch after an empty baseline is history still loading, not new messages.
+    emptyMessage = null;
+    const loadingKey = runtime.getCurrentChatContext();
+    runtime.setChatPulseBaseline(loadingKey, []);
+    emptyMessage = new Element();
+    emptyMessage.setAttribute('data-id', 'false_loading@c.us_old');
+    assert.deepEqual(reconcilePulse(runtime.getCurrentChatContext(), [
+        pulseEntry('old-1', 'Old one', ''), pulseEntry('old-2', 'Old two', '')
+    ]), []);
+    selectorResults.set(runtime.SELECTORS.main, contextMain);
+}
 runtime.setUnreadTarget({ chatTitle: 'Same display name', chatContext: chatContextB, messageId: 'B-unread' });
 assert.equal(runtime.findUnreadMessageTarget(contextContainer), contextMessage);
 contextMessage.setAttribute('data-id', 'true_chat-b@g.us_later');

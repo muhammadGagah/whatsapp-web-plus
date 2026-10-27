@@ -6,7 +6,7 @@ import { getLanguage, t } from './settings-state.js';
 import { isReadStickerEnabled, getStickerConfig, decryptStickerCredential, STICKER_CHANGED, STICKER_STORAGE, STICKER_ENABLED } from './sticker-store.js';
 import { readBoundedBody, decodeSticker, decodeStickerSvg, snapshotStickerSvg, encodeStickerInput, encodeStickerGroup, STICKER_LIMITS } from './sticker-media.js';
 import { makeStickerRequest, parseStickerResponse } from './sticker-provider.js';
-import { installStickerTransport, requestStickerTransport } from './sticker-transport.js';
+import { installStickerTransport, NATIVE_REQUEST_LIMIT, requestStickerTransport, usesNativeStickerTransport } from './sticker-transport.js';
 
 let operation=null,observer=null,epoch=0,lastChat='';
 function currentChat(){
@@ -115,7 +115,7 @@ export function handleReadStickerShortcut(event){
   return true;
 }
 async function execute(op){
-  let timedOut=false,key='',request;
+  let timedOut=false,key='',request,mediaStage=true;
   const mediaItems=[];
   const releaseFrames=()=>{for(const media of mediaItems)for(const frame of media.frames||[]){frame.canvas.width=0;frame.canvas.height=0;}};
   const timer=setTimeout(()=>{
@@ -153,13 +153,26 @@ async function execute(op){
         }
       }
       signal.throwIfAborted();if(!valid(op))return;
-      input=mediaItems.length===1
-        ? encodeStickerInput(mediaItems[0],op.config.provider,op.config.providers[op.config.provider].model)
-        : encodeStickerGroup(mediaItems);
+      const encode=scale=>mediaItems.length===1
+        ? encodeStickerInput(mediaItems[0],op.config.provider,op.config.providers[op.config.provider].model,scale)
+        : encodeStickerGroup(mediaItems,scale);
+      input=encode(1);
+      // Companion's native transport carries one bounded request. Shrink the images until they fit,
+      // leaving room for the prompt and request fields, instead of rejecting animated stickers.
+      if(usesNativeStickerTransport()){
+        const budget=NATIVE_REQUEST_LIMIT-32*1024;
+        const size=value=>value.images.reduce((total,image)=>total+image.data.length,0);
+        for(const scale of [0.75,0.55,0.4,0.3]){
+          if(size(input)<=budget)break;
+          signal.throwIfAborted();
+          input=encode(scale);
+        }
+      }
     }finally{
       releaseFrames();
     }
     signal.throwIfAborted();if(!valid(op))return;
+    mediaStage=false;
     request=makeStickerRequest(op.config,key,input,op.language,op.id);key='';
     const result=await requestStickerTransport(request,signal);
     const text=parseStickerResponse(op.config.provider,result);
@@ -173,7 +186,8 @@ async function execute(op){
     if(timedOut || !valid(op))return;
     op.done=true;
     const allowed=['stickerKeyUnreadable','stickerMediaError','stickerAnimationError','stickerTooLarge','stickerAuthError','stickerModelAgreement','stickerQuotaError','stickerModelError','stickerTimeout','stickerNetworkError','stickerResponseError','stickerRefused','stickerTransportMissing','stickerBusy'];
-    const message=allowed.includes(error.message)?error.message:'stickerNetworkError';
+    // A browser error while reading or decoding the image is a media problem, not a network one.
+    const message=allowed.includes(error.message)?error.message:mediaStage?'stickerMediaError':'stickerNetworkError';
     if(message==='stickerModelAgreement' && valid(op) && openStickerAgreement(op.config, document.activeElement))return;
     announce(t(message),()=>valid(op));
   }finally{op.controller.signal.removeEventListener('abort',cleanupCancelled);cleanupCancelled();}

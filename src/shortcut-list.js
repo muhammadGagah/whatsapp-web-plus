@@ -40,6 +40,7 @@ const DEFAULT_KEYS = [
     "Alt+ArrowUp",
     "Alt+ArrowDown",
     "",
+    "",
     ""
   ],
   [

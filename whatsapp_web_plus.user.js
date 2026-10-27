@@ -259,7 +259,36 @@
     "Alt+E",
     "Alt+D",
     ..."ACFHKLNOPRSTUVWXYZ".split("").map((key) => `Ctrl+${key}`),
-    ...["A", "B", "C", "D", "I", "J", "N", "O", "P", "R", "T", "V", "W", "Y", "Z"].map((key) => `Ctrl+Shift+${key}`)
+    ...["A", "B", "C", "D", "I", "J", "N", "O", "P", "R", "T", "V", "W", "Y", "Z"].map((key) => `Ctrl+Shift+${key}`),
+    // WhatsApp's own shortcuts, as documented in shortcut-list.js for the browser and the desktop app.
+    "Ctrl+Alt+Shift+U",
+    "Ctrl+Alt+Shift+M",
+    "Ctrl+Alt+Shift+E",
+    "Ctrl+Alt+Shift+P",
+    "Ctrl+Alt+Shift+L",
+    "Ctrl+Alt+Shift+N",
+    "Ctrl+Alt+/",
+    "Ctrl+Alt+N",
+    "Ctrl+Alt+P",
+    "Ctrl+Alt+,",
+    "Ctrl+Alt+E",
+    "Ctrl+Alt+G",
+    "Ctrl+Alt+L",
+    "Ctrl+Shift+F",
+    "Ctrl+Shift+M",
+    "Ctrl+Shift+U",
+    "Ctrl+[",
+    "Ctrl+]",
+    "Ctrl+ArrowUp",
+    "Ctrl+=",
+    "Alt+A",
+    "Alt+I",
+    "Alt+K",
+    "Alt+L",
+    "Alt+P",
+    "Alt+R",
+    "Alt+S",
+    "Alt+8"
   ]);
   var PUNCTUATION_CODES = Object.freeze({
     ",": "Comma",
@@ -517,6 +546,7 @@
     shortcutDescription4_2: "Next chat. Disabled until enabled in Shortcut remapping",
     shortcutDescription4_3: "Start voice call: no default shortcut. Assign in Shortcut remapping",
     shortcutDescription4_4: "Start video call: no default shortcut. Assign in Shortcut remapping",
+    shortcutDescription4_5: "Read Sticker: no default shortcut. Assign in Shortcut remapping",
     shortcutVoiceRecording: "Record voice message",
     shortcutPreviousChat: "Previous chat",
     shortcutNextChat: "Next chat",
@@ -740,7 +770,7 @@
     callRecordDiscard: "Buang rekaman",
     callRecordHelp: "Petunjuk perekaman",
     callRecordNoCall: "Tidak ada panggilan tersambung di tab ini. Buka panggilan di sini dan tunggu hingga tersambung.",
-    callRecordInstructions: "Mulai merekam hanya tersedia selama panggilan tersambung di tab ini. Beri tahu peserta terlebih dahulu. Pilih tab WhatsApp ini dan aktifkan Bagikan audio tab. Izinkan mikrofon. Mikrofon bawaan browser tetap direkam meskipun dibisukan di WhatsApp. Gunakan headset. Hentikan saat panggilan selesai, lalu pilih Simpan rekaman. Simpan sebelum menutup atau memuat ulang tab. Panggilan di aplikasi desktop tidak dapat direkam di sini.",
+    callRecordInstructions: "Mulai rekaman hanya tersedia selama panggilan tersambung di tab ini. Beri tahu peserta terlebih dahulu. Pilih tab WhatsApp ini dan aktifkan Bagikan audio tab. Izinkan mikrofon. Mikrofon bawaan browser tetap direkam meskipun dibisukan di WhatsApp. Gunakan headset. Hentikan saat panggilan selesai, lalu pilih Simpan rekaman. Simpan sebelum menutup atau memuat ulang tab. Panggilan di aplikasi desktop tidak dapat direkam di sini.",
     callRecordUnsupported: "Perekaman memerlukan Chrome atau Edge yang mendukung fitur ini. Gunakan perekam Companion untuk panggilan desktop.",
     callRecordMicrophone: "Izinkan mikrofon untuk menyertakan suaramu.",
     callRecordMicrophoneFailed: "Mikrofon tidak dapat diakses. Periksa izin browser dan mikrofon bawaan, lalu coba lagi.",
@@ -915,7 +945,7 @@
     shortcutDescription2_0: "Buka atau tutup pengaturan",
     shortcutDescription2_1: "Aktifkan atau nonaktifkan Mode Privasi",
     shortcutDescription2_2: "Aktifkan atau nonaktifkan pembacaan pesan otomatis",
-    shortcutDescription2_3: "Aktifkan atau nonaktifkan Tampilan Bersih",
+    shortcutDescription2_3: "Aktifkan atau nonaktifkan Antarmuka ringkas",
     shortcutDescription2_4: "Aktifkan atau nonaktifkan Mode Gelap Asli",
     shortcutSection3: "Panggilan masuk",
     shortcutDescription3_0: "Terima panggilan masuk ketika tombolnya tersedia",
@@ -926,6 +956,7 @@
     shortcutDescription4_2: "Chat berikutnya. Nonaktif hingga diatur dalam Pemetaan ulang pintasan",
     shortcutDescription4_3: "Mulai panggilan suara: belum memiliki shortcut bawaan. Atur dalam Pemetaan ulang pintasan",
     shortcutDescription4_4: "Mulai panggilan video: belum memiliki shortcut bawaan. Atur dalam Pemetaan ulang pintasan",
+    shortcutDescription4_5: "Baca Stiker: belum memiliki shortcut bawaan. Atur dalam Pemetaan ulang pintasan",
     shortcutVoiceRecording: "Rekam pesan suara",
     shortcutPreviousChat: "Chat sebelumnya",
     shortcutNextChat: "Chat berikutnya",
@@ -2775,7 +2806,7 @@
       let reason = "";
       if (current2.privacy !== previousContext.privacy) reason = "privacy-changed";
       else if (current2.language !== previousContext.language) reason = "language-changed";
-      else if (current2.main !== previousContext.main || current2.title !== previousContext.title || current2.chatContext !== previousContext.chatContext) {
+      else if (current2.main !== previousContext.main || current2.title !== previousContext.title || !isSameChatContext(previousContext.chatContext, current2.chatContext)) {
         reason = "chat-context-changed";
       }
       previousContext = current2;
@@ -3957,7 +3988,8 @@
         message.closest?.("[lang]")?.getAttribute?.("lang") || document.documentElement?.lang || ""
       );
       const label = [
-        sender && cleanString(sender.getAttribute("aria-label") || sender.textContent || "", "identity"),
+        // Pass the author element so a privacy placeholder uses the same page language as the label.
+        sender && cleanString(sender.getAttribute("aria-label") || sender.textContent || "", "identity", sender),
         `${hostLanguage ? tForLanguage("sticker", hostLanguage) : t("sticker")}: ${descriptions.join(". ")}`,
         ...times,
         status && translateDeliveryStatus(status, hostLanguage)
@@ -7493,9 +7525,12 @@
       }
     }), configurable: true });
   }
+  var NATIVE_REQUEST_LIMIT = 768 * 1024;
+  function usesNativeStickerTransport() {
+    return Date.now() < nativeReadyUntil || nativePolled && isCompanionRuntime() && Date.now() < nativeReadyUntil + NATIVE_LATE_POLL_MS;
+  }
   function requestStickerTransport(request, signal) {
-    const native = Date.now() < nativeReadyUntil || nativePolled && isCompanionRuntime() && Date.now() < nativeReadyUntil + NATIVE_LATE_POLL_MS;
-    if (!native) return requestTampermonkeySticker(request, signal);
+    if (!usesNativeStickerTransport()) return requestTampermonkeySticker(request, signal);
     return new Promise((resolve, reject) => {
       let settled = false, timer, registered = false;
       const finish = (value, error) => {
@@ -7517,7 +7552,7 @@
           return;
         }
         signal.addEventListener("abort", abort, { once: true });
-        if (new TextEncoder().encode(JSON.stringify(request)).length > 768 * 1024) {
+        if (new TextEncoder().encode(JSON.stringify(request)).length > NATIVE_REQUEST_LIMIT) {
           finish(null, "stickerTooLarge");
           return;
         }
@@ -7945,7 +7980,22 @@
       cancel2();
     }
   }
-  function encodeStickerInput(media, provider, model) {
+  function pngData(canvas, scale = 1) {
+    if (scale >= 1) return canvas.toDataURL("image/png").split(",")[1];
+    const small = document.createElement("canvas");
+    small.width = Math.max(1, Math.round(canvas.width * scale));
+    small.height = Math.max(1, Math.round(canvas.height * scale));
+    try {
+      const ctx = small.getContext("2d");
+      if (!ctx) return bad();
+      ctx.drawImage(canvas, 0, 0, small.width, small.height);
+      return small.toDataURL("image/png").split(",")[1];
+    } finally {
+      small.width = 0;
+      small.height = 0;
+    }
+  }
+  function encodeStickerInput(media, provider, model, scale = 1) {
     let frames = media.frames;
     let mode = media.mode;
     const multi = provider === "gemini" || provider === "groq" && model === "qwen/qwen3.8-27b";
@@ -7972,21 +8022,17 @@
       } else if (provider === "groq" && frames.length > 3) {
         frames = [frames[0], frames[Math.floor(frames.length / 2)], frames[frames.length - 1]];
       }
-      const images = frames.map((f) => ({ mime: "image/png", data: f.canvas.toDataURL("image/png").split(",")[1], index: f.index, time: f.time }));
+      const images = frames.map((f) => ({ mime: "image/png", data: pngData(f.canvas, scale), index: f.index, time: f.time }));
       if (images.reduce((n, i) => n + i.data.length, 0) > STICKER_LIMITS.payloadBytes) return bad("stickerTooLarge");
       return { images, animated: media.animated, mode, unclear: media.mode === "unclear" };
     } finally {
-      for (const f of media.frames) {
-        f.canvas.width = 0;
-        f.canvas.height = 0;
-      }
       if (board) {
         board.width = 0;
         board.height = 0;
       }
     }
   }
-  function encodeStickerGroup(items) {
+  function encodeStickerGroup(items, scale = 1) {
     if (items.length < 2 || items.length > 6) return bad("stickerTooLarge");
     const board = document.createElement("canvas");
     board.width = 768;
@@ -7999,14 +8045,14 @@
       items.forEach((media, row) => {
         const frames = media.frames.length > 3 ? [media.frames[0], media.frames[Math.floor(media.frames.length / 2)], media.frames.at(-1)] : media.frames;
         frames.forEach((frame2, column) => {
-          const scale = Math.min(256 / frame2.canvas.width, 256 / frame2.canvas.height);
-          ctx.drawImage(frame2.canvas, column * 256, row * 280, frame2.canvas.width * scale, frame2.canvas.height * scale);
+          const scale2 = Math.min(256 / frame2.canvas.width, 256 / frame2.canvas.height);
+          ctx.drawImage(frame2.canvas, column * 256, row * 280, frame2.canvas.width * scale2, frame2.canvas.height * scale2);
         });
         ctx.fillStyle = "#000";
         ctx.font = "16px sans-serif";
         ctx.fillText(String(row + 1), 4, row * 280 + 274);
       });
-      const data = board.toDataURL("image/png").split(",")[1];
+      const data = pngData(board, scale);
       if (data.length > STICKER_LIMITS.payloadBytes) return bad("stickerTooLarge");
       return {
         images: [{ mime: "image/png", data, index: 0, time: 0 }],
@@ -8227,7 +8273,7 @@
     return true;
   }
   async function execute(op) {
-    let timedOut = false, key = "", request;
+    let timedOut = false, key = "", request, mediaStage = true;
     const mediaItems = [];
     const releaseFrames = () => {
       for (const media of mediaItems) for (const frame2 of media.frames || []) {
@@ -8288,12 +8334,23 @@
         }
         signal.throwIfAborted();
         if (!valid(op)) return;
-        input = mediaItems.length === 1 ? encodeStickerInput(mediaItems[0], op.config.provider, op.config.providers[op.config.provider].model) : encodeStickerGroup(mediaItems);
+        const encode2 = (scale) => mediaItems.length === 1 ? encodeStickerInput(mediaItems[0], op.config.provider, op.config.providers[op.config.provider].model, scale) : encodeStickerGroup(mediaItems, scale);
+        input = encode2(1);
+        if (usesNativeStickerTransport()) {
+          const budget = NATIVE_REQUEST_LIMIT - 32 * 1024;
+          const size = (value) => value.images.reduce((total, image) => total + image.data.length, 0);
+          for (const scale of [0.75, 0.55, 0.4, 0.3]) {
+            if (size(input) <= budget) break;
+            signal.throwIfAborted();
+            input = encode2(scale);
+          }
+        }
       } finally {
         releaseFrames();
       }
       signal.throwIfAborted();
       if (!valid(op)) return;
+      mediaStage = false;
       request = makeStickerRequest(op.config, key, input, op.language, op.id);
       key = "";
       const result = await requestStickerTransport(request, signal);
@@ -8310,7 +8367,7 @@
       if (timedOut || !valid(op)) return;
       op.done = true;
       const allowed = ["stickerKeyUnreadable", "stickerMediaError", "stickerAnimationError", "stickerTooLarge", "stickerAuthError", "stickerModelAgreement", "stickerQuotaError", "stickerModelError", "stickerTimeout", "stickerNetworkError", "stickerResponseError", "stickerRefused", "stickerTransportMissing", "stickerBusy"];
-      const message = allowed.includes(error.message) ? error.message : "stickerNetworkError";
+      const message = allowed.includes(error.message) ? error.message : mediaStage ? "stickerMediaError" : "stickerNetworkError";
       if (message === "stickerModelAgreement" && valid(op) && openStickerAgreement(op.config, document.activeElement)) return;
       announce(t(message), () => valid(op));
     } finally {
@@ -8803,6 +8860,9 @@
     invalidatePassiveAnnouncements();
   }
   function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false, receipts = [] } = {}) {
+    if (chatTitle !== chatPulseContext && isSameChatContext(chatPulseContext, chatTitle) && !chatPulseTailId && chatPulseSeenIds.size === 0 && entries.length === 1) {
+      chatPulseContext = chatTitle;
+    }
     if (chatTitle !== chatPulseContext) {
       passiveAnnouncementGeneration++;
       invalidatePassiveAnnouncements();
@@ -10401,6 +10461,7 @@
       "Alt+M",
       "Alt+ArrowUp",
       "Alt+ArrowDown",
+      "",
       "",
       ""
     ],

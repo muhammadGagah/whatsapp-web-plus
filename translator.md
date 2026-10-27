@@ -38,11 +38,14 @@ This translates WhatsApp Web Plus, not WhatsApp itself. Detection of WhatsApp's 
 
 Text inside braces is replaced with live information. Do not translate placeholder names:
 
-- `{version}` is a release version.
 - `{device}` is a detected device or platform.
 - `{status}` is a message-delivery status.
 - `{count}` is a number.
 - `{name}` and `{names}` are contact or interface names.
+- `{number}` is a sticker number in a list, and `{percent}` is a download percentage.
+- `{text}` is a sticker description, and `{caption}` is a photo album caption.
+- `{shortcut}` is a key combination, `{tab}` is a WhatsApp tab name, and `{destination}` is a link address.
+- `{value}` is the current text of a custom language string.
 - `{details}` contains additional status information, such as a last-seen time.
 - `{suffix}` preserves punctuation from a typing status.
 - `{verb}` becomes the English word **is** or **are**, depending on the sentence. If your language does not need a separate word there (Indonesian does not), leave this placeholder out.
@@ -77,8 +80,8 @@ Test the translation manually in WhatsApp Web:
 
 1. Press `Shift + F8` and open the Language submenu with `Right Arrow`.
 2. Select the new language and confirm that every menu item changes language.
-3. Try settings that produce announcements, including automatic reading, Chat activity monitor, and the update command in the settings menu.
-4. Confirm that dynamic values replace placeholders and that no raw text such as `{name}` or `{version}` is announced.
+3. Try settings that produce announcements, including automatic reading, Chat activity monitor, and the installer command in the settings menu.
+4. Confirm that dynamic values replace placeholders and that no raw text such as `{name}` or `{count}` is announced.
 5. With NVDA, check that labels are concise, understandable, and pronounced in the expected language.
 
 If a source string is ambiguous, open an issue before guessing. Include the translation key and the wording that needs clarification.

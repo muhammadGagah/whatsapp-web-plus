@@ -144,7 +144,21 @@ export async function decodeSticker(bytes,signal) {
   } catch(error){for(const f of frames){f.canvas.width=0;f.canvas.height=0;}throw error;}
   finally{signal.removeEventListener('abort',cancel);cancel();}
 }
-export function encodeStickerInput(media,provider,model) {
+// Encode a canvas as PNG, optionally scaled down to fit a smaller request budget.
+function pngData(canvas,scale=1){
+  if(scale>=1)return canvas.toDataURL('image/png').split(',')[1];
+  const small=document.createElement('canvas');
+  small.width=Math.max(1,Math.round(canvas.width*scale));small.height=Math.max(1,Math.round(canvas.height*scale));
+  try{
+    const ctx=small.getContext('2d');
+    if(!ctx)return bad();
+    ctx.drawImage(canvas,0,0,small.width,small.height);
+    return small.toDataURL('image/png').split(',')[1];
+  }finally{small.width=0;small.height=0;}
+}
+
+// The caller releases the decoded frames, so a smaller scale can be tried again.
+export function encodeStickerInput(media,provider,model,scale=1) {
   let frames=media.frames;
   let mode=media.mode;
   const multi=provider==='gemini' || provider==='groq' && model==='qwen/qwen3.8-27b';
@@ -158,13 +172,13 @@ export function encodeStickerInput(media,provider,model) {
       frames.forEach((f,i)=>{const x=i%cols*w,y=Math.floor(i/cols)*(h+24);ctx.drawImage(f.canvas,x,y);ctx.fillStyle='#000';ctx.font='16px sans-serif';ctx.fillText(String(i+1),x+4,y+h+18);});
       frames=[{canvas:board,index:0,time:0}];mode='storyboard';
     } else if(provider==='groq' && frames.length>3){frames=[frames[0],frames[Math.floor(frames.length/2)],frames[frames.length-1]];}
-    const images=frames.map(f=>({mime:'image/png',data:f.canvas.toDataURL('image/png').split(',')[1],index:f.index,time:f.time}));
+    const images=frames.map(f=>({mime:'image/png',data:pngData(f.canvas,scale),index:f.index,time:f.time}));
     if(images.reduce((n,i)=>n+i.data.length,0)>STICKER_LIMITS.payloadBytes)return bad('stickerTooLarge');
     return {images,animated:media.animated,mode,unclear:media.mode==='unclear'};
-  }finally{for(const f of media.frames){f.canvas.width=0;f.canvas.height=0;}if(board){board.width=0;board.height=0;}}
+  }finally{if(board){board.width=0;board.height=0;}}
 }
 
-export function encodeStickerGroup(items) {
+export function encodeStickerGroup(items,scale=1) {
   if(items.length<2 || items.length>6)return bad('stickerTooLarge');
   const board=document.createElement('canvas');
   board.width=768;board.height=items.length*280;
@@ -182,7 +196,7 @@ export function encodeStickerGroup(items) {
       ctx.fillStyle='#000';ctx.font='16px sans-serif';
       ctx.fillText(String(row+1),4,row*280+274);
     });
-    const data=board.toDataURL('image/png').split(',')[1];
+    const data=pngData(board,scale);
     if(data.length>STICKER_LIMITS.payloadBytes)return bad('stickerTooLarge');
     return {images:[{mime:'image/png',data,index:0,time:0}],stickerCount:items.length,
       stickerModes:items.map(media=>media.animated?(media.mode==='unclear'?'snapshot':'animated'):'static'),

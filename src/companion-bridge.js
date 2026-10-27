@@ -1,4 +1,4 @@
-import { getChatContextKey } from './chat-context.js';
+import { getChatContextKey, isSameChatContext } from './chat-context.js';
 
 const BRIDGE_PROPERTY = '__whatsappWebPlusCompanionBridge';
 const BRIDGE_CONTRACT_VERSION = 2;
@@ -181,7 +181,8 @@ function createBridge() {
     if (current.privacy !== previousContext.privacy) reason = 'privacy-changed';
     else if (current.language !== previousContext.language) reason = 'language-changed';
     else if (current.main !== previousContext.main || current.title !== previousContext.title ||
-      current.chatContext !== previousContext.chatContext) {
+      !isSameChatContext(previousContext.chatContext, current.chatContext)) {
+      // A chat that is still rendering moves through several keys; that is not a chat change.
       reason = 'chat-context-changed';
     }
     previousContext = current;

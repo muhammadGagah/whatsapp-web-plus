@@ -16,12 +16,16 @@ export function installStickerTransport() {
     resolve(id,result){const callback=responses.get(id);if(callback)callback(result);}
   }),configurable:true});
 }
-export function requestStickerTransport(request,signal){
+// Leave headroom for the CDP envelope within Companion's existing 1 MiB frame cap.
+export const NATIVE_REQUEST_LIMIT=768*1024;
+export function usesNativeStickerTransport(){
   // Companion has no GM_xmlhttpRequest. Once it has polled, keep the native path while its loop is
   // briefly delayed (reconnect or a busy machine); request.expiresAt still bounds the wait.
-  const native=Date.now()<nativeReadyUntil ||
+  return Date.now()<nativeReadyUntil ||
     (nativePolled && isCompanionRuntime() && Date.now()<nativeReadyUntil+NATIVE_LATE_POLL_MS);
-  if(!native)return requestTampermonkeySticker(request,signal);
+}
+export function requestStickerTransport(request,signal){
+  if(!usesNativeStickerTransport())return requestTampermonkeySticker(request,signal);
   return new Promise((resolve,reject)=>{
     let settled=false,timer,registered=false;
     const finish=(value,error)=>{
@@ -39,8 +43,7 @@ export function requestStickerTransport(request,signal){
       // Companion accepts one request at a time. Do not replace an unpolled request.
       if(responses.size){finish(null,'stickerBusy');return;}
       signal.addEventListener('abort',abort,{once:true});
-      // Leave headroom for the CDP envelope within Companion's existing 1 MiB frame cap.
-      if(new TextEncoder().encode(JSON.stringify(request)).length>768*1024){finish(null,'stickerTooLarge');return;}
+      if(new TextEncoder().encode(JSON.stringify(request)).length>NATIVE_REQUEST_LIMIT){finish(null,'stickerTooLarge');return;}
       timer=setTimeout(abort,Math.max(1,request.expiresAt-Date.now()));
       responses.set(request.id,result=>{
         if(!result || typeof result!=='object'){finish(null,'stickerResponseError');return;}

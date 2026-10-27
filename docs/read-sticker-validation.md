@@ -42,7 +42,7 @@ Source is a loaded, same-origin blob sticker, not an encrypted media URL. Limits
 
 Keys use non-extractable AES-GCM-256 with fresh 96-bit IVs, 128-bit tags and authenticated provider/endpoint/key identity. localStorage stores ciphertext; IndexedDB stores the CryptoKey. The two stores are not an atomic transaction. Same-origin code can still use the key; this is not isolation from XSS/malware. Only explicit Save/new-key recovery may create a replacement encryption record, preserving other records.
 
-The userscript and Companion bundle hash describe local development builds. No publication or release was performed. Live provider and NVDA gates above remain outstanding rather than being inferred from mocks.
+Historical note: the hashes recorded during this validation described local development builds before any publication. Live provider and NVDA gates above remain outstanding rather than being inferred from mocks.
 
 Native Chrome credential fixture also passed: IndexedDB CryptoKey cloning, reload/decryption, no plaintext settings, blank-key retention, and credential deletion. Only a synthetic local test key was used.
 

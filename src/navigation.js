@@ -365,6 +365,12 @@ export function discardAllPassiveAnnouncements() {
 }
 
 export function reconcileChatPulseEntries(chatTitle, entries, { atLatest = false, receipts = [] } = {}) {
+  // An empty chat gains its chat ID with its first message. One new message there is an append, but a
+  // larger batch is history that is still loading, so it becomes the new baseline instead.
+  if (chatTitle !== chatPulseContext && isSameChatContext(chatPulseContext, chatTitle) &&
+    !chatPulseTailId && chatPulseSeenIds.size === 0 && entries.length === 1) {
+    chatPulseContext = chatTitle;
+  }
   if (chatTitle !== chatPulseContext) {
     passiveAnnouncementGeneration++;
     invalidatePassiveAnnouncements();
