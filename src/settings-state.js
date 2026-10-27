@@ -587,6 +587,12 @@ export function translateDeliveryStatusInText(value, targetLanguage = '') {
     (_, prefix, status) => `${prefix}${translateDeliveryStatus(status, targetLanguage)}`);
 }
 
+export function stripTrailingDeliveryStatus(value) {
+  const text = String(value || '');
+  const pattern = getDeliveryStatusPattern();
+  return text.replace(getCachedRegex('delivery-status-strip', `(^|\\s+)(?:${pattern})\\s*$`, 'i'), '').trim();
+}
+
 export function getTypingSuffix(value) {
   const match = String(value || '').match(/(\u2026|\.{3})$/);
   return match?.[1] || '';

@@ -1690,7 +1690,7 @@ for (const language of ['id', 'en']) {
     pulseStatus.setAttribute('aria-label', 'Dikirim');
     assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Sent');
 }
-assert.equal(runtime.getChatPulseSummary(pulseMessage), 'You test 15:54 Delivered');
+assert.equal(runtime.getChatPulseSummary(pulseMessage), 'You test 15:54', 'automatic reading leaves delivery status to Chat activity monitor');
 pulseStatus.setAttribute('aria-label', 'Pending');
 assert.equal(runtime.getChatPulseStatus(pulseMessage), 'Pending');
 
@@ -1857,9 +1857,10 @@ assert.deepEqual(
 assert.deepEqual(
     reconcilePulse('Member One', [
         pulseEntry('m2', 'Member One second 15:55', ''),
-        pulseEntry('m3', 'You third 15:56 Sent', 'Sent')
+        pulseEntry('m3', 'You third 15:56', 'Sent')
     ]),
-    ['You third 15:56 Sent']
+    ['You third 15:56', 'Message status: Sent'],
+    'a new message is read without its status, which is reported as a status change'
 );
 runtime.setChatPulseBaseline('Member One', [pulseEntry('m4', 'You pending 15:57', '')]);
 assert.deepEqual(
@@ -6248,20 +6249,23 @@ for (const auto of [false, true]) {
         runtime.setChatPulseBaseline('routing', [pulseEntry('own', 'You sent', 'Sent')]);
         runtime.syncChatPulseEntries('routing', [
             pulseEntry('own', 'You delivered', 'Delivered'),
-            pulseEntry('new', 'New incoming message', '')
+            pulseEntry('new', 'New incoming message', ''),
+            pulseEntry('own-new', 'You hello 16:00', 'Sent')
         ]);
         const queued = Array.from(runtime.getPassiveAnnouncements(), ({ source, text }) => ({ source, text }));
+        // A new outgoing message is read without its status; the status goes to Chat activity monitor.
         assert.deepEqual(queued, [
-            ...(auto ? [{ source: 'pulse', text: 'New incoming message' }] : []),
-            ...(activity ? [{ source: 'receipt', text: 'Message status: Delivered' }] : [])
+            ...(auto ? [{ source: 'pulse', text: 'New incoming message' }, { source: 'pulse', text: 'You hello 16:00' }] : []),
+            ...(activity ? [{ source: 'receipt', text: 'Message status: Delivered' },
+                { source: 'receipt', text: 'Message status: Sent' }] : [])
         ]);
         if (activity) {
             runtime.queuePassiveAnnouncements('activity', ['Typing']);
-            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'receipt').length, 1,
+            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'receipt').length, 2,
                 'typing must not replace delivery receipts');
             runtime.toggleStatusTracking(false);
             assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'receipt').length, 0);
-            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'pulse').length, auto ? 1 : 0);
+            assert.equal(runtime.getPassiveAnnouncements().filter(e => e.source === 'pulse').length, auto ? 2 : 0);
         }
     }
 }

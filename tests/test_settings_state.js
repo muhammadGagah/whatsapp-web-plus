@@ -166,6 +166,9 @@ for (const [customKey, value, expectedKey, rank, storageKey] of [
 }
 assert.equal(settings.translateDeliveryStatus('remis'), 'Disampaikan');
 assert.equal(settings.translateDeliveryStatusInText('Contact A 15:54 lu'), 'Contact A 15:54 Dibaca');
+assert.equal(settings.stripTrailingDeliveryStatus('Anda halo 15:54 Dikirim'), 'Anda halo 15:54');
+assert.equal(settings.stripTrailingDeliveryStatus('Contact A 15:54 Delivered'), 'Contact A 15:54');
+assert.equal(settings.stripTrailingDeliveryStatus('Contact A 15:54'), 'Contact A 15:54');
 assert.equal(settings.getDeliveryStatusRank('unknown status'), -1);
 assert.equal(settings.setCustomText('delivery-sent', 'Delivered'), true);
 assert.equal(settings.getDeliveryStatusKey('Delivered'), 'deliveryDelivered');

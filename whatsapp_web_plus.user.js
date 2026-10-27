@@ -1678,6 +1678,11 @@
       (_, prefix, status) => `${prefix}${translateDeliveryStatus(status, targetLanguage)}`
     );
   }
+  function stripTrailingDeliveryStatus(value) {
+    const text = String(value || "");
+    const pattern = getDeliveryStatusPattern();
+    return text.replace(getCachedRegex("delivery-status-strip", `(^|\\s+)(?:${pattern})\\s*$`, "i"), "").trim();
+  }
   function getTypingSuffix(value) {
     const match = String(value || "").match(/(\u2026|\.{3})$/);
     return match?.[1] || "";
@@ -8718,7 +8723,8 @@
   }
   function prepareChatPulseSummary(summary, message, messageId) {
     const safeSummary = isPrivacyModeEnabled() ? cleanString(summary, "message", message) : cleanString(summary, false, message);
-    return appendSenderDevice(translateDeliveryStatusInText(safeSummary), messageId);
+    const text = getChatPulseStatus(message) ? stripTrailingDeliveryStatus(safeSummary) : safeSummary;
+    return appendSenderDevice(text, messageId);
   }
   function getChatPulseSummary(message, messageId = "") {
     if (!message || !message.querySelector) return "";
@@ -8739,7 +8745,7 @@
     }
     const parts = [];
     const sender = metaSender || message.querySelector('span[aria-label$=":"]');
-    [sender?.getAttribute("aria-label"), bodyText, metadata?.textContent, getChatPulseStatus(message)].forEach((part) => {
+    [sender?.getAttribute("aria-label"), bodyText, metadata?.textContent].forEach((part) => {
       const value = cleanString(part || "", false);
       if (value && !parts.includes(value)) parts.push(value);
     });
@@ -8926,7 +8932,8 @@
       const previousRank = getDeliveryStatusRank(previousStatus);
       const nextRank = getDeliveryStatusRank(entry.status);
       const customStatusChanged = nextRank < 0 && previousRank < 0 && entry.status && entry.status !== previousStatus;
-      if (!newIds.has(entry.id) && hadStatus && (nextRank > previousRank || customStatusChanged)) {
+      const isNewWithStatus = newIds.has(entry.id) && entry.status;
+      if (isNewWithStatus || !newIds.has(entry.id) && hadStatus && (nextRank > previousRank || customStatusChanged)) {
         receiptCounts.set(entry.status, (receiptCounts.get(entry.status) || 0) + 1);
       }
       chatPulseSeenIds.add(entry.id);

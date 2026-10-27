@@ -117,7 +117,7 @@ If Tampermonkey reports that some URLs are restricted while you are on a browser
 - Lets you move through the message history with the arrow keys and keeps your place when WhatsApp refreshes the page.
 - Makes chats, messages, times, delivery status (sent, delivered, read), sender devices, and activity information easier to hear.
 - Removes repeated or unhelpful screen-reader announcements while retaining meaningful changes.
-- Automatic reading announces new incoming or outgoing messages in the open chat. Chat activity monitor separately announces delivery changes for outgoing messages.
+- Automatic reading announces new incoming or outgoing messages in the open chat, without their delivery status. Chat activity monitor separately announces the delivery status of outgoing messages, including the first status of a message you just sent.
 - Can open a chat at its first unread message instead of leaving focus in the message editor.
 - Announce sender device can add a detected device or platform to focused messages and automatic message announcements.
 - Adds shortcuts for navigation, voice recording, media players, and incoming calls.
@@ -198,7 +198,7 @@ Use these keys to navigate the menu:
 - **Language** changes WhatsApp Web Plus menus and announcements between English and Indonesian. It does not change the language of WhatsApp itself.
 - **Privacy Mode** is on by default and masks phone numbers in conversation summaries and script announcements. Visible phone links keep their native accessible name so speech input still matches the text shown on screen.
 - **Remove repeated or unhelpful screen-reader announcements** simplifies chat and message labels so the screen reader does not repeat the same information. It is on by default.
-- **Automatically read new messages** announces new incoming and outgoing messages in the open chat. It is on by default. Delivery changes belong to Chat activity monitor.
+- **Automatically read new messages** announces new incoming and outgoing messages in the open chat. It is on by default. It does not read delivery status such as Sent, Delivered, or Read, or activity such as online or last seen. Those belong to Chat activity monitor.
 - **Open chats at first unread message** moves focus to the first unread message when you press `Enter` on a chat in the chat list. If the chat has no unread messages, WhatsApp focuses the message editor as usual. It is off by default.
 - **Announce sender device** adds a best-effort indicator such as iPhone, iPad, Mac, Android, or WhatsApp Web or Desktop to focused messages and automatic message announcements. It is off by default, and no indicator is added when the device cannot be recognized.
 - **Announce total unread chats** announces changes to the total unread-chat count. It is off by default.

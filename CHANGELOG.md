@@ -56,6 +56,7 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 - Also reserve text-editing and common browser combinations, such as Ctrl+Arrow keys, Ctrl+Shift+Arrow keys, Ctrl+D, Ctrl+E, Ctrl+G and Ctrl+J. Suggest Alt+V instead of a reserved example in the shortcut help.
 - Identify the open chat for Companion by its title instead of the header's Profile details button.
 - Refuse to sign a release sequence that Companion would reject or ignore.
+- Leave delivery status, such as Sent or Read, out of automatically read messages. Chat activity monitor now also announces the first status of a message you just sent, so status is heard only when that monitor is on.
 - Allow up to 2048 tokens for a sticker answer, so a model that reasons before answering still has room for the description. Ignore inline reasoning when checking the description length, and shorten an overlong description with an ellipsis instead of reporting an error.
 
 ## 2026.10.19 - 2026-10-19

@@ -86,7 +86,7 @@ import {
   t,
   translateActivityStatus,
   translateDeliveryStatus,
-  translateDeliveryStatusInText,
+  stripTrailingDeliveryStatus,
   translateRecordingAudioActivity,
   translateTypingActivity,
   writeSetting
@@ -182,7 +182,9 @@ function prepareChatPulseSummary(summary, message, messageId) {
   const safeSummary = isPrivacyModeEnabled()
     ? cleanString(summary, 'message', message)
     : cleanString(summary, false, message);
-  return appendSenderDevice(translateDeliveryStatusInText(safeSummary), messageId);
+  // Delivery status belongs to Chat activity monitor, not to automatic reading of the message.
+  const text = getChatPulseStatus(message) ? stripTrailingDeliveryStatus(safeSummary) : safeSummary;
+  return appendSenderDevice(text, messageId);
 }
 
 export function getChatPulseSummary(message, messageId = '') {
@@ -208,7 +210,7 @@ export function getChatPulseSummary(message, messageId = '') {
 
   const parts = [];
   const sender = metaSender || message.querySelector('span[aria-label$=":"]');
-  [sender?.getAttribute('aria-label'), bodyText, metadata?.textContent, getChatPulseStatus(message)]
+  [sender?.getAttribute('aria-label'), bodyText, metadata?.textContent]
     .forEach(part => {
       const value = cleanString(part || '', false);
       if (value && !parts.includes(value)) parts.push(value);
@@ -440,7 +442,9 @@ export function reconcileChatPulseEntries(chatTitle, entries, { atLatest, receip
     const nextRank = getDeliveryStatusRank(entry.status);
     const customStatusChanged = nextRank < 0 && previousRank < 0 &&
       entry.status && entry.status !== previousStatus;
-    if (!newIds.has(entry.id) && hadStatus && (nextRank > previousRank || customStatusChanged)) {
+    // A new message's first status is reported here too, since its announcement leaves it out.
+    const isNewWithStatus = newIds.has(entry.id) && entry.status;
+    if (isNewWithStatus || (!newIds.has(entry.id) && hadStatus && (nextRank > previousRank || customStatusChanged))) {
       receiptCounts.set(entry.status, (receiptCounts.get(entry.status) || 0) + 1);
     }
     chatPulseSeenIds.add(entry.id);
