@@ -3953,11 +3953,14 @@
       const status = Array.from(message.querySelectorAll(
         '[data-testid="msg-meta"] [aria-label], [data-testid="msg-meta"] [title]'
       )).filter((el) => !el.closest('[data-testid="quoted-message"]')).map((el) => cleanString(el.getAttribute("aria-label") || el.getAttribute("title") || "", false)).find((value) => getDeliveryStatusKey(value));
+      const hostLanguage = getSupportedLanguage(
+        message.closest?.("[lang]")?.getAttribute?.("lang") || document.documentElement?.lang || ""
+      );
       const label = [
         sender && cleanString(sender.getAttribute("aria-label") || sender.textContent || "", "identity"),
-        `${t("sticker")}: ${descriptions.join(". ")}`,
+        `${hostLanguage ? tForLanguage("sticker", hostLanguage) : t("sticker")}: ${descriptions.join(". ")}`,
         ...times,
-        status && translateDeliveryStatus(status)
+        status && translateDeliveryStatus(status, hostLanguage)
       ].filter(Boolean).join(" ");
       applyOwnedAttribute(message, "aria-label", prepareNamedAttribute(message, "aria-label", label), OWNERS.stickerMessageName);
     }

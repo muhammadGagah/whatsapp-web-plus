@@ -12,7 +12,9 @@ const context = vm.createContext({
  cleanString: value => String(value).replace(/\s+/g,' ').trim(),
  prepareNamedAttribute: (el, name, value) => value,
  getDeliveryStatusKey: value => /^(read|dibaca)$/i.test(String(value).trim()) ? 'deliveryRead' : '',
- translateDeliveryStatus: () => language === 'id' ? 'Dibaca' : 'Read',
+ translateDeliveryStatus: (value, host) => (host || language) === 'id' ? 'Dibaca' : 'Read',
+ getSupportedLanguage: value => ['en', 'id'].includes(value) ? value : '',
+ tForLanguage: (key, host) => host === 'id' ? 'stiker' : 'sticker',
  t: () => language === 'id' ? 'stiker' : 'sticker'
 });
 vm.runInContext(fs.readFileSync('src/owned-attributes.js','utf8').replace(/^import .*;\r?\n/gm,'').replace(/export /g,''),context);
@@ -67,6 +69,10 @@ refresh();
 assert.ok(item.getAttribute('aria-label').endsWith('22.58 Read'),item.getAttribute('aria-label'));
 language='id';refresh();
 assert.ok(item.getAttribute('aria-label').endsWith('22.58 Dibaca'));
+// WhatsApp's page language wins, so the prefix and status never mix languages.
+language='en';document.documentElement.setAttribute('lang','id');refresh();
+assert.equal(item.getAttribute('aria-label'),'Sender stiker: Updated cup 22.58 Dibaca');
+document.documentElement.removeAttribute('lang');
 language='en';statusIcon.remove();refresh();
 assert.ok(item.getAttribute('aria-label').endsWith('22.58'));
 // Privacy mode hides a phone-number author itself; the label still names the (masked) sender.

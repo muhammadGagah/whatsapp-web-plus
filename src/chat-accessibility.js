@@ -1411,11 +1411,15 @@ export function refreshStickerMessageNames(rootEl = document) {
       .filter(el => !el.closest('[data-testid="quoted-message"]'))
       .map(el => cleanString(el.getAttribute('aria-label') || el.getAttribute('title') || '', false))
       .find(value => getDeliveryStatusKey(value));
+    // Like other message labels, speak the whole label in WhatsApp's page language when it is known,
+    // so the prefix and the delivery status never mix two languages.
+    const hostLanguage = getSupportedLanguage(
+      message.closest?.('[lang]')?.getAttribute?.('lang') || document.documentElement?.lang || '');
     const label = [
       sender && cleanString(sender.getAttribute('aria-label') || sender.textContent || '', 'identity'),
-      `${t('sticker')}: ${descriptions.join('. ')}`,
+      `${hostLanguage ? tForLanguage('sticker', hostLanguage) : t('sticker')}: ${descriptions.join('. ')}`,
       ...times,
-      status && translateDeliveryStatus(status)
+      status && translateDeliveryStatus(status, hostLanguage)
     ].filter(Boolean).join(' ');
     applyOwnedAttribute(message, 'aria-label', prepareNamedAttribute(message, 'aria-label', label), OWNERS.stickerMessageName);
   }

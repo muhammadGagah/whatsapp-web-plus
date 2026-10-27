@@ -60,7 +60,7 @@ Then check the list of file names:
 git --no-pager diff --cached --name-only
 ```
 
-Continue only if the staged list contains exactly the intended files and excludes the new manifest and signature. The commands below push directly to `main`. If you release through a branch and pull request, push the branch and merge the pull request instead, and continue only after the merge. GreasyFork imports from `main`, and Companion reads the manifest from `main`.
+Continue only if the staged list contains exactly the intended files and excludes the new manifest and signature. The commands below push directly to `main`. If you release through a branch and pull request, push the branch and merge the pull request instead, and continue only after the merge. Then return to the updated `main` with `git switch main` and `git pull --ff-only origin main`, and check that `git status` shows a clean working tree. The manifest commit in step 7 must be made on `main`. GreasyFork imports from `main`, and Companion reads the manifest from `main`.
 
 ```powershell
 git commit -m "Release WhatsApp Web Plus $releaseVersion"

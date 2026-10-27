@@ -41,7 +41,7 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 - Keep hidden items inside the settings menu hidden.
 - Stop a browser call recording by itself about 15 seconds after the call disappears from the tab, and say that the call ended. The audio stays available to save.
 - Say that a message, unread message or message box is not ready when Alt+2, Alt+3 or Alt+Shift+D is cancelled by a chat change, instead of staying silent.
-- Include the delivery status, such as Read, in sticker message labels.
+- Include the delivery status, such as Read, in sticker message labels, and speak the whole label in WhatsApp's page language so it never mixes two languages.
 - Keep the stickers a cut-off reply did describe, and say which descriptions are missing. Do not read bold list numbers aloud, and keep real numbers at the end of a description.
 - Keep messages waiting for automatic reading when Chat activity monitor is turned on or off.
 - Use the real scroll viewport when Alt+3 restores the unread position in nested message lists.

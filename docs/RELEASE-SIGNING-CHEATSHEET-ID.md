@@ -60,7 +60,7 @@ Lalu periksa daftar nama filenya:
 git --no-pager diff --cached --name-only
 ```
 
-Lanjutkan hanya jika daftar staging berisi file yang memang diinginkan dan tidak menyertakan manifest serta signature baru. Perintah berikut melakukan push langsung ke `main`. Jika Anda merilis melalui branch dan pull request, push branch tersebut lalu merge pull request-nya, dan lanjutkan hanya setelah merge selesai. GreasyFork mengimpor dari `main`, dan Companion membaca manifest dari `main`.
+Lanjutkan hanya jika daftar staging berisi file yang memang diinginkan dan tidak menyertakan manifest serta signature baru. Perintah berikut melakukan push langsung ke `main`. Jika Anda merilis melalui branch dan pull request, push branch tersebut lalu merge pull request-nya, dan lanjutkan hanya setelah merge selesai. Setelah itu kembali ke `main` terbaru dengan `git switch main` dan `git pull --ff-only origin main`, lalu pastikan `git status` menunjukkan working tree yang bersih. Commit manifest pada langkah 7 harus dibuat di `main`. GreasyFork mengimpor dari `main`, dan Companion membaca manifest dari `main`.
 
 ```powershell
 git commit -m "Release WhatsApp Web Plus $releaseVersion"
