@@ -12,7 +12,7 @@ Jalankan perintah satu per satu sesuai urutan. Tekan Enter setelah setiap baris 
 
 **Semua path lokal dalam panduan ini hanyalah contoh.** Ganti `D:\whatsapp\whatsapp-web-plus` dengan lokasi project script Anda. Ganti path private key dengan lokasi key yang sudah Anda gunakan, di luar kedua repository. Variabel path memakai tanda kutip agar lokasi dengan spasi tetap bisa digunakan. Path relatif pada langkah berikut dihitung dari root project script, bukan dari `docs`.
 
-Versi dibaca dari `package.json`. Perbarui file tersebut, `package-lock.json`, `src/metadata.txt`, `README.md`, dan `CHANGELOG.md` sebelum menjalankan blok berikut. Ganti contoh release sequence dengan angka yang lebih besar daripada **semua sequence yang pernah dipublikasikan**. `2026102601` hanya contoh. Gunakan key ID yang sudah dipercaya versi Companion yang didukung. Jangan membuat key baru setiap kali rilis.
+Versi dibaca dari `package.json`. Perbarui file tersebut, `package-lock.json`, `src/metadata.txt`, `README.md`, dan `CHANGELOG.md` sebelum menjalankan blok berikut. Ganti contoh release sequence dengan angka yang lebih besar daripada **semua sequence yang pernah dipublikasikan**. `2026102701` hanya contoh. Gunakan key ID yang sudah dipercaya versi Companion yang didukung. Jangan membuat key baru setiap kali rilis.
 
 URL berikut adalah endpoint resmi project, bukan contoh path lokal. Untuk fork, perubahan penerbitan dan verifikasi Companion harus dilakukan bersama. Mengganti variabel URL saja tidak cukup.
 
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = 'D:\whatsapp\whatsapp-web-plus'
 $privateKeyPath = 'D:\secure\whatsapp-companion\release-ed25519-private.pem'
 $keyId = 'wwp-userscript-ed25519-2026-01'
-$releaseSequence = '2026102601'
+$releaseSequence = '2026102701'
 Set-Location -LiteralPath $scriptRoot
 $publicKeyPath = Join-Path $scriptRoot 'update-public-key.pem'
 $releaseVersion = (Get-Content -LiteralPath '.\package.json' -Raw | ConvertFrom-Json).version

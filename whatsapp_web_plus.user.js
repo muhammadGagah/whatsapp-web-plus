@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2026.10.26
+// @version      2026.10.27
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -22,7 +22,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2026.10.26",
+    scriptVersion: "2026.10.27",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -40,7 +40,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2026.10.26";
+  var SCRIPT_VERSION = "2026.10.27";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -7397,7 +7397,7 @@
       }
       if (legacy) {
         if (typeof r.body.prompt !== "string" || !r.body.prompt.trim() || r.body.prompt.length > 6e3 || typeof r.body.image !== "string" || !/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(r.body.image)) throw Error();
-        r.body = { prompt: r.body.prompt, image: r.body.image, max_tokens: 512, stream: false };
+        r.body = { prompt: r.body.prompt, image: r.body.image, max_tokens: 2048, stream: false };
         return url;
       }
     }
@@ -7416,15 +7416,15 @@
       images++;
     }
     if (!images || r.provider === "groq" && images > 3) throw Error();
-    if (r.provider === "gemini") r.body = { contents: [{ role: "user", parts: parts.map((p) => typeof p.text === "string" ? { text: p.text } : { inlineData: { mimeType: "image/png", data: p.inlineData.data } }) }], generationConfig: { maxOutputTokens: 512 } };
+    if (r.provider === "gemini") r.body = { contents: [{ role: "user", parts: parts.map((p) => typeof p.text === "string" ? { text: p.text } : { inlineData: { mimeType: "image/png", data: p.inlineData.data } }) }], generationConfig: { maxOutputTokens: 2048 } };
     else {
       if (r.provider !== "cloudflare" && (typeof r.body.model !== "string" || r.body.model.length > 160 || !r.body.model.trim())) throw Error();
-      r.body = { model: r.body.model, messages: [{ role: "user", content: parts.map((p) => typeof p.text === "string" ? { type: "text", text: p.text } : { type: "image_url", image_url: { url: p.image_url.url } }) }], max_completion_tokens: 512, stream: false };
+      r.body = { model: r.body.model, messages: [{ role: "user", content: parts.map((p) => typeof p.text === "string" ? { type: "text", text: p.text } : { type: "image_url", image_url: { url: p.image_url.url } }) }], max_completion_tokens: 2048, stream: false };
     }
     if (r.provider === "cloudflare") {
       delete r.body.model;
       delete r.body.max_completion_tokens;
-      r.body.max_tokens = 512;
+      r.body.max_tokens = 2048;
     }
     return url;
   }
@@ -8093,21 +8093,21 @@
     const body = provider === "cloudflare" && profile.model === "@cf/meta/llama-3.2-11b-vision-instruct" ? {
       prompt,
       image: `data:${input.images[0].mime};base64,${input.images[0].data}`,
-      max_tokens: 512,
+      max_tokens: 2048,
       stream: false
     } : provider === "gemini" ? {
       contents: [{ role: "user", parts: [{ text: prompt }, ...input.images.map((i) => ({ inlineData: { mimeType: i.mime, data: i.data } }))] }],
-      generationConfig: { maxOutputTokens: 512 }
+      generationConfig: { maxOutputTokens: 2048 }
     } : {
       model: profile.model,
       messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...input.images.map((i) => ({ type: "image_url", image_url: { url: `data:${i.mime};base64,${i.data}` } }))] }],
-      max_completion_tokens: 512,
+      max_completion_tokens: 2048,
       stream: false
     };
     if (provider === "cloudflare" && body.messages) {
       delete body.model;
       delete body.max_completion_tokens;
-      body.max_tokens = 512;
+      body.max_tokens = 2048;
     }
     return { version: 1, id, provider, endpoint, key, body, expiresAt: Date.now() + 45e3 };
   }
@@ -8136,10 +8136,12 @@
       if (message?.refusal) throw new Error("stickerRefused");
       text = message?.content;
     }
-    if (typeof text !== "string" || !text.trim() || text.length > 4e3) throw new Error("stickerResponseError");
+    if (typeof text !== "string" || !text.trim()) throw new Error("stickerResponseError");
     text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/[\u0000-\u001f]/g, " ").trim();
     if (!text || /<think\b/i.test(text)) throw new Error("stickerResponseError");
-    return truncated && !text.endsWith("\u2026") ? `${text}\u2026` : text;
+    const long = text.length > 4e3;
+    if (long) text = text.slice(0, 4e3).replace(/[\uD800-\uDBFF]$/, "").trimEnd();
+    return (truncated || long) && !text.endsWith("\u2026") ? `${text}\u2026` : text;
   }
 
   // src/read-sticker.js

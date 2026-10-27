@@ -19,7 +19,7 @@ export function validateRequest(r){
     if(legacy){
       if(typeof r.body.prompt!=='string'||!r.body.prompt.trim()||r.body.prompt.length>6000||
         typeof r.body.image!=='string'||!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(r.body.image))throw Error();
-      r.body={prompt:r.body.prompt,image:r.body.image,max_tokens:512,stream:false};
+      r.body={prompt:r.body.prompt,image:r.body.image,max_tokens:2048,stream:false};
       return url;
     }
   }
@@ -34,11 +34,11 @@ export function validateRequest(r){
     if(r.provider!=='gemini'&&!part.image_url.url.startsWith('data:image/png;base64,'))throw Error();images++;
   }
   if(!images||r.provider==='groq'&&images>3)throw Error();
-  if(r.provider==='gemini')r.body={contents:[{role:'user',parts:parts.map(p=>typeof p.text==='string'?{text:p.text}:{inlineData:{mimeType:'image/png',data:p.inlineData.data}})}],generationConfig:{maxOutputTokens:512}};
+  if(r.provider==='gemini')r.body={contents:[{role:'user',parts:parts.map(p=>typeof p.text==='string'?{text:p.text}:{inlineData:{mimeType:'image/png',data:p.inlineData.data}})}],generationConfig:{maxOutputTokens:2048}};
   else{
     if(r.provider!=='cloudflare' && (typeof r.body.model!=='string'||r.body.model.length>160||!r.body.model.trim()))throw Error();
-    r.body={model:r.body.model,messages:[{role:'user',content:parts.map(p=>typeof p.text==='string'?{type:'text',text:p.text}:{type:'image_url',image_url:{url:p.image_url.url}})}],max_completion_tokens:512,stream:false};
+    r.body={model:r.body.model,messages:[{role:'user',content:parts.map(p=>typeof p.text==='string'?{type:'text',text:p.text}:{type:'image_url',image_url:{url:p.image_url.url}})}],max_completion_tokens:2048,stream:false};
   }
-  if(r.provider==='cloudflare'){delete r.body.model;delete r.body.max_completion_tokens;r.body.max_tokens=512;}
+  if(r.provider==='cloudflare'){delete r.body.model;delete r.body.max_completion_tokens;r.body.max_tokens=2048;}
   return url;
 }

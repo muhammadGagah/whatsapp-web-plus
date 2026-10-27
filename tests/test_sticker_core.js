@@ -46,6 +46,9 @@ const create=()=>load('src/sticker-store.js',{'./settings-state.js':settings});
  assert.equal(provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{finishReason:'MAX_TOKENS',content:{parts:[{text:'A cat holding'}]}}]}}),'A cat holding…','truncated text is kept and marked');
  assert.equal(provider.parseStickerResponse('groq',{status:200,body:{choices:[{finish_reason:'length',message:{content:'A dog'}}]}}),'A dog…');
  assert.throws(()=>provider.parseStickerResponse('groq',{status:200,body:{choices:[{finish_reason:'length',message:{content:'<think>unfinished'}}]}}),/stickerResponseError/);
+ assert.equal(provider.parseStickerResponse('groq',{status:200,body:{choices:[{message:{content:`<think>${'r'.repeat(9000)}</think>A cup.`}}]}}),'A cup.','long inline reasoning does not count toward the description length');
+ const longReply=provider.parseStickerResponse('gemini',{status:200,body:{candidates:[{content:{parts:[{text:`${'a'.repeat(3999)}😀 tail`}]}}]}});
+ assert.equal(longReply,`${'a'.repeat(3999)}…`,'an overlong description is cut and marked, without half an emoji');
 }
 {
  // Multi-sticker parsing tolerates light Markdown and list markers but keeps real numbers.

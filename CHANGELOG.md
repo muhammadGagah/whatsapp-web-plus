@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026.10.26 - 2026-10-26
+## 2026.10.27 - 2026-10-27
 
 Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.
 
@@ -56,6 +56,7 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 - Also reserve text-editing and common browser combinations, such as Ctrl+Arrow keys, Ctrl+Shift+Arrow keys, Ctrl+D, Ctrl+E, Ctrl+G and Ctrl+J. Suggest Alt+V instead of a reserved example in the shortcut help.
 - Identify the open chat for Companion by its title instead of the header's Profile details button.
 - Refuse to sign a release sequence that Companion would reject or ignore.
+- Allow up to 2048 tokens for a sticker answer, so a model that reasons before answering still has room for the description. Ignore inline reasoning when checking the description length, and shorten an overlong description with an ellipsis instead of reporting an error.
 
 ## 2026.10.19 - 2026-10-19
 

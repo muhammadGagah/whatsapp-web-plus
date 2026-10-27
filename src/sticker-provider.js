@@ -17,15 +17,15 @@ export function makeStickerRequest(config,key,input,language,id) {
   if(input.mode==='storyboard')prompt+=' Panels are ordered left to right, then top to bottom. Numbers below artwork are sample markers, not sticker text.';
   if(input.unclear)prompt+=' Samples have no detected visual changes. Describe the visible snapshot only, without guessing motion. The application will prepend the motion limitation.';
   const body=provider==='cloudflare' && profile.model==='@cf/meta/llama-3.2-11b-vision-instruct' ? {
-    prompt, image: `data:${input.images[0].mime};base64,${input.images[0].data}`, max_tokens:512, stream:false
+    prompt, image: `data:${input.images[0].mime};base64,${input.images[0].data}`, max_tokens:2048, stream:false
   } : provider==='gemini' ? {
     contents:[{role:'user',parts:[{text:prompt},...input.images.map(i=>({inlineData:{mimeType:i.mime,data:i.data}}))]}],
-    generationConfig:{maxOutputTokens:512}
+    generationConfig:{maxOutputTokens:2048}
   } : {
     model:profile.model,messages:[{role:'user',content:[{type:'text',text:prompt},...input.images.map(i=>({type:'image_url',image_url:{url:`data:${i.mime};base64,${i.data}`}}))]}],
-    max_completion_tokens:512,stream:false
+    max_completion_tokens:2048,stream:false
   };
-  if(provider==='cloudflare' && body.messages){delete body.model;delete body.max_completion_tokens;body.max_tokens=512;}
+  if(provider==='cloudflare' && body.messages){delete body.model;delete body.max_completion_tokens;body.max_tokens=2048;}
   return {version:1,id,provider,endpoint,key,body,expiresAt:Date.now()+45000};
 }
 export function parseStickerResponse(provider,response) {
@@ -56,8 +56,11 @@ export function parseStickerResponse(provider,response) {
     if(message?.refusal)throw new Error('stickerRefused');
     text=message?.content;
   }
-  if(typeof text!=='string'||!text.trim()||text.length>4000)throw new Error('stickerResponseError');
+  if(typeof text!=='string'||!text.trim())throw new Error('stickerResponseError');
+  // Inline reasoning can be far longer than the description, so measure only what remains.
   text=text.replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/[\u0000-\u001f]/g,' ').trim();
   if(!text || /<think\b/i.test(text))throw new Error('stickerResponseError');
-  return truncated && !text.endsWith('…') ? `${text}…` : text;
+  const long=text.length>4000;
+  if(long)text=text.slice(0,4000).replace(/[\uD800-\uDBFF]$/,'').trimEnd();
+  return (truncated || long) && !text.endsWith('…') ? `${text}…` : text;
 }
