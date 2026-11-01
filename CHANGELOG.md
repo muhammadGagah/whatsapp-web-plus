@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026.10.27 - 2026-10-27
+## 2026.11.01 - 2026-11-01
 
 Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.
 

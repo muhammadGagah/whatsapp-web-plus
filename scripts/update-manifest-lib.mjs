@@ -125,7 +125,7 @@ export function validateManifest(manifest) {
   if (typeof manifest.keyId !== 'string' || !KEY_ID_PATTERN.test(manifest.keyId)) {
     throw new Error('Invalid manifest keyId');
   }
-  // Companion accepts at most ten digits (for example 2026102701).
+  // Companion accepts at most ten digits (for example 2026110101).
   if (!Number.isSafeInteger(manifest.releaseSequence) || manifest.releaseSequence <= 0 ||
     manifest.releaseSequence > 9_999_999_999) {
     throw new Error('Invalid manifest releaseSequence');

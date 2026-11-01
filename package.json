@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-web-plus",
-  "version": "2026.10.27",
+  "version": "2026.11.01",
   "private": true,
   "scripts": {
     "build": "node build.mjs",

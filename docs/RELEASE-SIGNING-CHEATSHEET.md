@@ -12,7 +12,7 @@ Run the commands one at a time in the order shown. Press Enter after each line a
 
 **Every local path in this guide is an example.** Replace `D:\whatsapp\whatsapp-web-plus` with the folder where you placed the script project. Replace the private-key path with your existing key location outside both repositories. Spaces in paths are supported by the quoted variables. Later relative paths are resolved from the script root, not from `docs`.
 
-The version is read from `package.json`. Update it, `package-lock.json`, `src/metadata.txt`, `README.md`, and `CHANGELOG.md` before running the following block. Replace the example release sequence with a number greater than **every previously published sequence**. `2026102701` is only an example. Use the key ID already trusted by supported Companion versions. Do not generate a new key for each release.
+The version is read from `package.json`. Update it, `package-lock.json`, `src/metadata.txt`, `README.md`, and `CHANGELOG.md` before running the following block. Replace the example release sequence with a number greater than **every previously published sequence**. `2026110101` is only an example. Use the key ID already trusted by supported Companion versions. Do not generate a new key for each release.
 
 The URLs below are the official project's endpoints, not local-path examples. A fork needs a coordinated change to publishing and Companion verification settings. Changing these variables alone is insufficient.
 
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = 'D:\whatsapp\whatsapp-web-plus'
 $privateKeyPath = 'D:\secure\whatsapp-companion\release-ed25519-private.pem'
 $keyId = 'wwp-userscript-ed25519-2026-01'
-$releaseSequence = '2026102701'
+$releaseSequence = '2026110101'
 Set-Location -LiteralPath $scriptRoot
 $publicKeyPath = Join-Path $scriptRoot 'update-public-key.pem'
 $releaseVersion = (Get-Content -LiteralPath '.\package.json' -Raw | ConvertFrom-Json).version
