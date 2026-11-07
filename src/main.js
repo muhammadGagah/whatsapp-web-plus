@@ -33,6 +33,7 @@ import {
   refreshMessageMentionNames,
   refreshStickerMessageNames,
   rememberFocusedRow,
+  isSyncingNativeChatSelection,
   scheduleRoleFix
 } from './chat-accessibility.js';
 import {
@@ -76,6 +77,8 @@ import { isCompanionRuntime } from './companion-bridge.js';
 import { isAutomaticReadingEnabled } from './settings-state.js';
 import { getSemanticHealth } from './semantic-health.js';
 import { refreshUnreadChatTotal } from './unread-chat-total.js';
+import { refreshNativeLabels } from './native-labels.js';
+import { refreshPanelAccessibility } from './panel-accessibility.js';
 
 const loaderState = window.__whatsappWebPlusLoader;
 
@@ -324,6 +327,8 @@ function createCleanupObserver() {
     }
     if (statusRelevant) scheduleStatusAccessibilitySync();
     if (unreadTotalRelevant) refreshUnreadChatTotal();
+    refreshNativeLabels();
+    refreshPanelAccessibility();
     pruneDetachedOwnedElements();
     if (pulseRelevant) scheduleChatPulseSync();
   });
@@ -341,6 +346,8 @@ function startCleanupObserver() {
     });
     cleanElementAttributes(document.body);
     refreshUnreadChatTotal();
+    refreshNativeLabels();
+    refreshPanelAccessibility();
     const chatList = fixAccessibilityRoles(document.body);
     if (chatList) normalizeChatListTabStops(chatList);
   } else {
@@ -367,7 +374,9 @@ onDomReady(function() {
     window.addEventListener('keydown', handleMessageGridKeydown, true);
     window.addEventListener('keyup', handleMessageReadMoreKeyup, true);
     document.addEventListener('focusin', event => {
-      rememberFocusedRow(event.target, 'focus');
+      // Each replayed arrow moves focus; the caller records the chat it lands on.
+      if (isSyncingNativeChatSelection()) return;
+      rememberFocusedRow(event.target, 'focus', event.relatedTarget);
       scheduleStatusAccessibilitySync();
     }, true);
     document.addEventListener('pointerdown', event => {

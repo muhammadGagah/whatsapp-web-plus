@@ -145,8 +145,8 @@ assert.match(source, /releaseMessageAttributes\(OWNERS\.messageCell/);
 assert.match(source, /releaseOwnedAttribute\(el, name, owner\)/);
 assert.match(source, /function restorePrivacyAttributes\(\)/);
 assert.doesNotMatch(source, /fixGenericSectionBug|MARKERS|unreadMessageId/);
-// Privacy must not redirect focus. The separate menu-fitting hook now prevents
-// ancestor scrolling only; its native-focus passthrough is tested behaviorally.
+// Privacy must not redirect focus. The separate menu-fitting hook only prevents
+// ancestor scrolling; its native-focus passthrough is tested behaviorally.
 assert.doesNotMatch(fs.readFileSync('src/privacy.js', 'utf8'), /HTMLElement\.prototype\.focus\s*=/);
 const nonFocusableMessageContent = {
     closest(selector) {
@@ -1165,7 +1165,7 @@ sandbox.__privacyTest.setCustomText('participant-prefix', '');
         reconcileUnreadTarget: noop, scheduleRoleFix: noop,
         handleAddedNode: noop, recleanMessageAncestor: noop,
         scheduleCleanUiSync: noop, scheduleStatusAccessibilitySync: noop,
-        refreshUnreadChatTotal: noop, pruneDetachedOwnedElements: noop,
+        refreshUnreadChatTotal: noop, refreshNativeLabels: noop, refreshPanelAccessibility: noop, pruneDetachedOwnedElements: noop,
         scheduleChatPulseSync: noop, cleanElementAttributes,
     };
     vm.runInNewContext(observerSource + '\ncreateCleanupObserver();', observerContext);

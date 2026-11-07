@@ -240,13 +240,26 @@ function resolveViewer(root) {
   const textNode = queryRendered(root, SELECTORS.statusText);
   const videoNode = queryRendered(root, SELECTORS.statusVideo);
   const imageNode = queryRendered(root, SELECTORS.statusImage);
-  const voiceNode = videoNode || imageNode || textNode ? null : query(root, SELECTORS.statusVoice);
   const audioNode = query(root, SELECTORS.statusAudio);
+  // WhatsApp has no ptt-status marker: a voice Status is a button holding the
+  // audio element, a waveform slider and a microphone icon. Other audio, such as music,
+  // has neither, so it is not called a voice message.
+  const voiceNode = videoNode || imageNode || textNode
+    ? null
+    : query(root, SELECTORS.statusVoice) || (isVoiceStatusButton(audioNode?.closest?.('button')) ? audioNode : null);
   const mediaNode = videoNode || imageNode || voiceNode || textNode;
   const contentButton = mediaNode?.closest?.('button') || null;
   if (!connected(contentButton) || !isRenderedElement(contentButton)) return null;
 
   return { root, marker, textNode, videoNode, voiceNode, audioNode, imageNode, mediaNode, contentButton };
+}
+
+const VOICE_ICON_RE = /keyboard-voice|ptt|ic-mic/iu;
+
+function isVoiceStatusButton(button) {
+  if (!button) return false;
+  return !!query(button, '[role="slider"]') ||
+    queryAll(button, 'svg title').some(title => VOICE_ICON_RE.test(readText(title)));
 }
 
 function getActiveViewer() {

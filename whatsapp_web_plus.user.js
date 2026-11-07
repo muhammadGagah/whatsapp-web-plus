@@ -2,7 +2,7 @@
 // @name         WhatsApp Web Plus
 // @author       Muhammad Gagah
 // @namespace    https://github.com/muhammadGagah/whatsapp-web-plus
-// @version      2026.11.01
+// @version      2026.11.07
 // @description  Making WhatsApp web more accessible for visually impaired users
 // @match        https://web.whatsapp.com/*
 // @run-at       document-start
@@ -22,7 +22,7 @@
   if (window[loaderProperty]) return;
   const loaderState = {
     contractVersion: 1,
-    scriptVersion: "2026.11.01",
+    scriptVersion: "2026.11.07",
     bundleIdentifier: globalThis.__whatsappWebPlusBundleHash || 'embedded',
     state: 'initializing',
     initializedAt: typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -40,7 +40,7 @@
   try {
 (() => {
   // src/config.js
-  var SCRIPT_VERSION = "2026.11.01";
+  var SCRIPT_VERSION = "2026.11.07";
   var IS_DEBUG_BUILD = false;
   var SHORTCUT_RENDER_RETRIES = 12;
   var ALT_T_DOUBLE_PRESS_MS = 300;
@@ -120,6 +120,7 @@
     navCommunities: '[data-testid="navbar-primary-section"] button[aria-label="Communities"], [data-testid="navbar-primary-section"] button[aria-label="Komunitas"]',
     navChannels: '[data-testid="navbar-primary-section"] button[aria-label="Channels"], [data-testid="navbar-primary-section"] button[aria-label="Saluran"]',
     navMetaAI: '[data-testid="navbar-primary-section"] button[aria-label="Meta AI"]',
+    navCalls: '[data-testid="navbar-primary-section"] button[aria-label="Calls"], [data-testid="navbar-primary-section"] button[aria-label="Telepon"]',
     videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
     audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
     statusListFirstRow: '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]',
@@ -160,7 +161,9 @@
     metaAIMessageName: "meta-ai-message-name",
     unreadChatTotal: "unread-chat-total",
     cleanUiHidden: "clean-ui-hidden",
-    statusViewer: "status-viewer"
+    statusViewer: "status-viewer",
+    nativeLabel: "native-label",
+    panelSemantics: "panel-semantics"
   });
   var CHAT_LABEL_NOISE_RE = Object.freeze({
     iconName: /^(?:wds-)?ic-(?:expand-more|read|check|dblcheck|msg-time|notifications-off)\b/i,
@@ -618,6 +621,7 @@
     audioProfileNatural: "Natural (no equalizer)",
     audioProfileClear: "Clear (balanced)",
     audioProfileClearPlus: "Clear Plus (stronger and more even)",
+    audioProfileLoud: "Loud (loudest, even voice)",
     audioProfileNoiseFilter: "Noise filter (noisy rooms)",
     callAudioProfiles: "Call microphone profile",
     callAudioProfileWhatsApp: "WhatsApp default (WhatsApp controls audio)",
@@ -680,10 +684,15 @@
     openUpdate: "Open the WhatsApp Web Plus installer",
     updateOpenFailed: "Could not open the WhatsApp Web Plus installer in a new browser tab",
     chats: "Chats",
+    chatFilters: "Chat filters",
     status: "Status",
     communities: "Communities",
     channels: "Channels",
     metaAi: "Meta AI",
+    calls: "Calls",
+    callsList: "Calls list",
+    addStatus: "Add status",
+    loadingMedia: "Loading",
     participant: "Participant",
     phoneLink: "Phone number link",
     messageHistory: "Message history",
@@ -1028,6 +1037,7 @@
     audioProfileNatural: "Alami (tanpa ekualiser)",
     audioProfileClear: "Jernih (seimbang)",
     audioProfileClearPlus: "Jernih Plus (lebih kuat dan rata)",
+    audioProfileLoud: "Keras (paling keras dan rata)",
     audioProfileNoiseFilter: "Peredam bising (ruangan berisik)",
     callAudioProfiles: "Profil mikrofon panggilan",
     callAudioProfileWhatsApp: "Bawaan WhatsApp (audio diatur oleh WhatsApp)",
@@ -1090,10 +1100,15 @@
     openUpdate: "Buka pemasang WhatsApp Web Plus",
     updateOpenFailed: "Tidak dapat membuka pemasang WhatsApp Web Plus di tab browser baru",
     chats: "Chat",
+    chatFilters: "Filter chat",
     status: "Status",
     communities: "Komunitas",
     channels: "Saluran",
     metaAi: "Meta AI",
+    calls: "Telepon",
+    callsList: "Daftar panggilan",
+    addStatus: "Tambah status",
+    loadingMedia: "Memuat",
     participant: "Peserta",
     phoneLink: "Tautan nomor telepon",
     messageHistory: "Riwayat pesan",
@@ -2920,6 +2935,9 @@
   var lastFocusedChatTitle = "";
   var lastFocusedChatIdentity = "";
   var lastFocusedChatRowIndex = -1;
+  var pendingChatListReentry = null;
+  var pointerFocusPending = false;
+  var CHAT_LIST_REENTRY_WINDOW_MS = 1e3;
   var lastFocusedMessageNode = null;
   var lastFocusedMessageId = "";
   var lastFocusedMessageTarget = null;
@@ -2948,10 +2966,11 @@
   function isNavbarActive(selectorKey) {
     return hasActiveState(getNavButton(selectorKey));
   }
+  function isOtherTabActive() {
+    return isNavbarActive("navStatus") || isNavbarActive("navCommunities") || isNavbarActive("navChannels") || isNavbarActive("navMetaAI") || isNavbarActive("navCalls");
+  }
   function isChatsTabActive() {
-    if (isNavbarActive("navStatus") || isNavbarActive("navCommunities") || isNavbarActive("navChannels") || isNavbarActive("navMetaAI")) {
-      return false;
-    }
+    if (isOtherTabActive()) return false;
     const side = document.querySelector(SELECTORS.side);
     if (!side) return false;
     return !!side.querySelector(SELECTORS.chatList);
@@ -3761,6 +3780,53 @@
     return true;
   }
   var chatListShortcutArrowAnchor = null;
+  var syncingNativeChatSelection = false;
+  var NATIVE_CHAT_SELECTION_MAX_STEPS = 60;
+  function isSyncingNativeChatSelection() {
+    return syncingNativeChatSelection;
+  }
+  function getNativeSelectedChatRow(rows) {
+    return rows.find((row) => getChatRowActivator(row)?.getAttribute?.("aria-selected") === "true") || null;
+  }
+  function syncNativeChatSelection(targetRow) {
+    if (syncingNativeChatSelection || typeof KeyboardEvent !== "function") return false;
+    const chatList = targetRow?.closest?.(SELECTORS.chatListInSide);
+    if (!chatList?.isConnected) return false;
+    const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter(
+      (row) => row?.isConnected && row.querySelector?.(SELECTORS.cellFrame) && isRenderedElement(row)
+    );
+    const nativeRow = getNativeSelectedChatRow(rows);
+    const from = rows.indexOf(nativeRow);
+    const to = rows.indexOf(targetRow);
+    const steps = Math.abs(to - from);
+    if (from < 0 || to < 0 || steps === 0 || steps > NATIVE_CHAT_SELECTION_MAX_STEPS) return false;
+    const nativeActivator = getChatRowActivator(nativeRow);
+    const targetTitle = getChatRowTitle(targetRow);
+    if (!nativeActivator || !targetTitle) return false;
+    const key = to > from ? "ArrowDown" : "ArrowUp";
+    const keyCode = key === "ArrowDown" ? 40 : 38;
+    const activeRow = () => document.activeElement?.closest?.('div[role="row"]') || null;
+    syncingNativeChatSelection = true;
+    try {
+      if (activeRow() !== nativeRow && !focusItem(nativeActivator)) return false;
+      for (let step = 0; step < steps; step++) {
+        const before = activeRow();
+        document.activeElement?.dispatchEvent?.(new KeyboardEvent("keydown", {
+          key,
+          code: key,
+          keyCode,
+          which: keyCode,
+          bubbles: true,
+          cancelable: true
+        }));
+        if (!activeRow() || activeRow() === before) break;
+      }
+    } finally {
+      syncingNativeChatSelection = false;
+    }
+    const landed = activeRow();
+    return !!landed && getChatRowTitle(landed) === targetTitle && document.activeElement === getChatRowActivator(landed);
+  }
   function clearChatListShortcutArrowAnchor() {
     chatListShortcutArrowAnchor = null;
   }
@@ -3782,7 +3848,7 @@
   }
   function handleChatListShortcutArrowKeydown(event) {
     const anchor = chatListShortcutArrowAnchor;
-    if (!anchor || event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.getModifierState?.("AltGraph") || !["ArrowUp", "ArrowDown"].includes(event.key) || getActiveModal()) return false;
+    if (!anchor || syncingNativeChatSelection || event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.getModifierState?.("AltGraph") || !["ArrowUp", "ArrowDown"].includes(event.key) || getActiveModal()) return false;
     const target = event.target;
     const row = target?.closest?.('div[role="row"]');
     const chatList = row?.closest?.(SELECTORS.chatListInSide);
@@ -3878,6 +3944,8 @@
     }, 80);
   }
   function handleMessageGridKeydown(event) {
+    if (syncingNativeChatSelection) return false;
+    pointerFocusPending = false;
     if (!event.repeat) historyBoundaryKeySequence++;
     if (handleChatListShortcutArrowKeydown(event)) return true;
     if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return false;
@@ -4125,6 +4193,13 @@
         onSuccess?.(currentRow, currentTarget);
         return true;
       }
+      if (syncNativeChatSelection(currentRow)) {
+        const syncedRow = document.activeElement.closest('div[role="row"]');
+        rememberChatRowState(syncedRow);
+        clearChatListShortcutArrowAnchor();
+        onSuccess?.(syncedRow, document.activeElement);
+        return true;
+      }
       const chatList = currentRow.closest(SELECTORS.chatListInSide);
       if (chatList) normalizeChatListTabStops(chatList, currentRow);
       const focused = focusItem(currentTarget);
@@ -4159,14 +4234,25 @@
       }
     }
   }
+  var TABBABLE_SELECTOR = FOCUSABLE_SELECTOR.replace("[tabindex]", '[tabindex]:not([tabindex="-1"])');
+  var NATIVE_CONTROL_TAGS = /* @__PURE__ */ new Set(["a", "button", "input", "select", "textarea", "summary"]);
   function hasFocusableSelfOrDescendant(el) {
-    return !!el && (el.matches(FOCUSABLE_SELECTOR) || !!el.querySelector(FOCUSABLE_SELECTOR));
+    return !!el && (el.matches(TABBABLE_SELECTOR) || !!el.querySelector(TABBABLE_SELECTOR));
+  }
+  function demotePassiveChatRowTabStops(maskRoot) {
+    maskRoot.querySelectorAll('[tabindex="0"]').forEach((el) => {
+      if (el === maskRoot || el.getAttribute("tabindex") !== "0" || el.getAttribute("role")) return;
+      const tagName = String(el.localName || el.tagName || "").toLowerCase();
+      if (NATIVE_CONTROL_TAGS.has(tagName) || el.isContentEditable) return;
+      applyOwnedAttribute(el, "tabindex", "-1", OWNERS.chatStructure);
+    });
   }
   function hasUsefulNativeChatText(el) {
     const text = el && (el.getAttribute("aria-label") || el.getAttribute("title") || el.textContent || "");
     return !!normalizeChatLabelPart(text);
   }
   function applyChatRowDescendantMasks(row, maskRoot) {
+    demotePassiveChatRowTabStops(maskRoot);
     const desired = /* @__PURE__ */ new Set();
     maskRoot.querySelectorAll(CHAT_ROW_NATIVE_TEXT_SELECTOR).forEach((el) => {
       if (el === maskRoot) return;
@@ -4753,7 +4839,90 @@
     }
     return dialogs.at(-1) || null;
   }
-  function rememberFocusedRow(target, interactionType = "focus") {
+  function getChatListFocusScope() {
+    const chatList = document.querySelector(SELECTORS.chatListInSide);
+    if (!chatList) return null;
+    return chatList.closest?.(SELECTORS.chatListScroller) || chatList;
+  }
+  function resolveRememberedChatRow(rows) {
+    if (!lastFocusedChatTitle) return null;
+    if (rows.includes(lastFocusedChatRowNode) && getChatRowTitle(lastFocusedChatRowNode) === lastFocusedChatTitle) {
+      return lastFocusedChatRowNode;
+    }
+    return findChatRowByTitle(rows, lastFocusedChatTitle);
+  }
+  function handleChatListReentry(target, previous) {
+    const now = Date.now();
+    const targetRow = target.closest?.('div[role="row"]') || null;
+    if (pendingChatListReentry) {
+      if (now > pendingChatListReentry.until) {
+        pendingChatListReentry = null;
+      } else if (targetRow === pendingChatListReentry.row) {
+        pendingChatListReentry = null;
+        return false;
+      } else if (getChatListFocusScope()?.contains?.(target)) {
+        return true;
+      } else {
+        pendingChatListReentry = null;
+      }
+    }
+    const scope = getChatListFocusScope();
+    if (!scope?.contains?.(target) || targetRow || !isChatsTabActive()) return false;
+    if (previous && scope.contains?.(previous)) return false;
+    const row = resolveRememberedChatRow(getChatListRows());
+    if (!row) return false;
+    const pending = { row, until: now + CHAT_LIST_REENTRY_WINDOW_MS };
+    pendingChatListReentry = pending;
+    const isCurrent = () => pendingChatListReentry === pending;
+    setTimeout(() => {
+      if (!isCurrent()) return;
+      const active = document.activeElement;
+      if (!getChatListFocusScope()?.contains?.(active) || getActiveModal()) {
+        pendingChatListReentry = null;
+        return;
+      }
+      if (active?.closest?.('div[role="row"]') === row) {
+        pendingChatListReentry = null;
+        rememberChatRowState(row);
+        return;
+      }
+      if (row.isConnected && syncNativeChatSelection(row)) {
+        if (isCurrent()) pendingChatListReentry = null;
+        rememberChatRowState(document.activeElement.closest('div[role="row"]'));
+        clearChatListShortcutArrowAnchor();
+        return;
+      }
+      const target2 = row.isConnected ? getChatRowActivator(row) : null;
+      if (target2) {
+        applyChatRowNativeMask(row);
+        const chatList = row.closest?.(SELECTORS.chatListInSide);
+        if (chatList) normalizeChatListTabStops(chatList, row);
+        if (focusItem(target2)) {
+          if (isCurrent()) pendingChatListReentry = null;
+          rememberChatRowState(row);
+          armChatListShortcutArrowAnchor(row);
+          return;
+        }
+      }
+      const clear = () => {
+        if (isCurrent()) pendingChatListReentry = null;
+      };
+      if (!focusChatRow(row, clear, isCurrent, clear)) clear();
+    }, 0);
+    return true;
+  }
+  function clearPointerFocusPending() {
+    pointerFocusPending = false;
+  }
+  function rememberFocusedRow(target, interactionType = "focus", previous = null) {
+    if (interactionType === "pointer") {
+      pointerFocusPending = true;
+      pendingChatListReentry = null;
+    } else if (interactionType === "focus") {
+      const fromPointer = pointerFocusPending;
+      pointerFocusPending = false;
+      if (!fromPointer && target && handleChatListReentry(target, previous)) return;
+    }
     trackChatListShortcutArrowFocus(target, interactionType);
     if (interactionType === "focus" && !lastFocusedChatRowNode?.contains?.(target)) {
       lastFocusedChatTarget = null;
@@ -4810,6 +4979,7 @@
     };
   }
   function clearRememberedChatRow() {
+    pendingChatListReentry = null;
     lastFocusedChatTarget = null;
     lastFocusedChatContainer = null;
     lastFocusedChatRowNode = null;
@@ -4835,6 +5005,13 @@
   var DEFAULT_AUDIO_PROFILE = "clear";
   var DEFAULT_CALL_AUDIO_PROFILE = "clear";
   var VOICE_OUTPUT_BOOST_DB = 2;
+  var VOICE_LIMITER = Object.freeze({
+    threshold: -4.5,
+    knee: 0,
+    ratio: 20,
+    attack: 1e-3,
+    release: 0.08
+  });
   var CALL_CAPTURE_DEFAULTS = Object.freeze({
     sampleRate: 16e3,
     channelCount: 1,
@@ -4868,7 +5045,8 @@
       lowMidHz: 250,
       lowMidQ: 0.7,
       lowMidGainDb: 0,
-      presenceHz: 8e3,
+      // WhatsApp removes everything above about 8 kHz, so lift presence inside that band.
+      presenceHz: 3500,
       presenceQ: 0.7,
       presenceGainDb: 1.2,
       outputGainDb: 0,
@@ -4879,6 +5057,32 @@
         attack: 0.025,
         release: 0.2
       })
+    }),
+    // The loudest even voice: compression evens out loud and quiet words, makeup gain raises the
+    // whole message, and the limiter keeps peaks below clipping. Browser noise suppression stays off
+    // to keep the voice unprocessed; in a quiet room this is clearest, but room noise rises with the
+    // voice. Tuned on a live recording: without makeup gain, speech averaged -25 dBFS with peaks at
+    // -5.6 dBFS.
+    loud: Object.freeze({
+      id: "loud",
+      processing: true,
+      highPassHz: 90,
+      highPassQ: 0.707,
+      lowMidHz: 250,
+      lowMidQ: 0.9,
+      lowMidGainDb: -1.5,
+      presenceHz: 3e3,
+      presenceQ: 0.8,
+      presenceGainDb: 2.5,
+      outputGainDb: 0,
+      compressor: Object.freeze({
+        threshold: -30,
+        knee: 6,
+        ratio: 3,
+        attack: 4e-3,
+        release: 0.18
+      }),
+      makeupGainDb: 7
     }),
     "noise-filter": Object.freeze({
       id: "noise-filter",
@@ -5031,23 +5235,37 @@
     voiceCaptureArmedUntil = 0;
     return armed;
   }
+  var MIC_ICON_SELECTOR = ["mic", "mic-outlined", "mic-filled", "mic-refreshed"].flatMap((name) => [`[data-icon="${name}"]`, `[data-testid="${name}"]`]).join(", ");
+  var MIC_ICON_TITLE = /^(?:wds-)?ic-mic(?:-(?:outlined|filled|refreshed))?$/;
   function isVoiceMessageButton(target) {
     const button = target?.closest?.('button, [role="button"]');
     const footer = button?.closest?.("#main footer");
     if (!footer || button.disabled || button.getAttribute("aria-disabled") === "true" || !footer.querySelector('[contenteditable="true"][role="textbox"]')) return false;
-    return Boolean(button.querySelector('[data-icon="mic-outlined"], [data-testid="mic-outlined"]')) || Array.from(button.querySelectorAll("svg title")).some((title) => title.textContent?.trim() === "ic-mic");
+    return Boolean(button.querySelector(MIC_ICON_SELECTOR)) || Array.from(button.querySelectorAll("svg title")).some((title) => MIC_ICON_TITLE.test(title.textContent?.trim() || ""));
   }
+  var voiceCapturePressArmed = false;
   function handleVoiceCaptureActivation(event) {
+    if (event.type === "pointerup" || event.type === "pointercancel") {
+      const pressArmed = voiceCapturePressArmed;
+      voiceCapturePressArmed = false;
+      if (pressArmed && (event.type === "pointercancel" || !isVoiceMessageButton(event.target))) {
+        voiceCaptureArmedUntil = 0;
+      }
+      return;
+    }
     const nativeRecordingShortcut = event.type === "keydown" && event.code === "KeyR" && event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey;
-    if (nativeRecordingShortcut || event.type === "click" && isVoiceMessageButton(event.target)) {
-      armNextVoiceMessageCapture();
+    const pointerPress = (event.type === "pointerdown" || event.type === "mousedown") && (event.button ?? 0) === 0;
+    const keyPress = event.type === "keydown" && (event.key === "Enter" || event.key === " ") && !event.ctrlKey && !event.altKey && !event.metaKey;
+    if (nativeRecordingShortcut || (event.type === "click" || pointerPress || keyPress) && isVoiceMessageButton(event.target)) {
+      if (armNextVoiceMessageCapture() && pointerPress) voiceCapturePressArmed = true;
     }
   }
   function installVoiceCaptureArming() {
     const hostWindow = globalThis.window;
     if (armingListenersInstalled || typeof hostWindow?.addEventListener !== "function") return;
-    hostWindow.addEventListener("click", handleVoiceCaptureActivation, true);
-    hostWindow.addEventListener("keydown", handleVoiceCaptureActivation, true);
+    for (const type of ["pointerdown", "mousedown", "pointerup", "pointercancel", "click", "keydown"]) {
+      hostWindow.addEventListener(type, handleVoiceCaptureActivation, true);
+    }
     armingListenersInstalled = true;
   }
   function jsonSafe(value) {
@@ -5399,6 +5617,9 @@
     const inputProcessing = AUDIO_PROFILES[profileName]?.inputProcessing || {};
     const audio = { ...originalAudio };
     if (supported.channelCount) audio.channelCount = { ideal: 1 };
+    if (supported.echoCancellation && !Object.prototype.hasOwnProperty.call(originalAudio, "echoCancellation")) {
+      audio.echoCancellation = false;
+    }
     if (supported.noiseSuppression) audio.noiseSuppression = Boolean(inputProcessing.noiseSuppression);
     if (supported.autoGainControl) audio.autoGainControl = Boolean(inputProcessing.autoGainControl);
     if (supported.voiceIsolation) audio.voiceIsolation = Boolean(inputProcessing.voiceIsolation);
@@ -5497,9 +5718,12 @@
       const presence = context.createBiquadFilter();
       const compressor = profile.compressor && typeof context.createDynamicsCompressor === "function" ? context.createDynamicsCompressor() : null;
       const output = context.createGain();
+      const limiterSettings = isVoiceMessage ? VOICE_LIMITER : null;
+      const limiter = limiterSettings && typeof context.createDynamicsCompressor === "function" ? context.createDynamicsCompressor() : null;
       const destination = context.createMediaStreamDestination();
       nodes.push(source, mono, highPass, lowMid, presence, output, destination);
       if (compressor) nodes.push(compressor);
+      if (limiter) nodes.push(limiter);
       configureMonoNode(mono);
       configureMonoNode(destination);
       if (!profile.gainOnly) {
@@ -5516,6 +5740,13 @@
         presence.Q.value = profile.presenceQ;
         presence.gain.value = profile.presenceGainDb;
       }
+      if (limiter) {
+        limiter.threshold.value = limiterSettings.threshold;
+        limiter.knee.value = limiterSettings.knee;
+        limiter.ratio.value = limiterSettings.ratio;
+        limiter.attack.value = limiterSettings.attack;
+        limiter.release.value = limiterSettings.release;
+      }
       if (compressor) {
         compressor.threshold.value = profile.compressor.threshold;
         compressor.knee.value = profile.compressor.knee;
@@ -5525,7 +5756,7 @@
       }
       const eqBoostDb = Math.max(0, profile.lowMidGainDb || 0) + Math.max(0, profile.presenceGainDb || 0);
       const baseOutputGainDb = isVoiceMessage && !profile.gainOnly ? Math.min(profile.outputGainDb, -eqBoostDb - 1) : profile.outputGainDb;
-      const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0);
+      const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0) + (profile.makeupGainDb || 0);
       output.gain.value = dbToGain(outputGainDb);
       source.connect(mono);
       if (profile.gainOnly) mono.connect(output);
@@ -5536,7 +5767,12 @@
         presence.connect(compressor || output);
         if (compressor) compressor.connect(output);
       }
-      output.connect(destination);
+      if (limiter) {
+        output.connect(limiter);
+        limiter.connect(destination);
+      } else {
+        output.connect(destination);
+      }
       if (context.state === "suspended" && typeof context.resume === "function") {
         let resumeTimer;
         try {
@@ -5640,8 +5876,10 @@
           presenceGainDb: profile.presenceGainDb,
           outputGainDb,
           outputBoostDb: isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0,
+          makeupGainDb: profile.makeupGainDb || 0,
           configuredOutputGainDb: profile.outputGainDb,
           compressor: compressor ? jsonSafe(profile.compressor) : null,
+          limiter: limiter ? jsonSafe(limiterSettings) : null,
           inputTracks: (inputStream.getAudioTracks?.() || []).map(getTrackInfo),
           outputTracks: outputAudioTracks.map(getTrackInfo)
         }
@@ -6078,12 +6316,17 @@
     const textNode = queryRendered(root, SELECTORS.statusText);
     const videoNode = queryRendered(root, SELECTORS.statusVideo);
     const imageNode = queryRendered(root, SELECTORS.statusImage);
-    const voiceNode = videoNode || imageNode || textNode ? null : query(root, SELECTORS.statusVoice);
     const audioNode = query(root, SELECTORS.statusAudio);
+    const voiceNode = videoNode || imageNode || textNode ? null : query(root, SELECTORS.statusVoice) || (isVoiceStatusButton(audioNode?.closest?.("button")) ? audioNode : null);
     const mediaNode = videoNode || imageNode || voiceNode || textNode;
     const contentButton = mediaNode?.closest?.("button") || null;
     if (!connected(contentButton) || !isRenderedElement(contentButton)) return null;
     return { root, marker, textNode, videoNode, voiceNode, audioNode, imageNode, mediaNode, contentButton };
+  }
+  var VOICE_ICON_RE = /keyboard-voice|ptt|ic-mic/iu;
+  function isVoiceStatusButton(button) {
+    if (!button) return false;
+    return !!query(button, '[role="slider"]') || queryAll(button, "svg title").some((title) => VOICE_ICON_RE.test(readText(title)));
   }
   function getActiveViewer() {
     if (typeof document === "undefined") return null;
@@ -9621,7 +9864,8 @@
       ["navStatus", "status"],
       ["navCommunities", "communities"],
       ["navChannels", "channels"],
-      ["navMetaAI", "metaAi"]
+      ["navMetaAI", "metaAi"],
+      ["navCalls", "calls"]
     ];
     const activeTab = tabs.find(([selectorKey]) => hasActiveState(getNavButton(selectorKey)));
     return activeTab ? activeTab[1] : "";
@@ -10100,6 +10344,7 @@
     return activateMediaPlayerClose(closeButton);
   }
   function handleShortcuts(e) {
+    if (isSyncingNativeChatSelection()) return;
     if (e.isComposing || e.defaultPrevented) {
       lastTPressTime = 0;
       return;
@@ -11007,6 +11252,198 @@
     }
   }
 
+  // src/native-labels.js
+  var INTERNAL_FILTER_LABEL = "chat-list-filters";
+  var WORDMARK_TITLE_RE = /^wa-wordmark$/i;
+  var HEADING_SELECTOR = 'h1, h2, h3, [role="heading"]';
+  var WORDMARK_SCOPE_SELECTOR = '[data-testid="chatlist-header"], #side';
+  function ownsLabel(el) {
+    const state = ownedAttributes.get(el)?.get("aria-label");
+    return state?.owner === OWNERS.nativeLabel && el.getAttribute("aria-label") === state.appliedValue ? state : null;
+  }
+  function relabel(el, label, isInternalName) {
+    if (!el) return;
+    const owned = ownsLabel(el);
+    if (owned || isInternalName(el.getAttribute("aria-label"))) {
+      applyOwnedAttribute(el, "aria-label", label, OWNERS.nativeLabel);
+      return;
+    }
+    if (ownedAttributes.get(el)?.get("aria-label")?.owner === OWNERS.nativeLabel) {
+      dropOwnedAttribute(el, "aria-label");
+    }
+  }
+  function findWordmarkHeading(doc) {
+    const scopes = Array.from(doc.querySelectorAll?.(WORDMARK_SCOPE_SELECTOR) || []);
+    const headings = scopes.flatMap((scope) => Array.from(scope.querySelectorAll?.(HEADING_SELECTOR) || []));
+    return headings.find(
+      (heading) => Array.from(heading.querySelectorAll?.("svg title") || []).some(
+        (title) => WORDMARK_TITLE_RE.test(String(title.textContent || "").trim())
+      )
+    ) || null;
+  }
+  var MAIN_SIDE_SELECTOR = '[data-testid="wa-web-main-screen"] #side';
+  function refreshNativeLabels(doc = document) {
+    const side = doc.querySelector?.(MAIN_SIDE_SELECTOR) || doc.querySelector?.("#side");
+    if (side) {
+      relabel(
+        side.querySelector?.('[role="tablist"]'),
+        t("chatFilters"),
+        (value) => value === INTERNAL_FILTER_LABEL
+      );
+    }
+    relabel(findWordmarkHeading(doc), "WhatsApp", (value) => !value);
+  }
+
+  // src/panel-accessibility.js
+  var MAIN_SIDE_SELECTOR2 = '[data-testid="wa-web-main-screen"] #side';
+  var CALLS_GRID_SELECTOR = '[data-testid="calls-drawer"] [role="grid"]';
+  var CHAT_LIST_LABELS = /* @__PURE__ */ new Set(["Chat list", "Daftar chat"]);
+  var COMMUNITY_LABEL_RE = /^(?:Community|Komunitas):\s*(.+)$/u;
+  var ANNOUNCEMENT_ICON_RE = /campaign-megaphone/u;
+  var STATUS_DRAWER_SELECTOR = '[data-testid="status-list-drawer"]';
+  var STATUS_ROW_SELECTOR = '[data-testid="status-row-cell"]';
+  var panelOwned = /* @__PURE__ */ new Set();
+  function ownedBy(el, name, owner) {
+    const state = ownedAttributes.get(el)?.get(name);
+    return state?.owner === owner && el.getAttribute(name) === state.appliedValue ? state : null;
+  }
+  function hostValue(el, name, owner) {
+    const state = ownedBy(el, name, owner);
+    return state ? state.originalValue : el.getAttribute(name);
+  }
+  function apply(el, name, value, desired) {
+    desired.add(el);
+    panelOwned.add(el);
+    applyOwnedAttribute(el, name, value, OWNERS.panelSemantics);
+  }
+  function releaseUndesired(desired) {
+    for (const el of [...panelOwned]) {
+      if (desired.has(el)) continue;
+      panelOwned.delete(el);
+      const attributes = ownedAttributes.get(el);
+      if (!attributes) continue;
+      for (const [name, state] of [...attributes]) {
+        if (state.owner === OWNERS.panelSemantics) releaseOwnedAttribute(el, name, OWNERS.panelSemantics);
+      }
+    }
+  }
+  function isRendered(el) {
+    return !!el?.isConnected && (typeof el.getClientRects !== "function" || el.getClientRects().length > 0);
+  }
+  function getLayoutBehind(overlay, mainSide) {
+    let layout = mainSide;
+    while (layout?.parentElement && !layout.parentElement.contains(overlay)) layout = layout.parentElement;
+    return layout && !layout.contains(overlay) ? layout : null;
+  }
+  function refreshCoveredPanels(doc, desired) {
+    const mainSide = doc.querySelector(MAIN_SIDE_SELECTOR2);
+    if (!mainSide) return;
+    const viewer = doc.querySelector(SELECTORS.statusPlayerRoot);
+    const layout = isRendered(viewer) ? getLayoutBehind(viewer, mainSide) : null;
+    if (layout) {
+      apply(layout, "aria-hidden", "true", desired);
+      return;
+    }
+    if (isOtherTabActive()) apply(mainSide, "aria-hidden", "true", desired);
+  }
+  function refreshCallsList(doc, desired) {
+    for (const grid of doc.querySelectorAll(CALLS_GRID_SELECTOR)) {
+      const label = hostValue(grid, "aria-label", OWNERS.panelSemantics);
+      if (!CHAT_LIST_LABELS.has(label)) continue;
+      apply(grid, "aria-label", t("callsList"), desired);
+      if (grid.hasAttribute("aria-rowcount") || ownedBy(grid, "aria-rowcount", OWNERS.panelSemantics)) {
+        apply(grid, "aria-rowcount", null, desired);
+      }
+    }
+  }
+  function getOwnText(item) {
+    const walker = item.ownerDocument.createTreeWalker(item, 4);
+    const parts = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.parentElement?.closest?.('button, [role="button"], [aria-hidden="true"], [hidden]')) continue;
+      const text = String(node.nodeValue || "").trim();
+      if (text) parts.push(text);
+    }
+    return parts.join(" ").replace(/\s+/gu, " ").trim();
+  }
+  function getFirstText(item) {
+    const walker = item.ownerDocument.createTreeWalker(item, 4);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = String(node.nodeValue || "").trim();
+      if (text && !node.parentElement?.closest?.("button")) return text;
+    }
+    return "";
+  }
+  function refreshFollowButtons(doc, desired) {
+    for (const item of doc.querySelectorAll('[data-testid="newsletter-recommended-item"]')) {
+      const name = getFirstText(item);
+      for (const button of item.querySelectorAll("button")) {
+        if (hostValue(button, "aria-label", OWNERS.panelSemantics)) continue;
+        const text = String(button.textContent || "").trim();
+        if (!name || !text || text === name) continue;
+        apply(button, "aria-label", `${text} ${name}`, desired);
+      }
+    }
+  }
+  function isAnnouncementButton(button) {
+    return Array.from(button.querySelectorAll("svg title, [data-icon]")).some(
+      (icon) => ANNOUNCEMENT_ICON_RE.test(icon.textContent || icon.getAttribute("data-icon") || "")
+    );
+  }
+  function refreshAnnouncementButtons(doc, desired) {
+    const drawer = doc.querySelector(SELECTORS.communityDrawer);
+    if (!drawer) return;
+    let community = "";
+    for (const button of drawer.querySelectorAll('button, [role="button"]')) {
+      const label = hostValue(button, "aria-label", OWNERS.panelSemantics) || "";
+      const communityMatch = label.match(COMMUNITY_LABEL_RE);
+      if (communityMatch) {
+        community = communityMatch[1].trim();
+        continue;
+      }
+      if (community && label && isAnnouncementButton(button)) {
+        apply(button, "aria-label", `${label}, ${community}`, desired);
+      }
+    }
+  }
+  function refreshStatusControls(doc, desired) {
+    for (const badge of doc.querySelectorAll('[data-testid="status-plus-badge"]')) {
+      if (hostValue(badge, "aria-label", OWNERS.panelSemantics)) continue;
+      apply(badge, "aria-label", t("addStatus"), desired);
+    }
+    for (const spinner of doc.querySelectorAll('[data-testid="loading-spinner"]')) {
+      const button = spinner.closest('button, [role="button"]');
+      if (!button || hostValue(button, "aria-label", OWNERS.panelSemantics) || String(button.textContent || "").trim()) continue;
+      apply(button, "aria-label", t("loadingMedia"), desired);
+    }
+  }
+  function refreshStatusSections(doc, desired) {
+    const drawer = doc.querySelector(STATUS_DRAWER_SELECTOR);
+    if (!drawer) return;
+    let section = "";
+    const items = Array.from(drawer.querySelectorAll('[role="listitem"], [role="group"]')).filter((item) => item.getAttribute("role") === "listitem" || ownedBy(item, "role", OWNERS.panelSemantics));
+    for (const item of items) {
+      if (!item.querySelector(STATUS_ROW_SELECTOR)) {
+        section = getOwnText(item);
+        continue;
+      }
+      if (!section) continue;
+      apply(item, "role", "group", desired);
+      apply(item, "aria-label", section, desired);
+      section = "";
+    }
+  }
+  function refreshPanelAccessibility(doc = document) {
+    const desired = /* @__PURE__ */ new Set();
+    refreshCoveredPanels(doc, desired);
+    refreshCallsList(doc, desired);
+    refreshFollowButtons(doc, desired);
+    refreshAnnouncementButtons(doc, desired);
+    refreshStatusControls(doc, desired);
+    refreshStatusSections(doc, desired);
+    releaseUndesired(desired);
+  }
+
   // src/message-menu-accessibility.js
   var OWNER = "message-menu-fit";
   var MESSAGE = '[data-testid^="conv-msg-"]';
@@ -11245,6 +11682,7 @@
     ["natural", "audioProfileNatural"],
     ["clear", "audioProfileClear"],
     ["clear-plus", "audioProfileClearPlus"],
+    ["loud", "audioProfileLoud"],
     ["noise-filter", "audioProfileNoiseFilter"]
   ];
   var CALL_AUDIO_PROFILE_MENU_OPTIONS = [
@@ -12214,6 +12652,8 @@
         else refreshSenderDeviceLabels();
         refreshStickerMessageNames();
         refreshStatusAccessibility({ retryControls: true });
+        refreshNativeLabels();
+        refreshPanelAccessibility();
       }
     } else if (action === "privacy") {
       saved = togglePrivacyWithQueueReset(false);
@@ -12416,7 +12856,7 @@
   function createFormattingToolbarController(deps = {}) {
     const doc = deps.document || document;
     const win = deps.window || window;
-    const apply = deps.applyOwnedAttribute || applyOwnedAttribute;
+    const apply2 = deps.applyOwnedAttribute || applyOwnedAttribute;
     const release = deps.releaseOwnedAttribute || releaseOwnedAttribute;
     const visible2 = deps.isRenderedElement || isRenderedElement;
     const modal = deps.getActiveModal || getActiveModal;
@@ -12523,7 +12963,7 @@
       const helpText = translate("formattingToolbarHelp");
       if (help.textContent !== helpText) help.textContent = helpText;
       const original = button.getAttribute("aria-describedby") || "";
-      apply(button, "aria-describedby", `${original} ${HELP_ID}`.trim(), OWNER2);
+      apply2(button, "aria-describedby", `${original} ${HELP_ID}`.trim(), OWNER2);
       describedButton = button;
     }
     function forget(popup, buttons) {
@@ -12532,17 +12972,17 @@
       tracked.delete(popup);
     }
     function enhance({ popup, buttons }) {
-      apply(popup, "role", "toolbar", OWNER2);
-      apply(popup, "aria-label", translate("formattingToolbarName"), OWNER2);
-      apply(popup, "aria-orientation", "horizontal", OWNER2);
+      apply2(popup, "role", "toolbar", OWNER2);
+      apply2(popup, "aria-label", translate("formattingToolbarName"), OWNER2);
+      apply2(popup, "aria-orientation", "horizontal", OWNER2);
       const enabled = (button) => !button.disabled && button.getAttribute("aria-disabled") !== "true";
       const active = buttons.includes(doc.activeElement) && enabled(doc.activeElement) ? doc.activeElement : buttons.find(enabled);
-      for (const button of buttons) apply(button, "tabindex", button === active ? "0" : "-1", OWNER2);
+      for (const button of buttons) apply2(button, "tabindex", button === active ? "0" : "-1", OWNER2);
       tracked.set(popup, buttons);
     }
     function suppress(saved) {
       dismissed = saved;
-      for (const popup of tracked.keys()) apply(popup, "hidden", "", OWNER2);
+      for (const popup of tracked.keys()) apply2(popup, "hidden", "", OWNER2);
     }
     function unsuppress() {
       dismissed = null;
@@ -12597,7 +13037,7 @@
       }
       for (const item of found) {
         enhance(item);
-        if (dismissed) apply(item.popup, "hidden", "", OWNER2);
+        if (dismissed) apply2(item.popup, "hidden", "", OWNER2);
       }
       if (help && help.textContent !== translate("formattingToolbarHelp")) {
         help.textContent = translate("formattingToolbarHelp");
@@ -12617,7 +13057,7 @@
     }
     function move(button) {
       clearDescription();
-      for (const item of session2.buttons) apply(item, "tabindex", item === button ? "0" : "-1", OWNER2);
+      for (const item of session2.buttons) apply2(item, "tabindex", item === button ? "0" : "-1", OWNER2);
       session2.lastButton = button;
       busy = true;
       button.focus({ preventScroll: true });
@@ -13044,7 +13484,7 @@
     const translate = deps.t || t;
     const queue = deps.queueDownloadAnnouncement || queueDownloadAnnouncement;
     const discard = deps.discardPassiveAnnouncements || discardPassiveAnnouncements;
-    const apply = deps.applyOwnedAttribute || applyOwnedAttribute;
+    const apply2 = deps.applyOwnedAttribute || applyOwnedAttribute;
     const release = deps.releaseOwnedAttribute || releaseOwnedAttribute;
     const contextKey = deps.getChatContextKey || (() => getChatContextKey(doc.querySelector("#main")));
     const now = deps.now || Date.now;
@@ -13129,15 +13569,15 @@
           records.set(svg, record);
         }
         record.percent = percent;
-        apply(svg, "role", "presentation", OWNER3);
-        apply(svg, "aria-hidden", "true", OWNER3);
-        apply(svg, "aria-live", "off", OWNER3);
-        apply(record.proxy, "role", "progressbar", OWNER3);
-        apply(record.proxy, "aria-live", "off", OWNER3);
-        apply(record.proxy, "aria-label", translate("downloadProgressLabel", { number: record.id }), OWNER3);
-        apply(record.proxy, "aria-valuemin", "0", OWNER3);
-        apply(record.proxy, "aria-valuemax", "100", OWNER3);
-        apply(record.proxy, "aria-valuenow", String(percent), OWNER3);
+        apply2(svg, "role", "presentation", OWNER3);
+        apply2(svg, "aria-hidden", "true", OWNER3);
+        apply2(svg, "aria-live", "off", OWNER3);
+        apply2(record.proxy, "role", "progressbar", OWNER3);
+        apply2(record.proxy, "aria-live", "off", OWNER3);
+        apply2(record.proxy, "aria-label", translate("downloadProgressLabel", { number: record.id }), OWNER3);
+        apply2(record.proxy, "aria-valuemin", "0", OWNER3);
+        apply2(record.proxy, "aria-valuemax", "100", OWNER3);
+        apply2(record.proxy, "aria-valuenow", String(percent), OWNER3);
         const changed = record.lastPercent < 0 || Math.abs(percent - record.lastPercent) >= 10 || percent === 100 && record.lastPercent !== 100;
         if (changed && now() - record.lastTime >= 3e3) {
           record.lastPercent = percent;
@@ -13542,6 +13982,8 @@
       }
       if (statusRelevant) scheduleStatusAccessibilitySync();
       if (unreadTotalRelevant) refreshUnreadChatTotal();
+      refreshNativeLabels();
+      refreshPanelAccessibility();
       pruneDetachedOwnedElements();
       if (pulseRelevant) scheduleChatPulseSync();
     });
@@ -13558,6 +14000,8 @@
       });
       cleanElementAttributes(document.body);
       refreshUnreadChatTotal();
+      refreshNativeLabels();
+      refreshPanelAccessibility();
       const chatList = fixAccessibilityRoles(document.body);
       if (chatList) normalizeChatListTabStops(chatList);
     } else {
@@ -13581,7 +14025,8 @@
       window.addEventListener("keydown", handleMessageGridKeydown, true);
       window.addEventListener("keyup", handleMessageReadMoreKeyup, true);
       document.addEventListener("focusin", (event) => {
-        rememberFocusedRow(event.target, "focus");
+        if (isSyncingNativeChatSelection()) return;
+        rememberFocusedRow(event.target, "focus", event.relatedTarget);
         scheduleStatusAccessibilitySync();
       }, true);
       document.addEventListener("pointerdown", (event) => {

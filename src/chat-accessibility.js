@@ -52,6 +52,12 @@ let lastFocusedChatContainer = null;
 let lastFocusedChatTitle = '';
 let lastFocusedChatIdentity = '';
 let lastFocusedChatRowIndex = -1;
+// WhatsApp forgets the focused chat when focus leaves the list. Tab or Shift+Tab back in
+// focuses the list container and then the first chat; this holds the chat to return to.
+let pendingChatListReentry = null;
+// A click moves focus itself; the focus that follows it is never treated as Tab re-entry.
+let pointerFocusPending = false;
+const CHAT_LIST_REENTRY_WINDOW_MS = 1000;
 let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
 let lastFocusedMessageTarget = null;
@@ -84,10 +90,15 @@ function isNavbarActive(selectorKey) {
   return hasActiveState(getNavButton(selectorKey));
 }
 
+// True when the navigation bar shows a tab other than Chats. Unlike isChatsTabActive, an empty
+// chat list (a search or filter with no results) does not count as leaving the Chats tab.
+export function isOtherTabActive() {
+  return isNavbarActive('navStatus') || isNavbarActive('navCommunities') || isNavbarActive('navChannels') ||
+    isNavbarActive('navMetaAI') || isNavbarActive('navCalls');
+}
+
 export function isChatsTabActive() {
-  if (isNavbarActive('navStatus') || isNavbarActive('navCommunities') || isNavbarActive('navChannels') || isNavbarActive('navMetaAI')) {
-    return false;
-  }
+  if (isOtherTabActive()) return false;
 
   const side = document.querySelector(SELECTORS.side);
   if (!side) return false;
@@ -1092,6 +1103,60 @@ export function handleVoiceMessagePlaybackKeydown(event) {
 }
 
 let chatListShortcutArrowAnchor = null;
+// True while the script replays WhatsApp's own arrow keys; its handlers must not intercept them.
+let syncingNativeChatSelection = false;
+const NATIVE_CHAT_SELECTION_MAX_STEPS = 60;
+
+// The script's own key and focus handlers ignore the replayed arrows and the focus moves they cause.
+export function isSyncingNativeChatSelection() {
+  return syncingNativeChatSelection;
+}
+
+function getNativeSelectedChatRow(rows) {
+  return rows.find(row => getChatRowActivator(row)?.getAttribute?.('aria-selected') === 'true') || null;
+}
+
+// WhatsApp remembers its own focused chat and only moves that memory with its own arrow keys.
+// After the script focuses a chat directly, the next arrow continues from WhatsApp's chat
+// instead: Down after Tab back into the list jumps to the second chat, and Right no longer
+// reaches "View status". Replaying WhatsApp's arrows from its chat to the target keeps both
+// in step. Returns false when the replay is not possible; callers then focus the chat directly.
+function syncNativeChatSelection(targetRow) {
+  if (syncingNativeChatSelection || typeof KeyboardEvent !== 'function') return false;
+  const chatList = targetRow?.closest?.(SELECTORS.chatListInSide);
+  if (!chatList?.isConnected) return false;
+  const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter(row =>
+    row?.isConnected && row.querySelector?.(SELECTORS.cellFrame) && isRenderedElement(row)
+  );
+  const nativeRow = getNativeSelectedChatRow(rows);
+  const from = rows.indexOf(nativeRow);
+  const to = rows.indexOf(targetRow);
+  const steps = Math.abs(to - from);
+  if (from < 0 || to < 0 || steps === 0 || steps > NATIVE_CHAT_SELECTION_MAX_STEPS) return false;
+  const nativeActivator = getChatRowActivator(nativeRow);
+  const targetTitle = getChatRowTitle(targetRow);
+  if (!nativeActivator || !targetTitle) return false;
+
+  const key = to > from ? 'ArrowDown' : 'ArrowUp';
+  const keyCode = key === 'ArrowDown' ? 40 : 38;
+  const activeRow = () => document.activeElement?.closest?.('div[role="row"]') || null;
+  syncingNativeChatSelection = true;
+  try {
+    if (activeRow() !== nativeRow && !focusItem(nativeActivator)) return false;
+    for (let step = 0; step < steps; step++) {
+      const before = activeRow();
+      document.activeElement?.dispatchEvent?.(new KeyboardEvent('keydown', {
+        key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true
+      }));
+      if (!activeRow() || activeRow() === before) break;
+    }
+  } finally {
+    syncingNativeChatSelection = false;
+  }
+  const landed = activeRow();
+  return !!landed && getChatRowTitle(landed) === targetTitle &&
+    document.activeElement === getChatRowActivator(landed);
+}
 
 function clearChatListShortcutArrowAnchor() {
   chatListShortcutArrowAnchor = null;
@@ -1121,7 +1186,7 @@ function trackChatListShortcutArrowFocus(target, interactionType) {
 
 function handleChatListShortcutArrowKeydown(event) {
   const anchor = chatListShortcutArrowAnchor;
-  if (!anchor || event.defaultPrevented || event.isComposing ||
+  if (!anchor || syncingNativeChatSelection || event.defaultPrevented || event.isComposing ||
     event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
     event.getModifierState?.('AltGraph') ||
     !['ArrowUp', 'ArrowDown'].includes(event.key) || getActiveModal()) return false;
@@ -1261,6 +1326,10 @@ function assistHistoryBoundary(event) {
 }
 
 export function handleMessageGridKeydown(event) {
+  // Replayed WhatsApp arrows are not the user's keys.
+  if (syncingNativeChatSelection) return false;
+  // A key press means the next focus comes from the keyboard, even if a click moved no focus.
+  pointerFocusPending = false;
   if (!event.repeat) historyBoundaryKeySequence++;
   if (handleChatListShortcutArrowKeydown(event)) return true;
   if (event.defaultPrevented || event.isComposing ||
@@ -1554,6 +1623,14 @@ export function focusChatRow(
       onSuccess?.(currentRow, currentTarget);
       return true;
     }
+    if (syncNativeChatSelection(currentRow)) {
+      const syncedRow = document.activeElement.closest('div[role="row"]');
+      rememberChatRowState(syncedRow);
+      // WhatsApp's own arrows now continue from this chat.
+      clearChatListShortcutArrowAnchor();
+      onSuccess?.(syncedRow, document.activeElement);
+      return true;
+    }
     const chatList = currentRow.closest(SELECTORS.chatListInSide);
     if (chatList) normalizeChatListTabStops(chatList, currentRow);
     const focused = focusItem(currentTarget);
@@ -1594,8 +1671,24 @@ function restoreChatRowNativeMasksOutsideChatList() {
   }
 }
 
+// WhatsApp gives emoji images tabindex="-1". They are not tab stops, so they must not keep
+// a chat preview visible next to the row label.
+const TABBABLE_SELECTOR = FOCUSABLE_SELECTOR.replace('[tabindex]', '[tabindex]:not([tabindex="-1"])');
+const NATIVE_CONTROL_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary']);
+
 function hasFocusableSelfOrDescendant(el) {
-  return !!el && (el.matches(FOCUSABLE_SELECTOR) || !!el.querySelector(FOCUSABLE_SELECTOR));
+  return !!el && (el.matches(TABBABLE_SELECTOR) || !!el.querySelector(TABBABLE_SELECTOR));
+}
+
+// WhatsApp makes plain text inside some previews a tab stop, such as the phone number in
+// "+62 ... joined using this group's invite link". The row is the only tab stop for its text.
+function demotePassiveChatRowTabStops(maskRoot) {
+  maskRoot.querySelectorAll('[tabindex="0"]').forEach(el => {
+    if (el === maskRoot || el.getAttribute('tabindex') !== '0' || el.getAttribute('role')) return;
+    const tagName = String(el.localName || el.tagName || '').toLowerCase();
+    if (NATIVE_CONTROL_TAGS.has(tagName) || el.isContentEditable) return;
+    applyOwnedAttribute(el, 'tabindex', '-1', OWNERS.chatStructure);
+  });
 }
 
 function hasUsefulNativeChatText(el) {
@@ -1604,6 +1697,7 @@ function hasUsefulNativeChatText(el) {
 }
 
 export function applyChatRowDescendantMasks(row, maskRoot) {
+  demotePassiveChatRowTabStops(maskRoot);
   const desired = new Set();
   maskRoot.querySelectorAll(CHAT_ROW_NATIVE_TEXT_SELECTOR).forEach(el => {
     if (el === maskRoot) return;
@@ -2336,7 +2430,101 @@ export function getActiveModal(preferredTarget = document.activeElement) {
   return dialogs.at(-1) || null;
 }
 
-export function rememberFocusedRow(target, interactionType = 'focus') {
+function getChatListFocusScope() {
+  const chatList = document.querySelector(SELECTORS.chatListInSide);
+  if (!chatList) return null;
+  return chatList.closest?.(SELECTORS.chatListScroller) || chatList;
+}
+
+function resolveRememberedChatRow(rows) {
+  if (!lastFocusedChatTitle) return null;
+  if (rows.includes(lastFocusedChatRowNode) &&
+    getChatRowTitle(lastFocusedChatRowNode) === lastFocusedChatTitle) {
+    return lastFocusedChatRowNode;
+  }
+  return findChatRowByTitle(rows, lastFocusedChatTitle);
+}
+
+// True while WhatsApp moves focus to its own first chat after Tab or Shift+Tab re-entered
+// the list; that focus must not replace the remembered chat.
+function handleChatListReentry(target, previous) {
+  const now = Date.now();
+  const targetRow = target.closest?.('div[role="row"]') || null;
+  if (pendingChatListReentry) {
+    if (now > pendingChatListReentry.until) {
+      pendingChatListReentry = null;
+    } else if (targetRow === pendingChatListReentry.row) {
+      pendingChatListReentry = null;
+      return false;
+    } else if (getChatListFocusScope()?.contains?.(target)) {
+      return true;
+    } else {
+      pendingChatListReentry = null;
+    }
+  }
+
+  const scope = getChatListFocusScope();
+  if (!scope?.contains?.(target) || targetRow || !isChatsTabActive()) return false;
+  if (previous && scope.contains?.(previous)) return false;
+  const row = resolveRememberedChatRow(getChatListRows());
+  if (!row) return false;
+
+  const pending = { row, until: now + CHAT_LIST_REENTRY_WINDOW_MS };
+  pendingChatListReentry = pending;
+  const isCurrent = () => pendingChatListReentry === pending;
+  // WhatsApp moves focus to its first chat in the same task, so wait for that task to end.
+  // Moving on right away keeps NVDA from reading the first chat before the remembered one.
+  setTimeout(() => {
+    if (!isCurrent()) return;
+    const active = document.activeElement;
+    if (!getChatListFocusScope()?.contains?.(active) || getActiveModal()) {
+      pendingChatListReentry = null;
+      return;
+    }
+    if (active?.closest?.('div[role="row"]') === row) {
+      pendingChatListReentry = null;
+      rememberChatRowState(row);
+      return;
+    }
+    if (row.isConnected && syncNativeChatSelection(row)) {
+      if (isCurrent()) pendingChatListReentry = null;
+      rememberChatRowState(document.activeElement.closest('div[role="row"]'));
+      clearChatListShortcutArrowAnchor();
+      return;
+    }
+    const target = row.isConnected ? getChatRowActivator(row) : null;
+    if (target) {
+      applyChatRowNativeMask(row);
+      const chatList = row.closest?.(SELECTORS.chatListInSide);
+      if (chatList) normalizeChatListTabStops(chatList, row);
+      if (focusItem(target)) {
+        if (isCurrent()) pendingChatListReentry = null;
+        rememberChatRowState(row);
+        armChatListShortcutArrowAnchor(row);
+        return;
+      }
+    }
+    const clear = () => {
+      if (isCurrent()) pendingChatListReentry = null;
+    };
+    if (!focusChatRow(row, clear, isCurrent, clear)) clear();
+  }, 0);
+  return true;
+}
+
+export function clearPointerFocusPending() {
+  pointerFocusPending = false;
+}
+
+export function rememberFocusedRow(target, interactionType = 'focus', previous = null) {
+  if (interactionType === 'pointer') {
+    pointerFocusPending = true;
+    pendingChatListReentry = null;
+  } else if (interactionType === 'focus') {
+    const fromPointer = pointerFocusPending;
+    pointerFocusPending = false;
+    if (!fromPointer && target && handleChatListReentry(target, previous)) return;
+  }
   trackChatListShortcutArrowFocus(target, interactionType);
   if (interactionType === 'focus' && !lastFocusedChatRowNode?.contains?.(target)) {
     lastFocusedChatTarget = null;
@@ -2393,6 +2581,7 @@ export function getRememberedFocus() {
 }
 
 export function clearRememberedChatRow() {
+  pendingChatListReentry = null;
   lastFocusedChatTarget = null;
   lastFocusedChatContainer = null;
   lastFocusedChatRowNode = null;

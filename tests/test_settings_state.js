@@ -49,7 +49,7 @@ assert.equal(
   'an explicitly saved preference must be retained'
 );
 
-// Existing preferences override all newly changed state-module defaults.
+// Saved preferences override the state module's defaults.
 const savedPreferences = new Map([
   ['wa-plus-automatic-reading', 'false'],
   ['wa-plus-status-reading-cleanup', 'false'],

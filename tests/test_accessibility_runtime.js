@@ -42,7 +42,7 @@ const source = originalSource.replace('function handleMessageReaderShortcut(even
         handleReaderEscapeKeydown, installReaderEscapeHandler,
         refreshMessageMentionNames,
         focusChatRow, getPreferredChatRow, getChatListRows, getRememberedFocus,
-        clearRememberedChatRow,
+        clearRememberedChatRow, clearPointerFocusPending,
         normalizeChatListTabStops,
         getActiveModal,
         focusLastMessageShortcut, jumpToUnreadShortcut, activateNav, cancelPendingFocusRequests,
@@ -2695,7 +2695,7 @@ delete sandbox.window.getComputedStyle;
 readerBody.removeChild(blockImageLink);
 
 // WhatsApp splits authored lines into block spans, including spans whose only
-// content is a newline (as in chat-reply.txt). Layout must not add or erase lines.
+// content is a newline. Layout must not add or erase lines.
 const spacingBody = new Element('span');
 spacingBody.setAttribute('data-testid', 'selectable-text');
 spacingBody.closestHandler = readerBody.closestHandler;
@@ -3823,8 +3823,8 @@ selfChatOuterCell.setAttribute('role', 'gridcell');
 selfChatOuterCell.setAttribute('tabindex', '0');
 selfChatActivator.setAttribute('tabindex', '0');
 selfChatActivator.setAttribute('aria-selected', 'true');
-selfChatTitle.setAttribute('title', 'Muhammad Gagah');
-selfChatTitleContainer.textContent = 'Muhammad Gagah (You)';
+selfChatTitle.setAttribute('title', 'Test User');
+selfChatTitleContainer.textContent = 'Test User (You)';
 selfChatYouLabel.nodeType = 1;
 selfChatYouLabel.tagName = 'SPAN';
 selfChatYouLabel.textContent = '(You)';
@@ -3878,7 +3878,7 @@ assert.equal(selfChatActivator.getAttribute('tabindex'), '0');
 assert.equal(selfChatActivator.getAttribute('aria-selected'), 'true');
 assert.equal(
     selfChatActivator.getAttribute('aria-label'),
-    'Muhammad Gagah (You) Yesterday 0:07',
+    'Test User (You) Yesterday 0:07',
     'self-chat uses one aggregate gridcell label while preserving the You suffix'
 );
 assert.equal(selfChatTitleContainer.getAttribute('aria-hidden'), 'true');
@@ -4129,6 +4129,61 @@ assert.equal(nativeShortcutRows[1], secondShortcutChat.row);
 document.activeElement = secondShortcutChat.rowActivator;
 runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
 assert.equal(runtime.getRememberedFocus().lastFocusedChatTitle, 'Second chat');
+
+// WhatsApp forgets the focused chat when focus leaves the list. Tab or Shift+Tab back in
+// focuses the list container and then the first chat; the remembered chat must win.
+{
+    const savedInSide = selectorResults.get(runtime.SELECTORS.chatListInSide);
+    selectorResults.set(runtime.SELECTORS.chatListInSide, nativeShortcutList);
+    const outsideControl = new Element();
+    const nextTimeout = () => {
+        const [[id, callback]] = scheduledTimeouts;
+        scheduledTimeouts.delete(id);
+        return callback;
+    };
+    scheduledTimeouts.clear();
+    document.activeElement = nativeShortcutList;
+    runtime.rememberFocusedRow(nativeShortcutList, 'focus', outsideControl);
+    document.activeElement = firstShortcutChat.rowActivator;
+    runtime.rememberFocusedRow(firstShortcutChat.rowActivator, 'focus', nativeShortcutList);
+    assert.equal(runtime.getRememberedFocus().lastFocusedChatTitle, 'Second chat',
+        'WhatsApp moving to its first chat does not replace the remembered chat');
+    assert.equal(scheduledTimeouts.size, 1);
+    nextTimeout()();
+    assert.equal(document.activeElement, secondShortcutChat.rowActivator,
+        'Tab or Shift+Tab back into the chat list returns to the remembered chat');
+    runtime.rememberFocusedRow(secondShortcutChat.rowActivator, 'focus', firstShortcutChat.rowActivator);
+    assert.equal(runtime.getRememberedFocus().lastFocusedChatTitle, 'Second chat');
+
+    // Arrows inside the list and focus that leaves the list before the restore are left alone.
+    document.activeElement = nativeShortcutList;
+    runtime.rememberFocusedRow(nativeShortcutList, 'focus', secondShortcutChat.rowActivator);
+    assert.equal(scheduledTimeouts.size, 0, 'focus moving within the list is not a re-entry');
+    runtime.rememberFocusedRow(nativeShortcutList, 'focus', outsideControl);
+    document.activeElement = outsideControl;
+    runtime.rememberFocusedRow(outsideControl, 'focus', nativeShortcutList);
+    nextTimeout()();
+    assert.equal(document.activeElement, outsideControl, 'focus that left the list is not pulled back');
+
+    // A click is a deliberate choice and is never redirected.
+    runtime.rememberFocusedRow(firstShortcutChat.rowActivator, 'pointer');
+    document.activeElement = nativeShortcutList;
+    runtime.rememberFocusedRow(nativeShortcutList, 'focus', outsideControl);
+    assert.equal(scheduledTimeouts.size, 0, 'a click in the chat list is not treated as Tab re-entry');
+
+    // A click that moved no focus, then a key press: the next focus is keyboard re-entry again.
+    runtime.rememberFocusedRow(outsideControl, 'pointer');
+    runtime.clearPointerFocusPending();
+    document.activeElement = nativeShortcutList;
+    runtime.rememberFocusedRow(nativeShortcutList, 'focus', outsideControl);
+    assert.equal(scheduledTimeouts.size, 1, 'a key press after a click that moved no focus re-enables re-entry');
+    scheduledTimeouts.clear();
+
+    if (savedInSide) selectorResults.set(runtime.SELECTORS.chatListInSide, savedInSide);
+    else selectorResults.delete(runtime.SELECTORS.chatListInSide);
+    document.activeElement = secondShortcutChat.rowActivator;
+    runtime.rememberFocusedRow(secondShortcutChat.rowActivator);
+}
 scheduledFrames.length = 0;
 document.activeElement = new Element();
 event = makeEvent({ altKey: true, code: 'Digit1', target: document.activeElement });
@@ -5498,7 +5553,9 @@ assert.equal(event.prevented, true);
 assert.equal(remapTarget.dispatchedEvents[0].code, 'KeyR');
 assert.equal(remapTarget.dispatchedEvents[0].ctrlKey, true);
 assert.equal(remapTarget.dispatchedEvents[0].shiftKey, true);
-assert.match(originalSource, /addEventListener\(["']keydown["'], handleVoiceCaptureActivation, true\)/);
+assert.match(originalSource,
+    /\[["']pointerdown["'], ["']mousedown["'], ["']pointerup["'], ["']pointercancel["'], ["']click["'], ["']keydown["']\][\s\S]{0,120}addEventListener\(type, handleVoiceCaptureActivation, true\)/,
+    'the Alt+M remap reaches the capture-phase voice listener on keydown');
 assert.equal(runtime.setShortcutRemap('previous-chat', true), true);
 assert.equal(runtime.setShortcutRemap('next-chat', true), true);
 runtime.handleShortcuts(makeEvent({ altKey: true, code: 'ArrowUp', target: remapTarget }));

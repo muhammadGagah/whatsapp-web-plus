@@ -16,7 +16,7 @@ function fixture() {
   SELECTORS:{main:'main',conversationMessages:'section'},
   isPrimaryMessageItem:cell=>!!cell?.matches?.('.focusable-list-item'),
   getActiveModal:()=>modal, getChatContextKey:()=>chat,
-  handleChatListShortcutArrowKeydown:()=>false,
+  handleChatListShortcutArrowKeydown:()=>false, syncingNativeChatSelection:false, pointerFocusPending:false,
   setTimeout:(callback,delay)=>{assert.equal(delay,80);timers.push(callback);}
  });
  vm.runInContext(source.slice(source.indexOf('let pendingHistoryBoundary ='),source.indexOf('export function getVirtualizedMessageCell')).replace('export ',''),context);
@@ -56,7 +56,7 @@ for(const reversed of [false,true]){
  const cell={isConnected:true,closest:selector=>selector==='section'?panel:selector==='main'?main:selector==='[data-id]'?identity:null};
  const context=vm.createContext({document:{activeElement:cell,querySelector:selector=>selector==='main'?main:selector==='section'?panel:null},
   Date,WeakMap,SELECTORS:{main:'main',conversationMessages:'section'},isPrimaryMessageItem:item=>item===cell,
-  getActiveModal:()=>null,getChatContextKey:()=> 'chat1',handleChatListShortcutArrowKeydown:()=>false,
+  getActiveModal:()=>null,getChatContextKey:()=> 'chat1',handleChatListShortcutArrowKeydown:()=>false,syncingNativeChatSelection:false,pointerFocusPending:false,
   getComputedStyle:node=>node.style,setTimeout:callback=>timers.push(callback)});
  vm.runInContext(source.slice(source.indexOf('let pendingHistoryBoundary ='),source.indexOf('export function getVirtualizedMessageCell')).replace('export ',''),context);
  viewport.scrollTop=reversed?-1600:0;

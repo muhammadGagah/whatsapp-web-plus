@@ -652,6 +652,23 @@ flushFrames();
 assert.equal(audioButton.getAttribute('aria-label'),
   'Voice Contact. voice message. Today at 10:15',
   'an audio Status receives a stable voice-message summary when its decorative marker is hidden');
+// WhatsApp has no ptt-status marker: the voice Status is a button holding the audio.
+sandbox.StatusAccessibility.releaseStatusAccessibility();
+audioButton.setAttribute('aria-label', 'Native voice status');
+audioRoot.queryMap.set('[data-testid="ptt-status"]', null);
+// Without a waveform slider or microphone icon, the audio is not a voice message.
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(audioButton.getAttribute('aria-label'), 'Native voice status',
+  'other audio, such as music, is not summarised as a voice message');
+audioButton.queryMap.set('[role="slider"]', new Element());
+sandbox.StatusAccessibility.scheduleStatusAccessibilitySync();
+flushFrames();
+assert.equal(audioButton.getAttribute('aria-label'),
+  'Voice Contact. voice message. Today at 10:15',
+  'a voice Status without the ptt-status marker is found through its waveform slider');
+audioButton.queryMap.delete('[role="slider"]');
+audioRoot.queryMap.set('[data-testid="ptt-status"]', voiceNode);
 assert.equal(audioPause.clickCalls, 0, 'audio playback is never paused by Status cleanup');
 let audioAutoAdvances = 0;
 let otherAudioEnds = 0;

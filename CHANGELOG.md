@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026.11.07 - 2026-11-07
+
+Return to the chat you were on when Tab or Shift+Tab moves back into the chat list. WhatsApp now forgets the focused chat when focus leaves the list and goes back to the first chat, which also made Alt+1 return to the first chat afterwards. A click in the chat list still goes where you click.
+
+Keep WhatsApp's own arrow keys in step after the script moves focus to a chat with Tab, Shift+Tab or Alt+1. Arrow keys continue from that chat instead of from the chat WhatsApp last focused itself, and Right Arrow reaches "View status" again.
+
+Apply the selected voice-message profile when the microphone button is clicked with the mouse. While the pointer is over the button, WhatsApp shows a different microphone icon, and it asks for the microphone as soon as the mouse button is released, so the profile was skipped and the browser's own processing was used instead. Enter and Space on the button also select the profile.
+
+Add a **Loud** voice-message profile for the loudest even voice. It compresses the voice so quiet words come up and stays inside the 8 kHz band WhatsApp keeps. Browser noise suppression stays off, so use it in a quiet room or choose Noise filter where it is noisy. Every voice-message profile now ends in a limiter, so a loud voice no longer clips; a test recording with Natural reached 0 dBFS. In a test recording, Loud averaged -18 dBFS for speech, about 4 dB louder than Natural. Echo cancellation is off for voice messages unless WhatsApp asks for it. Clear Plus lifts presence at 3.5 kHz instead of 8 kHz, where WhatsApp's encoder removed it.
+
+Read each chat in the list once in browse mode. A preview with emoji, or with a phone number such as "+62 ... joined using this group's invite link", was read again after the chat name, and the phone number was an extra Tab stop inside the row. Name the chat filter tabs "Chat filters" instead of "chat-list-filters", and the logo heading "WhatsApp" instead of "wa-wordmark".
+
+On the Status, Channels, Communities and Calls tabs, stop reading the chat list that sits hidden behind the open panel. While a status is open full screen, the page behind it is no longer read either, and the button shown while a status video loads is named "Loading". Name the "+" next to My status "Add status", add the channel to each Follow button, such as "Follow WhatsApp", and the community to each Announcements group. Call the calls list "Calls list" instead of "Chat list", without the chat list's row count, and treat the Calls tab as a tab other than Chats.
+
+Clean Status reading works again for voice statuses. WhatsApp changed how a voice status is built, so the script no longer found it, and NVDA read icon names and "Your browser does not support audio playback" instead of the sender and time. In the Status list, moving to the first status under "Recent" or "Viewed" now says the header as a group name, so the sections can be told apart without the review cursor.
+
 ## 2026.11.01 - 2026-11-01
 
 Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.

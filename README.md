@@ -283,7 +283,7 @@ To open the update page yourself:
 3. Review the version and confirm the update in Tampermonkey.
 4. Refresh WhatsApp Web.
 
-The source version is **2026.11.01**. Read the [release history](CHANGELOG.md) for changes.
+The source version is **2026.11.07**. Read the [release history](CHANGELOG.md) for changes.
 
 ## If WhatsApp Web Plus does not start
 

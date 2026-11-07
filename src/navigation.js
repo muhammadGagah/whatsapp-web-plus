@@ -51,7 +51,8 @@ import {
   refreshMessageMentionNames,
   refreshStickerMessageNames,
   refreshAnnouncementReduction,
-  scheduleRoleFix
+  scheduleRoleFix,
+  isSyncingNativeChatSelection
 } from './chat-accessibility.js';
 import {
   getCommunityEmptyStateTargets,
@@ -262,7 +263,7 @@ export function captureChatPulseBaseline() {
   setChatPulseBaseline(getCurrentChatContext(), getChatPulseEntries(), isChatAtLatestOrUnknown());
 }
 
-// Without a measurable message list, keep announcing as before rather than suppressing messages.
+// Without a measurable message list, treat the view as at the latest message, so new messages are still announced.
 function isChatAtLatestOrUnknown() {
   const container = document.querySelector(SELECTORS.main)?.querySelector(SELECTORS.conversationMessages);
   return !container || !(container.clientHeight > 0) || isChatAtLatestMessages();
@@ -396,7 +397,7 @@ export function reconcileChatPulseEntries(chatTitle, entries, { atLatest, receip
   if (!chatTitle) return [];
   if (!chatPulseAtLatestVerified && atLatest !== undefined) {
     // Absorb rows loaded while the view is known to be away from the latest message, until it
-    // reaches the end. Callers that cannot measure the view keep the previous behavior.
+    // reaches the end. Callers that cannot measure the view pass undefined and skip this.
     setChatPulseBaseline(chatTitle, entries, atLatest === true);
     return [];
   }
@@ -1288,7 +1289,8 @@ function getActiveNonChatTabLabelKey() {
     ['navStatus', 'status'],
     ['navCommunities', 'communities'],
     ['navChannels', 'channels'],
-    ['navMetaAI', 'metaAi']
+    ['navMetaAI', 'metaAi'],
+    ['navCalls', 'calls']
   ];
   const activeTab = tabs.find(([selectorKey]) => hasActiveState(getNavButton(selectorKey)));
   return activeTab ? activeTab[1] : '';
@@ -1852,6 +1854,8 @@ function handleModalMediaShortcut(e, activeModal) {
 }
 
 export function handleShortcuts(e) {
+  // Replayed WhatsApp arrows are not the user's keys.
+  if (isSyncingNativeChatSelection()) return;
   if (e.isComposing || e.defaultPrevented) {
     lastTPressTime = 0;
     return;

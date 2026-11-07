@@ -369,6 +369,7 @@ assert.deepEqual(
         ['natural', 'menuitemradio', 'false'],
         ['clear', 'menuitemradio', 'false'],
         ['clear-plus', 'menuitemradio', 'false'],
+        ['loud', 'menuitemradio', 'false'],
         ['noise-filter', 'menuitemradio', 'false']
     ]
 );
@@ -408,6 +409,7 @@ assert.deepEqual(
         'Natural (no equalizer)',
         'Clear (balanced)',
         'Clear Plus (stronger and more even)',
+        'Loud (loudest, even voice)',
         'Noise filter (noisy rooms)'
     ]
 );

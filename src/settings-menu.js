@@ -25,6 +25,8 @@ import {
 } from './appearance.js';
 import { announce, focusItem, getActiveModal, refreshAnnouncementReduction, refreshStickerMessageNames } from './chat-accessibility.js';
 import { refreshUnreadChatTotal } from './unread-chat-total.js';
+import { refreshNativeLabels } from './native-labels.js';
+import { refreshPanelAccessibility } from './panel-accessibility.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
 import { refreshMessageMenuFit } from './message-menu-accessibility.js';
 import {
@@ -75,6 +77,7 @@ const AUDIO_PROFILE_MENU_OPTIONS = [
   ['natural', 'audioProfileNatural'],
   ['clear', 'audioProfileClear'],
   ['clear-plus', 'audioProfileClearPlus'],
+  ['loud', 'audioProfileLoud'],
   ['noise-filter', 'audioProfileNoiseFilter']
 ];
 const CALL_AUDIO_PROFILE_MENU_OPTIONS = [
@@ -1109,6 +1112,8 @@ function activateItem(item, keepOpen) {
       else refreshSenderDeviceLabels();
       refreshStickerMessageNames();
       refreshStatusAccessibility({ retryControls: true });
+      refreshNativeLabels();
+      refreshPanelAccessibility();
     }
   } else if (action === 'privacy') {
     saved = togglePrivacyWithQueueReset(false);

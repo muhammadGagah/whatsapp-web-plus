@@ -28,8 +28,8 @@ export function createMentionAnnouncements(deps = {}) {
     return [row, button].some(el => el?.getAttribute('aria-selected') === 'true');
   }
   function painted(row) {
-    // In debug_at.txt the selected row's stylesheet uses
-    // background-color: var(--WDS-surface-highlight); other rows are transparent.
+    // The selected row has background-color: var(--WDS-surface-highlight); other rows
+    // are transparent.
     // Read computed style rather than depending on WhatsApp's hashed class name.
     const color = win.getComputedStyle?.(row)?.backgroundColor;
     return !!color && color !== 'transparent' &&

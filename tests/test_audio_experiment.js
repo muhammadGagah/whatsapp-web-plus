@@ -95,7 +95,8 @@ class FakeAudioContext {
   createBiquadFilter() { const node = new FakeBiquadNode(); (this.filters ||= []).push(node); return node; }
   createDynamicsCompressor() {
     const node = new FakeCompressorNode();
-    this.compressor = node;
+    (this.compressors ||= []).push(node);
+    this.compressor ||= node;
     return node;
   }
   createMediaStreamDestination() {
@@ -218,7 +219,7 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(api.getStatus().nativeRecorderPreserved, true);
   assert.equal(api.getStatus().compressor, false);
   assert.equal(api.getProfile(), 'clear');
-  assert.deepEqual(plain(api.getProfiles()), ['natural', 'clear', 'clear-plus', 'noise-filter']);
+  assert.deepEqual(plain(api.getProfiles()), ['natural', 'clear', 'clear-plus', 'loud', 'noise-filter']);
   assert.equal(api.getCallAudioProfile(), 'clear');
   assert.deepEqual(plain(api.getCallAudioProfiles()), ['raw', 'natural', 'clear', 'noise-filter']);
   assert.deepEqual(plain(api.getStatus().hooks), {
@@ -268,7 +269,8 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(capturedConstraints.audio.sampleRate, undefined);
   assert.equal(capturedConstraints.audio.sampleSize, undefined);
   assert.deepEqual(plain(capturedConstraints.audio.channelCount), { ideal: 1 });
-  assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
+  assert.equal(capturedConstraints.audio.echoCancellation, false,
+    'a voice message has no far end, so echo cancellation is off unless WhatsApp asks for it');
   assert.equal(capturedConstraints.audio.noiseSuppression, false);
   assert.equal(capturedConstraints.audio.autoGainControl, false);
   assert.equal(capturedConstraints.audio.voiceIsolation, false);
@@ -281,6 +283,9 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(clearReport.processing.lowMidGainDb, -0.5);
   assert.equal(clearReport.processing.presenceGainDb, 1.2);
   assert.ok(Math.abs(clearReport.processing.outputGainDb - (-0.2)) < 1e-9);
+  assert.deepEqual(plain(clearReport.processing.limiter), {
+    threshold: -4.5, knee: 0, ratio: 20, attack: 0.001, release: 0.08
+  }, 'every voice-message profile ends in a limiter');
 
   const captureAfterClear = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(captureAfterClear, nativeStream);
@@ -352,13 +357,82 @@ windowTarget.addEventListener('keydown', event => {
     assert.equal(click.defaultPrevented, false, 'native activation is not intercepted');
     assert.deepEqual(plain(capturedConstraints.audio.sampleRate), 32000);
     assert.deepEqual(plain(capturedConstraints.audio.sampleSize), 24);
-    assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
+    assert.equal(capturedConstraints.audio.echoCancellation, shouldProcess ? false : undefined);
     assert.deepEqual(plain(capturedConstraints.audio.deviceId), { exact: 'user-mic' });
     if (shouldProcess) stream.getAudioTracks()[0].stop();
     assert.equal(await mediaDevices.getUserMedia({ audio: true }), nativeStream,
       'one activation must not leak a voice profile into the next unrelated capture');
   }
   windowTarget.removeEventListener('click', onRecordClick);
+
+  // WhatsApp requests the microphone after the mouse button is released, before click.
+  // Pressing the button, or Enter or Space on it, must already select the voice profile.
+  const voiceButton = {
+    disabled: false,
+    getAttribute: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [{ textContent: 'ic-mic' }]
+  };
+  voiceButton.closest = selector => selector === 'button, [role="button"]' ? voiceButton
+    : selector === '#main footer' ? { querySelector: () => ({}) } : null;
+  // While the pointer is over the button, WhatsApp shows ic-mic-filled instead of ic-mic.
+  const hoveredVoiceButton = { ...voiceButton, querySelectorAll: () => [{ textContent: 'ic-mic-filled' }] };
+  hoveredVoiceButton.closest = selector => selector === 'button, [role="button"]' ? hoveredVoiceButton
+    : selector === '#main footer' ? { querySelector: () => ({}) } : null;
+  const hoveredPress = new Event('pointerdown');
+  Object.defineProperty(hoveredPress, 'target', { value: hoveredVoiceButton });
+  Object.defineProperty(hoveredPress, 'button', { value: 0 });
+  windowTarget.dispatchEvent(hoveredPress);
+  const hoveredStream = await mediaDevices.getUserMedia({ audio: true });
+  assert.notEqual(hoveredStream, nativeStream, 'the hovered microphone icon still arms the voice profile');
+  hoveredStream.getAudioTracks()[0].stop();
+  for (const [type, init] of [
+    ['pointerdown', { button: 0 }],
+    ['mousedown', { button: 0 }],
+    ['keydown', { key: 'Enter' }],
+    ['keydown', { key: ' ' }]
+  ]) {
+    const press = new Event(type);
+    Object.defineProperty(press, 'target', { value: voiceButton });
+    for (const [name, value] of Object.entries(init)) Object.defineProperty(press, name, { value });
+    windowTarget.dispatchEvent(press);
+    const stream = await mediaDevices.getUserMedia({ audio: true });
+    assert.notEqual(stream, nativeStream, `${type} ${init.key ?? ''}: arms the voice profile before WhatsApp asks`);
+    stream.getAudioTracks()[0].stop();
+  }
+  // A press released off the button, or cancelled, does not record and drops its arm.
+  const elsewhere = { closest: () => null };
+  for (const [releaseType, releaseTarget] of [['pointerup', elsewhere], ['pointercancel', voiceButton]]) {
+    const press = new Event('pointerdown');
+    Object.defineProperty(press, 'target', { value: voiceButton });
+    Object.defineProperty(press, 'button', { value: 0 });
+    windowTarget.dispatchEvent(press);
+    const release = new Event(releaseType);
+    Object.defineProperty(release, 'target', { value: releaseTarget });
+    windowTarget.dispatchEvent(release);
+    assert.equal(await mediaDevices.getUserMedia({ audio: true }), nativeStream,
+      `${releaseType} after a press drops the voice profile arm`);
+  }
+  // Released on the button: still armed for WhatsApp's request.
+  {
+    const press = new Event('pointerdown');
+    Object.defineProperty(press, 'target', { value: voiceButton });
+    Object.defineProperty(press, 'button', { value: 0 });
+    windowTarget.dispatchEvent(press);
+    const release = new Event('pointerup');
+    Object.defineProperty(release, 'target', { value: voiceButton });
+    windowTarget.dispatchEvent(release);
+    const stream = await mediaDevices.getUserMedia({ audio: true });
+    assert.notEqual(stream, nativeStream, 'a press released on the button stays armed');
+    stream.getAudioTracks()[0].stop();
+  }
+  for (const [type, init] of [['pointerdown', { button: 2 }], ['keydown', { key: 'a' }], ['keydown', { key: 'Enter', ctrlKey: true }]]) {
+    const press = new Event(type);
+    Object.defineProperty(press, 'target', { value: voiceButton });
+    for (const [name, value] of Object.entries(init)) Object.defineProperty(press, name, { value });
+    windowTarget.dispatchEvent(press);
+    assert.equal(await mediaDevices.getUserMedia({ audio: true }), nativeStream, `${type} ${JSON.stringify(init)} does not arm`);
+  }
 
   assert.equal(api.setProfile('natural'), true);
   assert.equal(api.armNextCapture(), true);
@@ -384,15 +458,38 @@ windowTarget.addEventListener('keydown', event => {
   assert.deepEqual(plain(clearPlusReport.processing.compressor), {
     threshold: -12, knee: 24, ratio: 1.5, attack: 0.025, release: 0.2
   });
+  assert.equal(clearPlusReport.processing.presenceHz, 3500, 'presence stays inside WhatsApp\'s 8 kHz band');
   assert.equal(FakeAudioContext.instances.at(-1).compressor.ratio.value, 1.5);
+  assert.equal(FakeAudioContext.instances.at(-1).compressors.at(-1).ratio.value, 20, 'the limiter follows the compressor');
   clearPlus.getAudioTracks()[0].stop();
+
+  assert.equal(api.selectProfile('loud'), true);
+  assert.equal(api.armNextCapture(), true);
+  const loud = await mediaDevices.getUserMedia({ audio: true });
+  const loudReport = api.getLastReport();
+  assert.equal(loudReport.processing.mode, 'codec-aware-loud');
+  assert.equal(capturedConstraints.audio.noiseSuppression, false, 'Loud leaves the voice unprocessed by noise suppression');
+  assert.equal(capturedConstraints.audio.autoGainControl, false);
+  assert.equal(capturedConstraints.audio.echoCancellation, false);
+  assert.equal(loudReport.processing.highPassHz, 90);
+  assert.equal(loudReport.processing.presenceHz, 3000);
+  assert.equal(loudReport.processing.makeupGainDb, 7);
+  assert.ok(Math.abs(loudReport.processing.outputGainDb - 5.5) < 1e-9, 'makeup gain raises Loud after compression');
+  assert.deepEqual(plain(loudReport.processing.compressor), {
+    threshold: -30, knee: 6, ratio: 3, attack: 0.004, release: 0.18
+  });
+  const loudGraph = FakeAudioContext.instances.at(-1);
+  assert.deepEqual(loudGraph.compressors.map(node => node.ratio.value), [3, 20]);
+  assert.equal(loudGraph.lastGain.next, loudGraph.compressors[1], 'output gain feeds the limiter');
+  assert.equal(loudGraph.compressors[1].next, loudGraph.destination, 'the limiter is the last stage');
+  loud.getAudioTracks()[0].stop();
 
   assert.equal(api.selectProfile('noise-filter'), true);
   assert.equal(api.armNextCapture(), true);
   const noiseFiltered = await mediaDevices.getUserMedia({ audio: true });
   assert.equal(capturedConstraints.audio.noiseSuppression, true);
   assert.equal(capturedConstraints.audio.voiceIsolation, true);
-  assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), false);
+  assert.equal(capturedConstraints.audio.echoCancellation, false);
   assert.equal(capturedConstraints.audio.autoGainControl, false);
   assert.equal(api.getLastReport().processing.mode, 'codec-aware-noise-filter');
   noiseFiltered.getAudioTracks()[0].stop();
@@ -402,8 +499,8 @@ windowTarget.addEventListener('keydown', event => {
   assert.equal(api.armNextCapture(), false);
   assert.equal(api.selectProfile('clear'), true);
   assert.equal(api.isEnabled(), true);
-  // Echo cancellation follows WhatsApp while voice isolation and other processing flags retain their policy.
-  for (const profile of ['natural', 'clear', 'clear-plus', 'noise-filter']) {
+  // An explicit echo cancellation request from WhatsApp is kept; otherwise it is off for voice messages.
+  for (const profile of ['natural', 'clear', 'clear-plus', 'loud', 'noise-filter']) {
     api.selectProfile(profile);
     for (const echo of [undefined, true, false, { exact: true }, { ideal: false }]) {
       const audio = { deviceId: { exact: 'test-mic' } };
@@ -412,11 +509,10 @@ windowTarget.addEventListener('keydown', event => {
       const original = JSON.stringify(request);
       api.armNextCapture();
       const stream = await mediaDevices.getUserMedia(request);
-      const expectedGainDb = { natural: 2, clear: -0.2, 'clear-plus': -0.2, 'noise-filter': -1 }[profile];
+      const expectedGainDb = { natural: 2, clear: -0.2, 'clear-plus': -0.2, loud: 5.5, 'noise-filter': -1 }[profile];
       assert.ok(Math.abs(api.getLastReport().processing.outputGainDb - expectedGainDb) < 1e-9);
       assert.equal(api.getLastReport().processing.outputBoostDb, 2);
-      assert.equal(JSON.stringify(capturedConstraints.audio.echoCancellation), JSON.stringify(echo));
-      assert.equal(Object.hasOwn(capturedConstraints.audio, 'echoCancellation'), echo !== undefined);
+      assert.equal(JSON.stringify(capturedConstraints.audio.echoCancellation), JSON.stringify(echo ?? false));
       assert.equal(capturedConstraints.audio.sampleRate, undefined);
       assert.equal(capturedConstraints.audio.sampleSize, undefined);
       assert.equal(capturedConstraints.audio.voiceIsolation, profile === 'noise-filter');
@@ -460,7 +556,7 @@ windowTarget.addEventListener('keydown', event => {
   api.selectProfile('clear-plus');
   api.armNextCapture();
   const lowRateStream = await mediaDevices.getUserMedia({ audio: true });
-  assert.equal(api.getLastReport().processing.presenceHz, 7200);
+  assert.equal(api.getLastReport().processing.presenceHz, 3500);
   assert.ok(Math.abs(api.getLastReport().processing.outputGainDb - (-0.2)) < 1e-9);
   lowRateStream.getAudioTracks()[0].stop();
   trackSampleRate = 48000;
