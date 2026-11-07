@@ -1,3 +1,4 @@
+import { getConnectedBrowserCall, getCallRecordingState, setCallRecordingChangeHandler, startCallRecording, stopCallRecording, saveCallRecording, discardCallRecording } from './call-recording.js';
 import { openShortcutList } from './shortcut-list.js';
 import { openStickerSettings } from './sticker-settings.js';
 import { isReadStickerEnabled, setReadStickerEnabled } from './sticker-store.js';
@@ -22,8 +23,10 @@ import {
   toggleCleanUiMode,
   toggleOriginalDarkMode
 } from './appearance.js';
-import { announce, focusItem, getActiveModal, refreshAnnouncementReduction } from './chat-accessibility.js';
+import { announce, focusItem, getActiveModal, refreshAnnouncementReduction, refreshStickerMessageNames } from './chat-accessibility.js';
 import { refreshUnreadChatTotal } from './unread-chat-total.js';
+import { refreshNativeLabels } from './native-labels.js';
+import { refreshPanelAccessibility } from './panel-accessibility.js';
 import { refreshStatusAccessibility } from './status-accessibility.js';
 import { refreshMessageMenuFit } from './message-menu-accessibility.js';
 import {
@@ -74,6 +77,7 @@ const AUDIO_PROFILE_MENU_OPTIONS = [
   ['natural', 'audioProfileNatural'],
   ['clear', 'audioProfileClear'],
   ['clear-plus', 'audioProfileClearPlus'],
+  ['loud', 'audioProfileLoud'],
   ['noise-filter', 'audioProfileNoiseFilter']
 ];
 const CALL_AUDIO_PROFILE_MENU_OPTIONS = [
@@ -181,7 +185,8 @@ function createMenu() {
       box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
       font: 0.9375rem/1.4 system-ui, sans-serif;
     }
-    .wa-plus-settings-menu[hidden] { display: none !important; }
+    .wa-plus-settings-menu[hidden],
+    .wa-plus-settings-menu [hidden] { display: none !important; }
     .wa-plus-settings-menu button {
       display: grid;
       grid-template-columns: 1.5rem minmax(0, 1fr) 1rem;
@@ -325,13 +330,28 @@ function createMenu() {
   const voiceCalls = audioExperimentsAvailable
     ? createSubmenu('voice-calls', 'voiceCalls', 'wa-plus-voice-calls-menu')
     : null;
+  const callRecording = !isCompanionRuntime()
+    ? createSubmenu('call-recording', 'callRecording', 'wa-plus-call-recording-menu') : null;
+  if (callRecording) {
+    for (const [action, labelKey] of [
+      ['call-record-start', 'callRecordStart'], ['call-record-stop', 'callRecordStop'],
+      ['call-record-save', 'callRecordSave'], ['call-record-discard', 'callRecordDiscard'],
+      ['call-record-help', 'callRecordHelp']
+    ]) {
+      const item = createMenuItem('menuitem', action);
+      item.dataset.labelKey = labelKey;
+      callRecording.menu.append(item);
+    }
+    setCallRecordingChangeHandler(() => { if (rootMenu) updateMenu(); });
+  }
   rootMenu.append(
     accessibility.item,
     keyboardShortcuts.item,
     appearance.item,
     customLanguageStrings.item,
     ...(voiceRecording ? [voiceRecording.item] : []),
-    ...(voiceCalls ? [voiceCalls.item] : [])
+    ...(voiceCalls ? [voiceCalls.item] : []),
+    ...(callRecording ? [callRecording.item] : [])
   );
 
   if (voiceRecording) {
@@ -627,10 +647,11 @@ function reportCustomDialogSaveError() {
   }, 0);
 }
 
+// Disabled items stay focusable (ARIA menu pattern) so users can discover them and hear
+// that they are unavailable; activateItem() refuses to run them.
 function getMenuItems(menu) {
   return Array.from(menu.querySelectorAll(MENU_ITEM_SELECTOR))
-    .filter(item => item.closest('[role="menu"]') === menu && !item.hidden &&
-      item.getAttribute('aria-disabled') !== 'true');
+    .filter(item => item.closest('[role="menu"]') === menu && !item.hidden);
 }
 
 function focusMenuItem(menu, index) {
@@ -700,6 +721,21 @@ function updateMenu() {
         item.setAttribute('aria-checked', String(item.dataset.callAudioProfile === currentCallAudioProfile));
       }
     });
+  }
+  const recordingMenu = submenuMenus.get('call-recording');
+  if (recordingMenu) {
+    const state = getCallRecordingState();
+    const enabled = {
+      'call-record-start': state === 'idle' && !!getConnectedBrowserCall(),
+      'call-record-stop': state === 'starting' || state === 'recording',
+      'call-record-save': state === 'ready',
+      'call-record-discard': state === 'ready',
+      'call-record-help': true
+    };
+    for (const item of recordingMenu.querySelectorAll(MENU_ITEM_SELECTOR)) {
+      setMenuItemLabel(item, t(item.dataset.labelKey));
+      item.setAttribute('aria-disabled', String(!enabled[item.dataset.action]));
+    }
   }
   const shortcutListItem = getMenuItems(rootMenu).find(item => item.dataset.action === 'shortcut-list');
   setMenuItemLabel(shortcutListItem, t('shortcutList'));
@@ -776,7 +812,11 @@ function restoreSettingsFocus(primary) {
   ].some(focusItem);
 }
 
+let callAvailabilityTimer = null;
+
 export function closeSettingsMenu(restoreFocus = true) {
+  clearInterval(callAvailabilityTimer);
+  callAvailabilityTimer = null;
   if (!rootMenu || rootMenu.hidden) return;
   closeSubmenu(false);
   rootMenu.hidden = true;
@@ -800,6 +840,13 @@ function openSettingsMenu(x, y, source) {
   updateMenu();
   positionMenu(rootMenu, x, y);
   focusMenuItem(rootMenu, 0);
+  if (!isCompanionRuntime()) {
+    let connected = !!getConnectedBrowserCall();
+    callAvailabilityTimer = setInterval(() => {
+      const next = !!getConnectedBrowserCall();
+      if (next !== connected) { connected = next; updateMenu(); }
+    }, 1000);
+  }
 }
 
 function anchorForKeyboard() {
@@ -971,7 +1018,9 @@ function saveCustomText(event) {
       customDialogError.textContent = t(error || 'saveError');
       if (error) customDialogInput.setAttribute('aria-invalid', 'true');
       else customDialogInput.removeAttribute('aria-invalid');
-      customDialogError.focus({ preventScroll: true });
+      const feedbackTarget = document.activeElement === customDialogError
+        ? customDialogInput : customDialogError;
+      feedbackTarget.focus({ preventScroll: true });
       return;
     }
     customDialog.close();
@@ -996,9 +1045,24 @@ function shouldKeepMenuOpen(item) {
 }
 
 function activateItem(item, keepOpen) {
+  if (item.getAttribute('aria-disabled') === 'true') {
+    // Explain the most common reason Start is unavailable instead of doing nothing.
+    if (item.dataset.action === 'call-record-start' && getCallRecordingState() === 'idle' &&
+        !getConnectedBrowserCall()) announce(t('callRecordNoCall'));
+    return;
+  }
   const action = item.dataset.action;
   let saved = true;
 
+  if (action.startsWith('call-record-')) {
+    closeSettingsMenu(true);
+    if (action === 'call-record-start') void startCallRecording();
+    else if (action === 'call-record-stop') stopCallRecording();
+    else if (action === 'call-record-save') saveCallRecording();
+    else if (action === 'call-record-discard') discardCallRecording();
+    else if (action === 'call-record-help') announce(t('callRecordInstructions'));
+    return;
+  }
   if (action === 'shortcut-list') {
     closeSettingsMenu(true);
     openShortcutList();
@@ -1046,7 +1110,10 @@ function activateItem(item, keepOpen) {
       resetPassiveAnnouncementContext();
       if (isPrivacyModeEnabled()) refreshPrivacyAttributes();
       else refreshSenderDeviceLabels();
+      refreshStickerMessageNames();
       refreshStatusAccessibility({ retryControls: true });
+      refreshNativeLabels();
+      refreshPanelAccessibility();
     }
   } else if (action === 'privacy') {
     saved = togglePrivacyWithQueueReset(false);

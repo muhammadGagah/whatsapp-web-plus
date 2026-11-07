@@ -18,8 +18,10 @@ user will hear and where keyboard focus will land.
   - `metadata.txt` — the userscript header. Bump `@version` here for releases
     (keep `package.json` in sync).
   - `privacy.js` — phone-number masking; patches `Element.prototype.setAttribute`
-    and the `ariaLabel` setter. Runs with `@grant none` — do **not** add `@grant`
-    values; sandboxing would break the prototype patches.
+    and the `ariaLabel` setter. The header uses `@sandbox raw` with only
+    `@grant GM_xmlhttpRequest` (Read Sticker networking), so the script still
+    runs in the page. Do **not** add other `@grant` values or change `@sandbox`;
+    an isolated sandbox would break the prototype patches.
   - `owned-attributes.js` — bookkeeping for every attribute the script changes,
     so WhatsApp's own values can always be restored.
   - `chat-accessibility.js` — chat-list/message-grid roles, live regions,
@@ -67,11 +69,18 @@ git diff --check
 
 ## Release checklist
 
-1. Bump `@version` in `src/metadata.txt` and `version` in `package.json`.
+1. Bump `@version` in `src/metadata.txt` and `version` in `package.json` and
+   `package-lock.json`.
 2. Update `CHANGELOG.md` and the version referenced in `README.md`.
-3. `npm test` — all suites green.
-4. Commit `src/`, tests, and the regenerated `whatsapp_web_plus.user.js`
-   together so the published script matches the source.
+3. `npm test` — all suites green — and `git diff --check`.
+4. Commit `src/`, tests, docs, and the regenerated `whatsapp_web_plus.user.js`
+   together, keeping the previous `update-manifest.json` and `.sig`. Never sign
+   the local build; GreasyFork reformats the metadata.
+5. After the userscript is on `main` and GreasyFork serves it, sign the
+   downloaded public file and publish the manifest and signature in a second
+   commit, following `docs/RELEASE-SIGNING-CHEATSHEET.md`.
+6. Then bundle the verified public file in Companion with its
+   `docs/update-bundled-userscript.md`.
 
 ## Future ideas (not implemented)
 

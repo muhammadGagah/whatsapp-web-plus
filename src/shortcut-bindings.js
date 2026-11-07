@@ -21,7 +21,18 @@ const RESERVED_SHORTCUTS = new Set([
   'Alt+ArrowLeft', 'Alt+ArrowRight', 'Alt+Home', 'Alt+F4', 'Alt+F', 'Alt+E', 'Alt+D',
   ...'ACFHKLNOPRSTUVWXYZ'.split('').map(key => `Ctrl+${key}`),
   ...['A', 'B', 'C', 'D', 'I', 'J', 'N', 'O', 'P', 'R', 'T', 'V', 'W', 'Y', 'Z']
-    .map(key => `Ctrl+Shift+${key}`)
+    .map(key => `Ctrl+Shift+${key}`),
+  // WhatsApp's own shortcuts, as documented in shortcut-list.js for the browser and the desktop app.
+  'Ctrl+Alt+Shift+U', 'Ctrl+Alt+Shift+M', 'Ctrl+Alt+Shift+E', 'Ctrl+Alt+Shift+P',
+  'Ctrl+Alt+Shift+L', 'Ctrl+Alt+Shift+N', 'Ctrl+Alt+/', 'Ctrl+Alt+N', 'Ctrl+Alt+P', 'Ctrl+Alt+,',
+  'Ctrl+Alt+E', 'Ctrl+Alt+G', 'Ctrl+Alt+L', 'Ctrl+Shift+F', 'Ctrl+Shift+M', 'Ctrl+Shift+U',
+  'Ctrl+[', 'Ctrl+]', 'Ctrl+ArrowUp', 'Ctrl+=',
+  'Alt+A', 'Alt+I', 'Alt+K', 'Alt+L', 'Alt+P', 'Alt+R', 'Alt+S', 'Alt+8',
+  // Text editing and common browser commands: word and paragraph movement and selection,
+  // bookmark, address search, find next, and downloads.
+  ...['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].flatMap(key =>
+    [`Ctrl+${key}`, `Ctrl+Shift+${key}`, `Ctrl+Alt+${key}`]),
+  'Ctrl+D', 'Ctrl+E', 'Ctrl+G', 'Ctrl+J'
 ]);
 
 const PUNCTUATION_CODES = Object.freeze({

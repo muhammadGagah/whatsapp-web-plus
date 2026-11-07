@@ -145,8 +145,8 @@ assert.match(source, /releaseMessageAttributes\(OWNERS\.messageCell/);
 assert.match(source, /releaseOwnedAttribute\(el, name, owner\)/);
 assert.match(source, /function restorePrivacyAttributes\(\)/);
 assert.doesNotMatch(source, /fixGenericSectionBug|MARKERS|unreadMessageId/);
-// Privacy must not redirect focus. The separate menu-fitting hook now prevents
-// ancestor scrolling only; its native-focus passthrough is tested behaviorally.
+// Privacy must not redirect focus. The separate menu-fitting hook only prevents
+// ancestor scrolling; its native-focus passthrough is tested behaviorally.
 assert.doesNotMatch(fs.readFileSync('src/privacy.js', 'utf8'), /HTMLElement\.prototype\.focus\s*=/);
 const nonFocusableMessageContent = {
     closest(selector) {
@@ -1145,5 +1145,155 @@ for (const prefix of ['(', '[', '.', '*', '$&']) {
     assert.equal(clean('Call https://wa.me/6281234567890', 'identity'), `Call ${prefix}`);
 }
 sandbox.__privacyTest.setCustomText('participant-prefix', '');
+
+
+// React textContent updates arrive as childList records, not characterData.
+{
+    const observerSource = fs.readFileSync('src/main.js', 'utf8')
+        .match(/function createCleanupObserver\(\) \{[\s\S]*?\n\}/)[0];
+    let onMutations;
+    const noop = () => {};
+    const observerContext = {
+        MutationObserver: class { constructor(callback) { onMutations = callback; } },
+        SELECTORS: {
+            conversationMessages: '[data-testid="conversation-panel-messages"]',
+            statusPlayerRoot: '[data-testid="status-viewer"]',
+            statusActiveMarker: '[data-animate-status-viewer]',
+            navbarPrimary: '[data-testid="navbar"]',
+            chatListInSide: '#side [role="grid"]'
+        },
+        reconcileUnreadTarget: noop, scheduleRoleFix: noop,
+        handleAddedNode: noop, recleanMessageAncestor: noop,
+        scheduleCleanUiSync: noop, scheduleStatusAccessibilitySync: noop,
+        refreshUnreadChatTotal: noop, refreshNativeLabels: noop, refreshPanelAccessibility: noop, pruneDetachedOwnedElements: noop,
+        scheduleChatPulseSync: noop, cleanElementAttributes,
+    };
+    vm.runInNewContext(observerSource + '\ncreateCleanupObserver();', observerContext);
+    viewOncePhoneAuthor.nodeType = 1;
+    const initialMatches = viewOncePhoneAuthor.matches;
+    viewOncePhoneAuthor.matches = selector => selector === 'span[data-testid="author"]' ||
+        initialMatches.call(viewOncePhoneAuthor, selector);
+    const replaceAuthor = text => {
+        viewOncePhoneAuthor.textContent = text;
+        onMutations([{ type: 'childList', target: viewOncePhoneAuthor,
+            addedNodes: [{ nodeType: 3 }], removedNodes: [{ nodeType: 3 }] }]);
+    };
+    viewOncePhoneAuthor.removeAttribute('aria-hidden');
+    replaceAuthor('+62 812-3456-7890');
+    assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), 'true',
+        'replacing an existing author text node with a phone number must mask it');
+    replaceAuthor('Contact name');
+    assert.equal(viewOncePhoneAuthor.getAttribute('aria-hidden'), null,
+        'replacing the phone text with a contact name must restore visibility');
+    viewOncePhoneAuthor.matches = initialMatches;
+}
+
+
+{
+    const maskSource = fs.readFileSync('src/privacy.js', 'utf8')
+        .match(/function maskPhoneAuthorText\(el\) \{[\s\S]*?\n\}/)[0];
+    const states = new Map();
+    const attributes = new Map();
+    let eligible = true;
+    const author = {
+        textContent: '+62 812-3456-7890',
+        matches: () => eligible,
+        closest: () => ({}),
+        getAttribute: name => attributes.get(name) ?? null
+    };
+    const context = {
+        isPrivacyMode: true, privacyAttributes: states,
+        SELECTORS: { conversationMessages: 'messages' },
+        normalizeText: value => value.trim(),
+        tForHost: () => 'Participant',
+        maskPhoneNumbers: () => 'Participant',
+        rememberPrivacyAttribute(el, name, raw, masked) {
+            states.set(el, new Map([[name, { raw, masked }]]));
+        },
+        _origSetAttribute(name, value) { attributes.set(name, value); },
+        _origRemoveAttribute(name) { attributes.delete(name); }
+    };
+    vm.runInNewContext(maskSource + '\nglobalThis.mask = maskPhoneAuthorText;', context);
+    context.mask(author);
+    assert.equal(attributes.get('aria-hidden'), 'true');
+    eligible = false;
+    context.mask(author);
+    assert.equal(attributes.has('aria-hidden'), false,
+        'recycled author with an explicit label must release the old text-only mask');
+    assert.equal(states.has(author), false);
+    eligible = true;
+    context.mask(author);
+    attributes.set('aria-hidden', 'false');
+    eligible = false;
+    context.mask(author);
+    assert.equal(attributes.get('aria-hidden'), 'false', 'preserve host visibility changes');
+    assert.equal(states.has(author), false, 'discard stale ownership when the host replaces visibility');
+    const cleanSource = fs.readFileSync('src/privacy.js', 'utf8')
+        .match(/export function cleanNamedAttribute\(el, attrName\) \{[\s\S]*?\n\}/)[0]
+        .replace(/^export /, '');
+    Object.assign(context, {
+        senderDeviceLabels: new Map(), messageCaptionLabels: new Map(),
+        isSenderDeviceMessageLabel: () => false,
+        getMessageContextInstructionRegex: () => /$^/,
+        isSenderDeviceAnnouncementEnabled: () => false,
+        prepareNamedAttribute: (el, name, value) => value,
+        preserveStickerNameOwnership() {}
+    });
+    vm.runInNewContext(maskSource + '\n' + cleanSource +
+        '\nglobalThis.cleanNamed = cleanNamedAttribute;', context);
+    eligible = true;
+    attributes.delete('aria-hidden');
+    context.mask(author);
+    eligible = false;
+    attributes.set('aria-label', 'Contact name');
+    context.cleanNamed(author, 'aria-label');
+    assert.equal(attributes.has('aria-hidden'), false,
+        'aria-label mutation releases the text-only mask without a text mutation');
+    eligible = true;
+    attributes.delete('aria-label');
+    context.cleanNamed(author, 'aria-label');
+    assert.equal(attributes.get('aria-hidden'), 'true',
+        'removing the label masks the exposed phone text again');
+}
+
+
+{
+    const privacySource = fs.readFileSync('src/privacy.js', 'utf8');
+    const forgetSource = privacySource.match(/export function forgetPrivacyState\(rootEl\) \{[\s\S]*?\n\}/)[0]
+        .replace(/^export /, '');
+    const restoreSource = privacySource.match(/function restorePrivacyElement\(el, attributes\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const attributes = new Map([['aria-label', 'Participant'], ['aria-hidden', 'true']]);
+    const el = { isConnected: false, getAttribute: name => attributes.get(name) ?? null };
+    const states = new Map([[el, new Map([
+        ['aria-label', { raw: '+62 812-3456-7890', masked: 'Participant' }],
+        ['aria-hidden', { raw: null, masked: 'true' }]
+    ])]]);
+    const context = {
+        privacyAttributes: states, senderDeviceLabels: new Map(), messageCaptionLabels: new Map(),
+        messageMentionLabels: new Map(), preserveStickerNameOwnership() {},
+        _origSetAttribute(name, value) { attributes.set(name, value); },
+        _origRemoveAttribute(name) { attributes.delete(name); }
+    };
+    vm.runInNewContext(restoreSource + '\n' + forgetSource + '\nglobalThis.forget = forgetPrivacyState;', context);
+    context.forget(el);
+    assert.equal(attributes.get('aria-label'), '+62 812-3456-7890',
+        'restore detached private labels before discarding originals so cached nodes can be reused');
+    assert.equal(attributes.has('aria-hidden'), false);
+    assert.equal(states.size, 0);
+    states.set(el, new Map([['aria-label', { raw: 'Old raw label', masked: 'Old mask' }]]));
+    attributes.set('aria-label', 'Host replacement');
+    context.forget(el);
+    assert.equal(attributes.get('aria-label'), 'Host replacement', 'detached cleanup preserves host replacements');
+    const restoreAllSource = privacySource.match(/export function restorePrivacyAttributes\(\) \{[\s\S]*?\n\}/)[0]
+        .replace(/^export /, '');
+    vm.runInNewContext(restoreSource + '\n' + restoreAllSource +
+        '\nglobalThis.restoreAll = restorePrivacyAttributes;', context);
+    states.set(el, new Map([['aria-label', { raw: 'Original cached label', masked: 'Masked' }]]));
+    attributes.set('aria-label', 'Masked');
+    context.restoreAll();
+    assert.equal(attributes.get('aria-label'), 'Original cached label',
+        'Privacy off restores cached detached nodes even before the removal observer runs');
+    assert.equal(states.size, 0);
+}
 
 console.log('privacy filter checks passed');

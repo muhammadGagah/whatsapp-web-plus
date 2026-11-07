@@ -36,7 +36,7 @@ const { validateRequest } = load('src/sticker-request.js');
   assert.throws(()=>validateRequest({...agreement,purpose:undefined}));
   assert.match(request.body.prompt,/Bahasa Indonesia/);
   assert.equal(request.body.image,'data:image/png;base64,AA==');
-  assert.equal(request.body.max_tokens,512);
+  assert.equal(request.body.max_tokens,2048);
   assert.equal(request.body.stream,false);
   for(const endpoint of [request.endpoint.replace('api.cloudflare.com','evil.test'),request.endpoint+'?key=x',request.endpoint.replace(accountId,'../other')]) {
     assert.throws(()=>validateRequest({...request,endpoint}));
@@ -58,7 +58,7 @@ const { validateRequest } = load('src/sticker-request.js');
   assert.ok(alternate.endpoint.endsWith('/'+model));
   validateRequest(alternate);
   assert.equal(alternate.body.messages[0].content[1].image_url.url,'data:image/png;base64,AA==');
-  assert.equal(alternate.body.max_tokens,512);
+  assert.equal(alternate.body.max_tokens,2048);
   assert.equal('model' in alternate.body,false);
   assert.throws(()=>validateRequest({...alternate,purpose:'model-agreement',body:{prompt:'agree'}}));
   for(const invalid of ['@cf/meta/../../evil','@cf/meta/model?token=x','@cf/meta/%2e%2e','https://evil.test/model','@cf/meta/']) {

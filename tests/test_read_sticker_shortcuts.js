@@ -34,6 +34,7 @@ function createRuntime(values = new Map()) {
     },
     readerCalls: 0,
     armNextVoiceMessageCapture() {},
+    isSyncingNativeChatSelection: () => false,
     KeyboardEvent: function(type, options) { return { type, ...options }; }
   };
   vm.createContext(context);

@@ -80,6 +80,7 @@ export const SELECTORS = Object.freeze({
   navCommunities: '[data-testid="navbar-primary-section"] button[aria-label="Communities"], [data-testid="navbar-primary-section"] button[aria-label="Komunitas"]',
   navChannels: '[data-testid="navbar-primary-section"] button[aria-label="Channels"], [data-testid="navbar-primary-section"] button[aria-label="Saluran"]',
   navMetaAI: '[data-testid="navbar-primary-section"] button[aria-label="Meta AI"]',
+  navCalls: '[data-testid="navbar-primary-section"] button[aria-label="Calls"], [data-testid="navbar-primary-section"] button[aria-label="Telepon"]',
   videoPlayerClose: '[data-testid="move_resize_component"] button[aria-label="Close"], [data-testid="move_resize_component"] button[aria-label="Tutup"], [data-testid="move_resize_component"] button[data-icon="x"], [data-testid="media-viewer-modal"] button[aria-label="Close"], [data-testid="media-viewer-modal"] button[aria-label="Tutup"], [data-testid="media-viewer-modal"] button[data-icon="x"]',
   audioPlayerClose: '#side button[data-icon="x"], #side button[aria-label="Close"], #side button[aria-label="Tutup"]',
   statusListFirstRow: '[data-testid="status-list-drawer"] [data-testid="status-row-cell"]',
@@ -118,12 +119,15 @@ export const OWNERS = Object.freeze({
   messageCell: 'message-cell',
   messagePlaceholder: 'message-placeholder',
   messageExpandedName: 'message-expanded-name',
+  stickerMessageName: 'sticker-message-name',
   messageMentionName: 'message-mention-name',
   temporaryFocus: 'temporary-focus',
   metaAIMessageName: 'meta-ai-message-name',
   unreadChatTotal: 'unread-chat-total',
   cleanUiHidden: 'clean-ui-hidden',
-  statusViewer: 'status-viewer'
+  statusViewer: 'status-viewer',
+  nativeLabel: 'native-label',
+  panelSemantics: 'panel-semantics'
 });
 
 export const CHAT_LABEL_NOISE_RE = Object.freeze({

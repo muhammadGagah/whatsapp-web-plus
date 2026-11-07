@@ -13,3 +13,5 @@ release-private-key.pem
 # Local test and build logs
 *.log
 !docs/read-sticker-validation.md
+
+!docs/browser-call-recording-validation.md

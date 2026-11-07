@@ -9,6 +9,16 @@ const CAPTURE_PROFILE = 'native-codec-aware-v2';
 const DEFAULT_AUDIO_PROFILE = 'clear';
 const DEFAULT_CALL_AUDIO_PROFILE = 'clear';
 const VOICE_OUTPUT_BOOST_DB = 2;
+// WhatsApp encodes voice messages as mono Opus SILK wideband (about 8 kHz of audio) near 15 kbps.
+// Every voice-message profile ends in a limiter, so a louder voice never clips before that encoder.
+// Opus adds a little overshoot: with a -3 dB threshold, a Loud recording decoded at -0.3 dBFS.
+const VOICE_LIMITER = Object.freeze({
+  threshold: -4.5,
+  knee: 0,
+  ratio: 20,
+  attack: 0.001,
+  release: 0.08
+});
 const CALL_CAPTURE_DEFAULTS = Object.freeze({
   sampleRate: 16_000,
   channelCount: 1,
@@ -42,7 +52,8 @@ const AUDIO_PROFILES = Object.freeze({
     lowMidHz: 250,
     lowMidQ: 0.7,
     lowMidGainDb: 0.0,
-    presenceHz: 8000,
+    // WhatsApp removes everything above about 8 kHz, so lift presence inside that band.
+    presenceHz: 3500,
     presenceQ: 0.7,
     presenceGainDb: 1.2,
     outputGainDb: 0.0,
@@ -53,6 +64,32 @@ const AUDIO_PROFILES = Object.freeze({
       attack: 0.025,
       release: 0.20
     })
+  }),
+  // The loudest even voice: compression evens out loud and quiet words, makeup gain raises the
+  // whole message, and the limiter keeps peaks below clipping. Browser noise suppression stays off
+  // to keep the voice unprocessed; in a quiet room this is clearest, but room noise rises with the
+  // voice. Tuned on a live recording: without makeup gain, speech averaged -25 dBFS with peaks at
+  // -5.6 dBFS.
+  loud: Object.freeze({
+    id: 'loud',
+    processing: true,
+    highPassHz: 90,
+    highPassQ: 0.707,
+    lowMidHz: 250,
+    lowMidQ: 0.9,
+    lowMidGainDb: -1.5,
+    presenceHz: 3000,
+    presenceQ: 0.8,
+    presenceGainDb: 2.5,
+    outputGainDb: 0.0,
+    compressor: Object.freeze({
+      threshold: -30,
+      knee: 6,
+      ratio: 3,
+      attack: 0.004,
+      release: 0.18
+    }),
+    makeupGainDb: 7
   }),
   'noise-filter': Object.freeze({
     id: 'noise-filter',
@@ -136,11 +173,17 @@ const CALL_AUDIO_PROFILES = Object.freeze({
 let hooksInstalled = false;
 let armingListenersInstalled = false;
 let nativeGetUserMedia = null;
-let nativeMediaRecorderStart = null;
+let activeGetUserMediaHook = null;
 let voiceCaptureArmedUntil = 0;
 const voiceMessageStreams = new WeakSet();
 const voiceMessageTracks = new WeakSet();
 const recorderSessions = new WeakMap();
+
+export function getNativeMicrophoneCapture() {
+  const devices = globalThis.navigator?.mediaDevices;
+  const capture = nativeGetUserMedia || devices?.getUserMedia;
+  return typeof capture === 'function' ? capture.bind(devices) : null;
+}
 
 export function isAudioExperimentEnabled() {
   return Boolean(globalThis.navigator?.mediaDevices?.getUserMedia?.__waPlusNativeVoice) &&
@@ -218,20 +261,46 @@ function consumeVoiceMessageCaptureArm() {
   return armed;
 }
 
+const MIC_ICON_SELECTOR = ['mic', 'mic-outlined', 'mic-filled', 'mic-refreshed']
+  .flatMap(name => [`[data-icon="${name}"]`, `[data-testid="${name}"]`]).join(', ');
+const MIC_ICON_TITLE = /^(?:wds-)?ic-mic(?:-(?:outlined|filled|refreshed))?$/;
+
 function isVoiceMessageButton(target) {
   const button = target?.closest?.('button, [role="button"]');
   const footer = button?.closest?.('#main footer');
   if (!footer || button.disabled || button.getAttribute('aria-disabled') === 'true' ||
     !footer.querySelector('[contenteditable="true"][role="textbox"]')) return false;
-  return Boolean(button.querySelector('[data-icon="mic-outlined"], [data-testid="mic-outlined"]')) ||
-    Array.from(button.querySelectorAll('svg title')).some(title => title.textContent?.trim() === 'ic-mic');
+  // WhatsApp swaps the icon while the pointer is over the button: ic-mic becomes ic-mic-filled.
+  return Boolean(button.querySelector(MIC_ICON_SELECTOR)) ||
+    Array.from(button.querySelectorAll('svg title')).some(title =>
+      MIC_ICON_TITLE.test(title.textContent?.trim() || ''));
 }
 
+// True while a press on the mic button armed capture and its release has not happened yet.
+let voiceCapturePressArmed = false;
+
 function handleVoiceCaptureActivation(event) {
+  // A press dragged off the mic button, or cancelled, does not record: drop its arm, so the
+  // next microphone request in the arm window keeps its own settings.
+  if (event.type === 'pointerup' || event.type === 'pointercancel') {
+    const pressArmed = voiceCapturePressArmed;
+    voiceCapturePressArmed = false;
+    if (pressArmed && (event.type === 'pointercancel' || !isVoiceMessageButton(event.target))) {
+      voiceCaptureArmedUntil = 0;
+    }
+    return;
+  }
   const nativeRecordingShortcut = event.type === 'keydown' && event.code === 'KeyR' &&
     event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey;
-  if (nativeRecordingShortcut || (event.type === 'click' && isVoiceMessageButton(event.target))) {
-    armNextVoiceMessageCapture();
+  // WhatsApp asks for the microphone right after the mouse button is released, before the
+  // click event, so arm on the press. Enter and Space arm before WhatsApp's key handling.
+  const pointerPress = (event.type === 'pointerdown' || event.type === 'mousedown') &&
+    (event.button ?? 0) === 0;
+  const keyPress = event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ') &&
+    !event.ctrlKey && !event.altKey && !event.metaKey;
+  if (nativeRecordingShortcut ||
+    ((event.type === 'click' || pointerPress || keyPress) && isVoiceMessageButton(event.target))) {
+    if (armNextVoiceMessageCapture() && pointerPress) voiceCapturePressArmed = true;
   }
 }
 
@@ -239,8 +308,9 @@ function installVoiceCaptureArming() {
   const hostWindow = globalThis.window;
   if (armingListenersInstalled || typeof hostWindow?.addEventListener !== 'function') return;
   // Arm capture before WhatsApp requests the microphone stream.
-  hostWindow.addEventListener('click', handleVoiceCaptureActivation, true);
-  hostWindow.addEventListener('keydown', handleVoiceCaptureActivation, true);
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'pointercancel', 'click', 'keydown']) {
+    hostWindow.addEventListener(type, handleVoiceCaptureActivation, true);
+  }
   armingListenersInstalled = true;
 }
 
@@ -594,7 +664,7 @@ function installMediaRecorderDiagnosticsHook() {
   if (!prototype || typeof prototype.start !== 'function') return false;
   if (prototype.start.__waPlusNativeVoiceDiagnostics) return true;
 
-  nativeMediaRecorderStart = prototype.start;
+  const nativeMediaRecorderStart = prototype.start;
   const patchedStart = function(...args) {
     const result = nativeMediaRecorderStart.apply(this, args);
     if (consumeVoiceMessageStream(this.stream)) observeVoiceMessageRecorder(this, args[0]);
@@ -623,7 +693,11 @@ function buildAudioConstraints(constraints, profileName) {
   const audio = { ...originalAudio };
   // Preserve native capture requirements; unspecified sample rate/size belong to the browser.
   if (supported.channelCount) audio.channelCount = { ideal: 1 };
-  // Leave echo cancellation as requested by WhatsApp, or use the browser default when omitted.
+  // A voice message has no far end to cancel. Turn echo cancellation off unless WhatsApp asked
+  // for a specific value, so the browser does not process the voice for an echo that is not there.
+  if (supported.echoCancellation && !Object.prototype.hasOwnProperty.call(originalAudio, 'echoCancellation')) {
+    audio.echoCancellation = false;
+  }
   if (supported.noiseSuppression) audio.noiseSuppression = Boolean(inputProcessing.noiseSuppression);
   if (supported.autoGainControl) audio.autoGainControl = Boolean(inputProcessing.autoGainControl);
   if (supported.voiceIsolation) audio.voiceIsolation = Boolean(inputProcessing.voiceIsolation);
@@ -734,9 +808,14 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       ? context.createDynamicsCompressor()
       : null;
     const output = context.createGain();
+    const limiterSettings = isVoiceMessage ? VOICE_LIMITER : null;
+    const limiter = limiterSettings && typeof context.createDynamicsCompressor === 'function'
+      ? context.createDynamicsCompressor()
+      : null;
     const destination = context.createMediaStreamDestination();
     nodes.push(source, mono, highPass, lowMid, presence, output, destination);
     if (compressor) nodes.push(compressor);
+    if (limiter) nodes.push(limiter);
 
     configureMonoNode(mono);
     configureMonoNode(destination);
@@ -758,6 +837,14 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       presence.gain.value = profile.presenceGainDb;
     }
 
+    if (limiter) {
+      limiter.threshold.value = limiterSettings.threshold;
+      limiter.knee.value = limiterSettings.knee;
+      limiter.ratio.value = limiterSettings.ratio;
+      limiter.attack.value = limiterSettings.attack;
+      limiter.release.value = limiterSettings.release;
+    }
+
     if (compressor) {
       compressor.threshold.value = profile.compressor.threshold;
       compressor.knee.value = profile.compressor.knee;
@@ -771,7 +858,8 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
     const eqBoostDb = Math.max(0, profile.lowMidGainDb || 0) + Math.max(0, profile.presenceGainDb || 0);
     const baseOutputGainDb = isVoiceMessage && !profile.gainOnly
       ? Math.min(profile.outputGainDb, -eqBoostDb - 1) : profile.outputGainDb;
-    const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0);
+    const outputGainDb = baseOutputGainDb + (isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0) +
+      (profile.makeupGainDb || 0);
     output.gain.value = dbToGain(outputGainDb);
 
     source.connect(mono);
@@ -783,7 +871,12 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       presence.connect(compressor || output);
       if (compressor) compressor.connect(output);
     }
-    output.connect(destination);
+    if (limiter) {
+      output.connect(limiter);
+      limiter.connect(destination);
+    } else {
+      output.connect(destination);
+    }
 
     if (context.state === 'suspended' && typeof context.resume === 'function') {
       let resumeTimer;
@@ -799,6 +892,9 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
       }
     }
     if (context.state !== 'running') throw new Error('AudioContext is not running');
+    if (!(inputStream.getAudioTracks?.() || []).some(track => track.readyState === 'live')) {
+      throw new Error('Microphone ended during audio processing setup');
+    }
 
     const outputAudioTracks = destination.stream?.getAudioTracks?.() || [];
     if (!outputAudioTracks.length) throw new Error('Processed stream has no audio track');
@@ -822,7 +918,7 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
           try { track.stop?.(); } catch {}
         }
       }
-      try { context.close?.(); } catch {}
+      try { context.close?.()?.catch?.(() => {}); } catch {}
     };
 
     if (outputTrack && typeof outputTrack.stop === 'function') {
@@ -872,8 +968,10 @@ async function buildCodecAwareStream(inputStream, profileName, profiles = AUDIO_
         presenceGainDb: profile.presenceGainDb,
         outputGainDb,
         outputBoostDb: isVoiceMessage ? VOICE_OUTPUT_BOOST_DB : 0,
+        makeupGainDb: profile.makeupGainDb || 0,
         configuredOutputGainDb: profile.outputGainDb,
         compressor: compressor ? jsonSafe(profile.compressor) : null,
+        limiter: limiter ? jsonSafe(limiterSettings) : null,
         inputTracks: (inputStream.getAudioTracks?.() || []).map(getTrackInfo),
         outputTracks: outputAudioTracks.map(getTrackInfo)
       }
@@ -899,8 +997,10 @@ function installGetUserMediaHook() {
   if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') return false;
   if (mediaDevices.getUserMedia.__waPlusNativeVoice) return true;
 
-  nativeGetUserMedia = mediaDevices.getUserMedia;
+  const previousGetUserMedia = mediaDevices.getUserMedia;
+  nativeGetUserMedia ||= previousGetUserMedia;
   const patchedGetUserMedia = async function(constraints) {
+    if (activeGetUserMediaHook !== patchedGetUserMedia) return previousGetUserMedia.call(this, constraints);
     const hasAudio = constraints?.audio !== false && constraints?.audio != null;
     const voiceMessageArmed = hasAudio && consumeVoiceMessageCaptureArm();
     const captureKind = voiceMessageArmed ? 'voice-message' : 'voice-call';
@@ -908,14 +1008,14 @@ function installGetUserMediaHook() {
       ? isAudioExperimentEnabled()
       : isCallAudioExperimentEnabled();
     if (!hasAudio) {
-      return nativeGetUserMedia.call(this, constraints);
+      return previousGetUserMedia.call(this, constraints);
     }
 
     if (!enabled) {
-      if (!IS_DEBUG_BUILD || voiceMessageArmed) return nativeGetUserMedia.call(this, constraints);
+      if (!IS_DEBUG_BUILD || voiceMessageArmed) return previousGetUserMedia.call(this, constraints);
       const startedAt = performance.now();
       try {
-        const inputStream = await nativeGetUserMedia.call(this, constraints);
+        const inputStream = await previousGetUserMedia.call(this, constraints);
         if (inputStream?.getAudioTracks?.().length) {
           saveReport({
             kind: 'voice-call-getUserMedia',
@@ -961,7 +1061,7 @@ function installGetUserMediaHook() {
     for (let index = 0; index < attempts.length; index += 1) {
       const attempt = attempts[index];
       try {
-        const inputStream = await nativeGetUserMedia.call(this, attempt.constraints);
+        const inputStream = await previousGetUserMedia.call(this, attempt.constraints);
         let returnedStream = inputStream;
         let processing = { mode: 'natural', active: false };
         if (inputStream?.getAudioTracks?.().length && profiles[selectedProfile]?.processing) {
@@ -1046,7 +1146,9 @@ function installGetUserMediaHook() {
       return false;
     }
   }
-  return mediaDevices.getUserMedia === patchedGetUserMedia;
+  if (mediaDevices.getUserMedia !== patchedGetUserMedia) return false;
+  activeGetUserMediaHook = patchedGetUserMedia;
+  return true;
 }
 
 export function installAudioExperimentHooks() {

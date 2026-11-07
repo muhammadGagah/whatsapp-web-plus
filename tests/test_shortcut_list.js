@@ -74,3 +74,35 @@ for (const language of ['en', 'id']) {
   assert.equal(unavailable, true);
 }
 console.log('Shortcut list tests passed.');
+
+{
+  // Every WhatsApp shortcut in the list is reserved, so a custom binding cannot silently take it over.
+  const { buildSync } = require('esbuild');
+  const code = buildSync({ entryPoints: ['src/shortcut-bindings.js'], bundle: true, write: false, format: 'cjs' })
+    .outputFiles[0].text;
+  const sandbox = { module: { exports: {} }, exports: {} };
+  vm.runInNewContext(code, sandbox);
+  const { parseShortcutBinding, isReservedShortcut, SHORTCUT_ACTIONS } = sandbox.module.exports;
+  const lists = {};
+  vm.runInNewContext(`${source}\nglobalThis.lists = { DEFAULT_KEYS, WEBVIEW_SHORTCUT_KEYS };`, lists);
+  const { DEFAULT_KEYS, WEBVIEW_SHORTCUT_KEYS } = lists.lists;
+  const whatsapp = [...DEFAULT_KEYS[5], ...DEFAULT_KEYS[6], ...WEBVIEW_SHORTCUT_KEYS];
+  assert.ok(whatsapp.length > 40, 'WhatsApp shortcut sections were found');
+  for (const key of whatsapp) {
+    const parsed = parseShortcutBinding(key.replace('Ctrl++', 'Ctrl+='));
+    if (parsed?.code) assert.ok(isReservedShortcut(parsed), `${key} must be reserved`);
+  }
+  for (const { defaultBinding } of Object.values(SHORTCUT_ACTIONS)) {
+    const parsed = parseShortcutBinding(defaultBinding);
+    if (parsed?.code) assert.equal(isReservedShortcut(parsed), false, `${defaultBinding} stays assignable`);
+  }
+}
+for (const key of ['Ctrl+ArrowLeft', 'Ctrl+ArrowDown', 'Ctrl+Shift+ArrowRight', 'Ctrl+Alt+ArrowUp', 'Ctrl+D', 'Ctrl+E', 'Ctrl+G', 'Ctrl+J']) {
+  const { buildSync } = require('esbuild');
+  const code = buildSync({ entryPoints: ['src/shortcut-bindings.js'], bundle: true, write: false, format: 'cjs' }).outputFiles[0].text;
+  const sandbox = { module: { exports: {} }, exports: {} };
+  vm.runInNewContext(code, sandbox);
+  const { parseShortcutBinding, isReservedShortcut } = sandbox.module.exports;
+  assert.ok(isReservedShortcut(parseShortcutBinding(key)), `${key} keeps its editing or browser meaning`);
+}
+console.log('Reserved WhatsApp shortcut tests passed.');

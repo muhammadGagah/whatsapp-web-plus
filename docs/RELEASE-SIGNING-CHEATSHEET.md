@@ -12,7 +12,7 @@ Run the commands one at a time in the order shown. Press Enter after each line a
 
 **Every local path in this guide is an example.** Replace `D:\whatsapp\whatsapp-web-plus` with the folder where you placed the script project. Replace the private-key path with your existing key location outside both repositories. Spaces in paths are supported by the quoted variables. Later relative paths are resolved from the script root, not from `docs`.
 
-The version is read from `package.json`. Update it, `package-lock.json`, `src/metadata.txt`, `README.md`, and `CHANGELOG.md` before running the following block. Replace the example release sequence with a number greater than **every previously published sequence**. `2026092101` is only an example. Use the key ID already trusted by supported Companion versions. Do not generate a new key for each release.
+The version is read from `package.json`. Update it, `package-lock.json`, `src/metadata.txt`, `README.md`, and `CHANGELOG.md` before running the following block. Replace the example release sequence with a number greater than **every previously published sequence**. `2026110101` is only an example. Use the key ID already trusted by supported Companion versions. Do not generate a new key for each release.
 
 The URLs below are the official project's endpoints, not local-path examples. A fork needs a coordinated change to publishing and Companion verification settings. Changing these variables alone is insufficient.
 
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = 'D:\whatsapp\whatsapp-web-plus'
 $privateKeyPath = 'D:\secure\whatsapp-companion\release-ed25519-private.pem'
 $keyId = 'wwp-userscript-ed25519-2026-01'
-$releaseSequence = '2026092101'
+$releaseSequence = '2026110101'
 Set-Location -LiteralPath $scriptRoot
 $publicKeyPath = Join-Path $scriptRoot 'update-public-key.pem'
 $releaseVersion = (Get-Content -LiteralPath '.\package.json' -Raw | ConvertFrom-Json).version
@@ -42,10 +42,10 @@ If either command fails, fix the problem before continuing. The tests regenerate
 
 ## 3. Publish the userscript first
 
-Keep the existing manifest and signature unchanged in this first commit. Stage the release files, then inspect the list. Add any other intended source, test, or documentation files explicitly.
+Keep the existing manifest and signature unchanged in this first commit. Stage the release files, then inspect the list. Add any other intended changes explicitly, such as `.gitignore` or `debug-entry.js`. Never sign the local build: GreasyFork reformats the metadata, so the public file has a different hash.
 
 ```powershell
-git add -- src tests README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
+git add -- src tests docs README.md CHANGELOG.md package.json package-lock.json whatsapp_web_plus.user.js
 ```
 
 Review the summary of staged changes:
@@ -60,7 +60,7 @@ Then check the list of file names:
 git --no-pager diff --cached --name-only
 ```
 
-Continue only if the staged list contains exactly the intended files and excludes the new manifest and signature. The commands below assume the official release branch is `main`.
+Continue only if the staged list contains exactly the intended files and excludes the new manifest and signature. The commands below push directly to `main`. If you release through a branch and pull request, push the branch and merge the pull request instead, and continue only after the merge. Then return to the updated `main` with `git switch main` and `git pull --ff-only origin main`, and check that `git status` shows a clean working tree. The manifest commit in step 7 must be made on `main`. GreasyFork imports from `main`, and Companion reads the manifest from `main`.
 
 ```powershell
 git commit -m "Release WhatsApp Web Plus $releaseVersion"
@@ -141,3 +141,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Public release verification failed' }
 Again check `verified=true`, version, sequence, and key ID. If public files are still old or temporarily inconsistent, wait for the updated files to become available and repeat step 8 with a fresh temporary directory. Do not lower the sequence to work around a problem.
 
 If you close PowerShell, its variables are lost. Start again at step 1 and use a new staging directory. Do not publish leftovers from an unverified attempt.
+
+## 9. Bundle the release in Companion
+
+After step 8 succeeds, follow `docs/update-bundled-userscript.md` in the Companion repository. It downloads the same public file, verifies it with this manifest, and copies it into the add-on. Do not bundle the local build.

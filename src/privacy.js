@@ -1,4 +1,6 @@
+import { ownedAttributes } from './owned-state.js';
 import {
+  OWNERS,
   PHONE_RE,
   PHONE_URL_RE,
   SELECTORS,
@@ -792,6 +794,8 @@ if (_origAriaLabelDesc && _origAriaLabelDesc.set) {
 }
 
 export function cleanNamedAttribute(el, attrName) {
+  if (attrName === 'aria-label' && (el.matches?.('span[data-testid="author"]') ||
+    privacyAttributes.get(el)?.has('aria-hidden'))) maskPhoneAuthorText(el);
   const value = el.getAttribute(attrName);
   if (!value) return;
   const privacyState = privacyAttributes.get(el)?.get(attrName);
@@ -812,24 +816,35 @@ export function cleanNamedAttribute(el, attrName) {
       ? privacyState.raw
       : value;
   const cleaned = prepareNamedAttribute(el, attrName, sourceValue);
-  if (value !== cleaned) _origSetAttribute.call(el, attrName, cleaned);
+  if (value !== cleaned) {
+    preserveStickerNameOwnership(el, attrName, value, cleaned);
+    _origSetAttribute.call(el, attrName, cleaned);
+  }
+}
+
+function preserveStickerNameOwnership(el, name, previous, next) {
+  const state = ownedAttributes.get(el)?.get(name);
+  if (state?.owner === OWNERS.stickerMessageName && state.appliedValue === previous) {
+    state.appliedValue = next;
+  }
 }
 
 function maskPhoneAuthorText(el) {
-  if (!isPrivacyMode ||
-    !el.matches?.('span[data-testid="author"]:not([aria-label])') ||
-    !el.closest?.(SELECTORS.conversationMessages) ||
-    (el.getAttribute('aria-hidden') === 'true' &&
-      !privacyAttributes.get(el)?.has('aria-hidden'))) return;
-
-  const text = normalizeText(el.textContent || '');
-  const participant = tForHost('participant', el);
-  const masked = maskPhoneNumbers(text, el);
   const state = privacyAttributes.get(el)?.get('aria-hidden');
+  const eligible = isPrivacyMode &&
+    el.matches?.('span[data-testid="author"]:not([aria-label])') &&
+    el.closest?.(SELECTORS.conversationMessages);
+  if ((!eligible && !state) || (el.getAttribute('aria-hidden') === 'true' && !state)) return;
+
+  const text = eligible ? normalizeText(el.textContent || '') : '';
+  const participant = tForHost('participant', el);
+  const masked = eligible ? maskPhoneNumbers(text, el) : text;
   if (!text || masked === text || !masked.includes(participant)) {
-    if (state && el.getAttribute('aria-hidden') === state.masked) {
-      if (state.raw === null) _origRemoveAttribute.call(el, 'aria-hidden');
-      else _origSetAttribute.call(el, 'aria-hidden', state.raw);
+    if (state) {
+      if (el.getAttribute('aria-hidden') === state.masked) {
+        if (state.raw === null) _origRemoveAttribute.call(el, 'aria-hidden');
+        else _origSetAttribute.call(el, 'aria-hidden', state.raw);
+      }
       const attributes = privacyAttributes.get(el);
       attributes.delete('aria-hidden');
       if (!attributes.size) privacyAttributes.delete(el);
@@ -841,7 +856,7 @@ function maskPhoneAuthorText(el) {
   if (!state || currentHidden !== state.masked) {
     rememberPrivacyAttribute(el, 'aria-hidden', currentHidden, 'true');
   }
-  _origSetAttribute.call(el, 'aria-hidden', 'true');
+  if (currentHidden !== 'true') _origSetAttribute.call(el, 'aria-hidden', 'true');
 }
 
 export function cleanElementAttributes(el) {
@@ -860,9 +875,19 @@ export function cleanElementAttributes(el) {
   }
 }
 
+function restorePrivacyElement(el, attributes) {
+  for (const [name, state] of attributes) {
+    if (el.getAttribute(name) !== state.masked) continue;
+    preserveStickerNameOwnership(el, name, state.masked, state.raw);
+    if (state.raw === null) _origRemoveAttribute.call(el, name);
+    else _origSetAttribute.call(el, name, state.raw);
+  }
+}
+
 export function forgetPrivacyState(rootEl) {
   for (const el of [...privacyAttributes.keys()]) {
     if (!el.isConnected || el === rootEl || (rootEl.contains && rootEl.contains(el))) {
+      restorePrivacyElement(el, privacyAttributes.get(el));
       privacyAttributes.delete(el);
     }
   }
@@ -885,12 +910,7 @@ export function forgetPrivacyState(rootEl) {
 
 export function restorePrivacyAttributes() {
   for (const [el, attributes] of privacyAttributes) {
-    if (!el.isConnected) continue;
-    for (const [name, state] of attributes) {
-      if (el.getAttribute(name) !== state.masked) continue;
-      if (state.raw === null) _origRemoveAttribute.call(el, name);
-      else _origSetAttribute.call(el, name, state.raw);
-    }
+    restorePrivacyElement(el, attributes);
   }
   privacyAttributes.clear();
 }

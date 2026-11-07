@@ -25,6 +25,11 @@ const manifestPath = resolve(requiredArgument(argumentsMap, '--manifest-out'));
 const signaturePath = resolve(requiredArgument(argumentsMap, '--signature-out'));
 const keyId = requiredArgument(argumentsMap, '--key-id');
 const releaseSequence = Number(requiredArgument(argumentsMap, '--release-sequence'));
+// Companion ignores a release whose sequence is not higher than the published one.
+const publishedManifest = JSON.parse(await readFile(resolve(repositoryRoot, 'update-manifest.json'), 'utf8'));
+if (!(releaseSequence > publishedManifest.releaseSequence)) {
+  throw new Error(`Release sequence must be higher than the published ${publishedManifest.releaseSequence}`);
+}
 
 assertPathOutsideRepository(privateKeyPath, repositoryRoot, 'Private key');
 const packageMetadata = JSON.parse(await readFile(resolve(repositoryRoot, 'package.json'), 'utf8'));

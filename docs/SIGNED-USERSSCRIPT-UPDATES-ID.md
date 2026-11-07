@@ -41,11 +41,12 @@ Path lokal boleh disesuaikan. URL unduhan dan manifest resmi ditetapkan oleh pro
 
 ## Bagaimana rilis sampai ke pengguna?
 
-1. Publikasikan source userscript dan hasil build `whatsapp_web_plus.user.js` ke GitHub.
+1. Publikasikan source userscript dan hasil build `whatsapp_web_plus.user.js` ke `main` di GitHub, dengan manifest dan signature sebelumnya tetap dipertahankan. Bila memakai branch rilis, tahap ini terjadi saat pull request-nya di-merge.
 2. Tunggu GreasyFork menyediakan versi tersebut. Impor atau webhook yang sudah dikonfigurasi dapat melakukannya, tetapi keberhasilan Git push belum membuktikan tahap ini selesai.
 3. Unduh file publik dari GreasyFork, periksa isinya, lalu tandatangani manifest yang mengidentifikasi byte file tersebut.
 4. Publikasikan manifest dan signature dalam commit kedua yang sama.
 5. Verifikasi manifest, signature, dan asset yang dapat diunduh secara publik bersama-sama.
+6. Masukkan file publik yang sudah diverifikasi itu ke Companion melalui `docs/update-bundled-userscript.id.md` miliknya.
 
 Tampermonkey memakai metadata pembaruan/unduhan GreasyFork pada userscript. Tampermonkey tidak memasang manifest bertanda tangan. Companion mengambil metadata bertanda tangan dari repository script di GitHub lalu memverifikasi asset GreasyFork yang sesuai secara terpisah.
 

@@ -29,6 +29,7 @@ import {
 } from './owned-attributes.js';
 import {
   getChatStatusRegex,
+  getDeliveryStatusKey,
   getLanguage,
   getNavButton,
   getSupportedLanguage,
@@ -37,7 +38,8 @@ import {
   isAnnouncementReductionEnabled,
   isVoiceMessageKeyboardPlaybackEnabled,
   t,
-  tForLanguage
+  tForLanguage,
+  translateDeliveryStatus
 } from './settings-state.js';
 import {
   invalidateCompanionAnnouncements,
@@ -50,6 +52,12 @@ let lastFocusedChatContainer = null;
 let lastFocusedChatTitle = '';
 let lastFocusedChatIdentity = '';
 let lastFocusedChatRowIndex = -1;
+// WhatsApp forgets the focused chat when focus leaves the list. Tab or Shift+Tab back in
+// focuses the list container and then the first chat; this holds the chat to return to.
+let pendingChatListReentry = null;
+// A click moves focus itself; the focus that follows it is never treated as Tab re-entry.
+let pointerFocusPending = false;
+const CHAT_LIST_REENTRY_WINDOW_MS = 1000;
 let lastFocusedMessageNode = null;
 let lastFocusedMessageId = '';
 let lastFocusedMessageTarget = null;
@@ -82,10 +90,15 @@ function isNavbarActive(selectorKey) {
   return hasActiveState(getNavButton(selectorKey));
 }
 
+// True when the navigation bar shows a tab other than Chats. Unlike isChatsTabActive, an empty
+// chat list (a search or filter with no results) does not count as leaving the Chats tab.
+export function isOtherTabActive() {
+  return isNavbarActive('navStatus') || isNavbarActive('navCommunities') || isNavbarActive('navChannels') ||
+    isNavbarActive('navMetaAI') || isNavbarActive('navCalls');
+}
+
 export function isChatsTabActive() {
-  if (isNavbarActive('navStatus') || isNavbarActive('navCommunities') || isNavbarActive('navChannels') || isNavbarActive('navMetaAI')) {
-    return false;
-  }
+  if (isOtherTabActive()) return false;
 
   const side = document.querySelector(SELECTORS.side);
   if (!side) return false;
@@ -309,7 +322,10 @@ export function applyMetaAIMessageName(message) {
   // Deep word-by-word markup can exceed Chromium's text-alternative traversal
   // limit. Supply the complete filtered text without changing descendant controls.
   applyOwnedAttribute(message, 'aria-labelledby', null, OWNERS.metaAIMessageName);
-  applyOwnedAttribute(message, 'aria-label', cleanString(label, false), OWNERS.metaAIMessageName);
+  // Route the label through privacy masking like other message labels, so numbers in a Meta AI
+  // reply stay masked and the cleanup observer does not fight the script over this attribute.
+  applyOwnedAttribute(message, 'aria-label',
+    prepareNamedAttribute(message, 'aria-label', cleanString(label, false)), OWNERS.metaAIMessageName);
   return true;
 }
 
@@ -376,7 +392,8 @@ function ensureMessageGridLabel() {
   }
   label.lang = getLanguage();
   label.dir = 'ltr';
-  label.textContent = t('messageHistory');
+  const text = t('messageHistory');
+  if (label.textContent !== text) label.textContent = text;
   return label;
 }
 
@@ -1022,7 +1039,10 @@ function getVoiceMessagePlaybackButton(messageItem) {
     !node.closest?.('[data-testid="quoted-message"]');
   const hasVoiceIdentity = Array.from(
     messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackIdentity) || []
-  ).some(belongsToPrimaryMessage);
+  ).some(belongsToPrimaryMessage) || Array.from(
+    messageContainer.querySelectorAll?.('svg title') || []
+  ).some(title => belongsToPrimaryMessage(title) &&
+    title.textContent?.trim() === 'ic-keyboard-voice-filled');
   const progressControls = Array.from(
     messageContainer.querySelectorAll?.(SELECTORS.voiceMessagePlaybackProgress) || []
   ).filter(belongsToPrimaryMessage);
@@ -1083,6 +1103,60 @@ export function handleVoiceMessagePlaybackKeydown(event) {
 }
 
 let chatListShortcutArrowAnchor = null;
+// True while the script replays WhatsApp's own arrow keys; its handlers must not intercept them.
+let syncingNativeChatSelection = false;
+const NATIVE_CHAT_SELECTION_MAX_STEPS = 60;
+
+// The script's own key and focus handlers ignore the replayed arrows and the focus moves they cause.
+export function isSyncingNativeChatSelection() {
+  return syncingNativeChatSelection;
+}
+
+function getNativeSelectedChatRow(rows) {
+  return rows.find(row => getChatRowActivator(row)?.getAttribute?.('aria-selected') === 'true') || null;
+}
+
+// WhatsApp remembers its own focused chat and only moves that memory with its own arrow keys.
+// After the script focuses a chat directly, the next arrow continues from WhatsApp's chat
+// instead: Down after Tab back into the list jumps to the second chat, and Right no longer
+// reaches "View status". Replaying WhatsApp's arrows from its chat to the target keeps both
+// in step. Returns false when the replay is not possible; callers then focus the chat directly.
+function syncNativeChatSelection(targetRow) {
+  if (syncingNativeChatSelection || typeof KeyboardEvent !== 'function') return false;
+  const chatList = targetRow?.closest?.(SELECTORS.chatListInSide);
+  if (!chatList?.isConnected) return false;
+  const rows = orderChatRowsByPosition(getChatListRowCandidates(chatList)).filter(row =>
+    row?.isConnected && row.querySelector?.(SELECTORS.cellFrame) && isRenderedElement(row)
+  );
+  const nativeRow = getNativeSelectedChatRow(rows);
+  const from = rows.indexOf(nativeRow);
+  const to = rows.indexOf(targetRow);
+  const steps = Math.abs(to - from);
+  if (from < 0 || to < 0 || steps === 0 || steps > NATIVE_CHAT_SELECTION_MAX_STEPS) return false;
+  const nativeActivator = getChatRowActivator(nativeRow);
+  const targetTitle = getChatRowTitle(targetRow);
+  if (!nativeActivator || !targetTitle) return false;
+
+  const key = to > from ? 'ArrowDown' : 'ArrowUp';
+  const keyCode = key === 'ArrowDown' ? 40 : 38;
+  const activeRow = () => document.activeElement?.closest?.('div[role="row"]') || null;
+  syncingNativeChatSelection = true;
+  try {
+    if (activeRow() !== nativeRow && !focusItem(nativeActivator)) return false;
+    for (let step = 0; step < steps; step++) {
+      const before = activeRow();
+      document.activeElement?.dispatchEvent?.(new KeyboardEvent('keydown', {
+        key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true
+      }));
+      if (!activeRow() || activeRow() === before) break;
+    }
+  } finally {
+    syncingNativeChatSelection = false;
+  }
+  const landed = activeRow();
+  return !!landed && getChatRowTitle(landed) === targetTitle &&
+    document.activeElement === getChatRowActivator(landed);
+}
 
 function clearChatListShortcutArrowAnchor() {
   chatListShortcutArrowAnchor = null;
@@ -1112,7 +1186,7 @@ function trackChatListShortcutArrowFocus(target, interactionType) {
 
 function handleChatListShortcutArrowKeydown(event) {
   const anchor = chatListShortcutArrowAnchor;
-  if (!anchor || event.defaultPrevented || event.isComposing ||
+  if (!anchor || syncingNativeChatSelection || event.defaultPrevented || event.isComposing ||
     event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
     event.getModifierState?.('AltGraph') ||
     !['ArrowUp', 'ArrowDown'].includes(event.key) || getActiveModal()) return false;
@@ -1192,14 +1266,82 @@ function handleChatListShortcutArrowKeydown(event) {
   return true;
 }
 
+let pendingHistoryBoundary = false;
+let historyBoundaryKeySequence = 0;
+const historyBoundaryAttempts = new WeakMap();
+
+// Mirrors navigation.js: the list may sit inside the real scroll viewport, and a
+// column-reverse viewport counts scrollTop from the latest message (0) to negative values.
+function getHistoryViewport(panel, main) {
+  for (let node = panel; node && node !== main; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight ||
+      /^(auto|scroll)$/.test(globalThis.getComputedStyle?.(node)?.overflowY || '')) return node;
+  }
+  return panel;
+}
+
+function isReversedViewport(viewport) {
+  return globalThis.getComputedStyle?.(viewport)?.flexDirection === 'column-reverse';
+}
+
+function getDistanceFromOldest(viewport) {
+  return isReversedViewport(viewport)
+    ? viewport.scrollHeight - viewport.clientHeight - Math.abs(viewport.scrollTop)
+    : viewport.scrollTop;
+}
+
+function assistHistoryBoundary(event) {
+  if (event.repeat || pendingHistoryBoundary) return;
+  const cell = event.target;
+  if (document.activeElement !== cell || !isPrimaryMessageItem(cell) || getActiveModal()) return;
+  const panel = cell.closest(SELECTORS.conversationMessages);
+  const main = cell.closest(SELECTORS.main);
+  const viewport = panel && main ? getHistoryViewport(panel, main) : null;
+  if (!viewport || getDistanceFromOldest(viewport) <= 1 ||
+    panel.querySelector('.focusable-list-item') !== cell ||
+    Date.now() - (historyBoundaryAttempts.get(panel) ?? -Infinity) < 600) return;
+  const identity = cell.closest('[data-id]');
+  const messageId = identity?.getAttribute('data-id');
+  if (!messageId) return;
+  const chat = getChatContextKey(main);
+  const keySequence = historyBoundaryKeySequence;
+  pendingHistoryBoundary = true;
+  setTimeout(() => {
+    pendingHistoryBoundary = false;
+    if (keySequence !== historyBoundaryKeySequence || document.activeElement !== cell ||
+      !cell.isConnected || !panel.isConnected || getActiveModal() ||
+      document.querySelector(SELECTORS.main) !== main ||
+      document.querySelector(SELECTORS.conversationMessages) !== panel ||
+      !isPrimaryMessageItem(cell) || cell.closest('[data-id]') !== identity ||
+      getChatContextKey(main) !== chat || identity.getAttribute('data-id') !== messageId ||
+      panel.querySelector('.focusable-list-item') !== cell || !viewport.isConnected ||
+      getDistanceFromOldest(viewport) <= 1) return;
+    historyBoundaryAttempts.set(panel, Date.now());
+    const step = Math.max(1, viewport.clientHeight) * 2;
+    const top = isReversedViewport(viewport)
+      ? -Math.min(viewport.scrollHeight - viewport.clientHeight, Math.abs(viewport.scrollTop) + step)
+      : Math.max(0, viewport.scrollTop - step);
+    viewport.scrollTo({ top, behavior: 'instant' });
+  }, 80);
+}
+
 export function handleMessageGridKeydown(event) {
+  // Replayed WhatsApp arrows are not the user's keys.
+  if (syncingNativeChatSelection) return false;
+  // A key press means the next focus comes from the keyboard, even if a click moved no focus.
+  pointerFocusPending = false;
+  if (!event.repeat) historyBoundaryKeySequence++;
   if (handleChatListShortcutArrowKeydown(event)) return true;
   if (event.defaultPrevented || event.isComposing ||
     event.altKey || event.ctrlKey || event.metaKey) return false;
   if (event.shiftKey && event.key === 'Enter') return handleMessageReadMoreKeydown(event);
   if (event.shiftKey) return false;
   if (event.key === 'Enter' || event.key === ' ') return handleVoiceMessagePlaybackKeydown(event);
-  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return false;
+  if (event.key === 'ArrowUp') {
+    assistHistoryBoundary(event);
+    return false;
+  }
+  if (!['Home', 'End'].includes(event.key)) return false;
 
   const cell = event.target?.closest?.('[role="gridcell"]');
   if (!cell || event.target !== cell ||
@@ -1212,16 +1354,7 @@ export function handleMessageGridKeydown(event) {
   const index = cells.indexOf(cell);
   if (index < 0) return false;
 
-  if ((event.key === 'ArrowUp' && index === 0) ||
-    (event.key === 'ArrowDown' && index === cells.length - 1)) {
-    return false;
-  }
-
-  const targetIndex = event.key === 'Home'
-    ? 0
-    : event.key === 'End'
-      ? cells.length - 1
-      : index + (event.key === 'ArrowUp' ? -1 : 1);
+  const targetIndex = event.key === 'Home' ? 0 : cells.length - 1;
   const target = cells[targetIndex];
   setMessageGridTabStop(cells, target);
   target.focus({ preventScroll: true });
@@ -1307,6 +1440,62 @@ function applyMessageGridExperiment() {
   });
   placeholderSet.forEach(cell => applyOwnedMessageRole(cell, 'gridcell', OWNERS.messagePlaceholder));
   normalizeMessageGridTabStops(messages);
+}
+
+export function refreshStickerMessageNames(rootEl = document) {
+  const messages = new Set([
+    ...(rootEl.matches?.('.focusable-list-item') ? [rootEl] : []),
+    ...Array.from(rootEl.querySelectorAll?.('.focusable-list-item') || [])
+  ]);
+  for (const message of messages) {
+    const state = ownedAttributes.get(message)?.get('aria-label');
+    const current = message.getAttribute('aria-label');
+    const ours = state?.owner === OWNERS.stickerMessageName && current === state.appliedValue;
+    const nativeLabel = ours ? state.originalValue : current;
+    const release = () => releaseOwnedAttribute(message, 'aria-label', OWNERS.stickerMessageName);
+    if (!message.closest?.(SELECTORS.conversationMessages) || message.closest?.('[data-testid="quoted-message"]') ||
+      nativeLabel?.trim() || message.getAttribute('aria-labelledby')?.trim()) {
+      release();
+      continue;
+    }
+    const images = Array.from(message.querySelectorAll('[data-testid="sticker-container"] img[alt]'))
+      .filter(image => !image.closest('[data-testid="quoted-message"], [aria-hidden="true"], [hidden]'));
+    const descriptions = [...new Set(images.map(image => cleanString(image.getAttribute('alt') || '', false)).filter(Boolean))];
+    if (!descriptions.length) {
+      release();
+      continue;
+    }
+    // Privacy mode hides a phone-number author with aria-hidden on the author itself; that
+    // author still names the sender (masked by cleanString below), so check ancestors only.
+    const sender = Array.from(message.querySelectorAll('[data-testid="author"]'))
+      .find(el => !el.hasAttribute('hidden') &&
+        !el.parentElement?.closest('[data-testid="quoted-message"], [aria-hidden="true"], [hidden]'));
+    const times = [...new Set(Array.from(message.querySelectorAll('[data-testid="msg-meta"]'))
+      .filter(el => !el.closest('[data-testid="quoted-message"]'))
+      .map(el => {
+        const copy = el.cloneNode(true);
+        copy.querySelectorAll('svg, [aria-hidden="true"], [hidden]').forEach(node => node.remove());
+        return cleanString(copy.textContent || '', false);
+      }).filter(Boolean))];
+    // Outgoing stickers keep their delivery status, which WhatsApp exposes only on the status icon.
+    const status = Array.from(message.querySelectorAll(
+      '[data-testid="msg-meta"] [aria-label], [data-testid="msg-meta"] [title]'))
+      .filter(el => !el.closest('[data-testid="quoted-message"]'))
+      .map(el => cleanString(el.getAttribute('aria-label') || el.getAttribute('title') || '', false))
+      .find(value => getDeliveryStatusKey(value));
+    // Like other message labels, speak the whole label in WhatsApp's page language when it is known,
+    // so the prefix and the delivery status never mix two languages.
+    const hostLanguage = getSupportedLanguage(
+      message.closest?.('[lang]')?.getAttribute?.('lang') || document.documentElement?.lang || '');
+    const label = [
+      // Pass the author element so a privacy placeholder uses the same page language as the label.
+      sender && cleanString(sender.getAttribute('aria-label') || sender.textContent || '', 'identity', sender),
+      `${hostLanguage ? tForLanguage('sticker', hostLanguage) : t('sticker')}: ${descriptions.join('. ')}`,
+      ...times,
+      status && translateDeliveryStatus(status, hostLanguage)
+    ].filter(Boolean).join(' ');
+    applyOwnedAttribute(message, 'aria-label', prepareNamedAttribute(message, 'aria-label', label), OWNERS.stickerMessageName);
+  }
 }
 
 export function refreshMessageMentionNames(rootEl = document) {
@@ -1434,6 +1623,14 @@ export function focusChatRow(
       onSuccess?.(currentRow, currentTarget);
       return true;
     }
+    if (syncNativeChatSelection(currentRow)) {
+      const syncedRow = document.activeElement.closest('div[role="row"]');
+      rememberChatRowState(syncedRow);
+      // WhatsApp's own arrows now continue from this chat.
+      clearChatListShortcutArrowAnchor();
+      onSuccess?.(syncedRow, document.activeElement);
+      return true;
+    }
     const chatList = currentRow.closest(SELECTORS.chatListInSide);
     if (chatList) normalizeChatListTabStops(chatList, currentRow);
     const focused = focusItem(currentTarget);
@@ -1474,8 +1671,24 @@ function restoreChatRowNativeMasksOutsideChatList() {
   }
 }
 
+// WhatsApp gives emoji images tabindex="-1". They are not tab stops, so they must not keep
+// a chat preview visible next to the row label.
+const TABBABLE_SELECTOR = FOCUSABLE_SELECTOR.replace('[tabindex]', '[tabindex]:not([tabindex="-1"])');
+const NATIVE_CONTROL_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary']);
+
 function hasFocusableSelfOrDescendant(el) {
-  return !!el && (el.matches(FOCUSABLE_SELECTOR) || !!el.querySelector(FOCUSABLE_SELECTOR));
+  return !!el && (el.matches(TABBABLE_SELECTOR) || !!el.querySelector(TABBABLE_SELECTOR));
+}
+
+// WhatsApp makes plain text inside some previews a tab stop, such as the phone number in
+// "+62 ... joined using this group's invite link". The row is the only tab stop for its text.
+function demotePassiveChatRowTabStops(maskRoot) {
+  maskRoot.querySelectorAll('[tabindex="0"]').forEach(el => {
+    if (el === maskRoot || el.getAttribute('tabindex') !== '0' || el.getAttribute('role')) return;
+    const tagName = String(el.localName || el.tagName || '').toLowerCase();
+    if (NATIVE_CONTROL_TAGS.has(tagName) || el.isContentEditable) return;
+    applyOwnedAttribute(el, 'tabindex', '-1', OWNERS.chatStructure);
+  });
 }
 
 function hasUsefulNativeChatText(el) {
@@ -1484,6 +1697,7 @@ function hasUsefulNativeChatText(el) {
 }
 
 export function applyChatRowDescendantMasks(row, maskRoot) {
+  demotePassiveChatRowTabStops(maskRoot);
   const desired = new Set();
   maskRoot.querySelectorAll(CHAT_ROW_NATIVE_TEXT_SELECTOR).forEach(el => {
     if (el === maskRoot) return;
@@ -1569,6 +1783,7 @@ export function normalizeChatListTabStops(chatList, preferredRow = null) {
 export function fixAccessibilityRoles(rootEl, skipGlobalWork = false) {
   if (!rootEl || !rootEl.querySelectorAll) return null;
 
+  refreshStickerMessageNames(rootEl);
   refreshMessageMentionNames(rootEl);
 
   if (!isAnnouncementReductionEnabled()) {
@@ -1662,8 +1877,74 @@ function applyVisuallyHiddenStyle(el) {
   el.style.border = '0';
 }
 
+const announcementRegions = new Map();
+let announcementModalHost = null;
+let announcementHostObserver = null;
+let announcementFocusListener = false;
+// Chromium may drop a live-region change made right after the region moved
+// into a modal, so writes wait until that move has settled.
+const ANNOUNCEMENT_REGION_SETTLE_MS = 150;
+let announcementRegionsMovedAt = -Infinity;
+// Passive messages wait in order while the regions settle, so a later batch
+// can never be spoken before an earlier one.
+const pendingPassiveBatches = [];
+let pendingPassiveTimer = null;
+
+function getAnnouncementHost() {
+  const dialogs = Array.from(document.querySelectorAll?.('dialog:modal') || []);
+  return [...dialogs].reverse().find(dialog => dialog.contains(document.activeElement)) || dialogs.at(-1) || document.body;
+}
+
+function syncAnnouncementHosts() {
+  const host = getAnnouncementHost();
+  let moved = false;
+  for (const region of announcementRegions.values()) {
+    if (region.parentElement === host) continue;
+    // Moving populated live regions can replay old messages.
+    region.textContent = '';
+    host.appendChild(region);
+    moved = true;
+  }
+  // Only a move into a modal needs to settle; restoring the regions to the page body is immediate.
+  if (moved && host !== document.body) announcementRegionsMovedAt = Date.now();
+  if (host === document.body) {
+    announcementHostObserver?.disconnect();
+    announcementHostObserver = null;
+    announcementModalHost = null;
+  } else {
+    announcementModalHost = host;
+    if (!announcementHostObserver) {
+      announcementHostObserver = new MutationObserver(() => {
+        // A nested modal opened above the current host makes the host inert.
+        if (announcementModalHost?.isConnected && announcementModalHost.matches(':modal') &&
+            getAnnouncementHost() === announcementModalHost &&
+            [...announcementRegions.values()].every(region => region.parentElement === announcementModalHost)) return;
+        syncAnnouncementHosts();
+      });
+      // Observe only while a modal owns the two regions, including removal
+      // without a close event. Unrelated mutations take the early return above.
+      announcementHostObserver.observe(document.body, {
+        subtree: true, childList: true, attributes: true, attributeFilter: ['open']
+      });
+    }
+  }
+  if (!announcementFocusListener) {
+    announcementFocusListener = true;
+    // Follow a newly opened modal when focus enters it, before anything is
+    // written, so the first announcement inside the modal is not lost.
+    document.addEventListener?.('focusin', () => {
+      if (announcementRegions.size) syncAnnouncementHosts();
+    }, true);
+  }
+  return moved;
+}
+
+function getAnnouncementSettleDelay() {
+  return Math.max(0, announcementRegionsMovedAt + ANNOUNCEMENT_REGION_SETTLE_MS - Date.now());
+}
+
 export function ensureLiveRegion() {
-  let liveRegion = document.getElementById('wa-plus-live-region');
+  let liveRegion = document.getElementById('wa-plus-live-region') || announcementRegions.get('status');
   if (!liveRegion) {
     liveRegion = document.createElement('div');
     liveRegion.id = 'wa-plus-live-region';
@@ -1675,12 +1956,13 @@ export function ensureLiveRegion() {
   }
   liveRegion.lang = getLanguage();
   liveRegion.dir = 'ltr';
+  announcementRegions.set('status', liveRegion);
   ensureMessageLog();
   return liveRegion;
 }
 
 export function ensureMessageLog() {
-  let messageLog = document.getElementById('wa-plus-message-log');
+  let messageLog = document.getElementById('wa-plus-message-log') || announcementRegions.get('log');
   if (!messageLog) {
     messageLog = document.createElement('div');
     messageLog.id = 'wa-plus-message-log';
@@ -1693,12 +1975,44 @@ export function ensureMessageLog() {
   }
   messageLog.lang = getLanguage();
   messageLog.dir = 'ltr';
+  announcementRegions.set('log', messageLog);
+  syncAnnouncementHosts();
   return messageLog;
+}
+
+function flushPendingPassiveMessages() {
+  pendingPassiveTimer = null;
+  ensureMessageLog();
+  const settleDelay = getAnnouncementSettleDelay();
+  if (settleDelay > 0) {
+    pendingPassiveTimer = setTimeout(flushPendingPassiveMessages, settleDelay);
+    return;
+  }
+  for (const batch of pendingPassiveBatches.splice(0)) {
+    if (batch.generation === announcementGeneration) writeMessages(batch.values);
+  }
+}
+
+function clearPendingPassiveMessages() {
+  pendingPassiveBatches.length = 0;
+  if (pendingPassiveTimer !== null) clearTimeout(pendingPassiveTimer);
+  pendingPassiveTimer = null;
 }
 
 function appendMessages(messages, generation) {
   const values = messages.filter(Boolean);
   if (!values.length || generation !== announcementGeneration) return;
+  ensureMessageLog();
+  const settleDelay = getAnnouncementSettleDelay();
+  if (settleDelay > 0 || pendingPassiveTimer !== null) {
+    pendingPassiveBatches.push({ values, generation });
+    if (pendingPassiveTimer === null) pendingPassiveTimer = setTimeout(flushPendingPassiveMessages, settleDelay);
+    return;
+  }
+  writeMessages(values);
+}
+
+function writeMessages(values) {
   const messageLog = ensureMessageLog();
   values.forEach(text => {
     const entry = document.createElement('div');
@@ -1717,8 +2031,10 @@ function appendMessages(messages, generation) {
 }
 
 export function clearMessageLog() {
-  const messageLog = document.getElementById('wa-plus-message-log');
-  if (messageLog) messageLog.textContent = '';
+  clearPendingPassiveMessages();
+  for (const messageLog of new Set([document.getElementById('wa-plus-message-log'), announcementRegions.get('log')])) {
+    if (messageLog) messageLog.textContent = '';
+  }
   invalidateCompanionAnnouncements('message-log-cleared', 'message-log');
 }
 
@@ -1726,8 +2042,9 @@ export function clearStatusRegion() {
   if (announcementTimer !== null) clearTimeout(announcementTimer);
   announcementTimer = null;
   userAnnouncementUntil = 0;
-  const liveRegion = document.getElementById('wa-plus-live-region');
-  if (liveRegion) liveRegion.textContent = '';
+  for (const liveRegion of new Set([document.getElementById('wa-plus-live-region'), announcementRegions.get('status')])) {
+    if (liveRegion) liveRegion.textContent = '';
+  }
   invalidateCompanionAnnouncements('status-cleared', 'status');
 }
 
@@ -1742,8 +2059,15 @@ export function announce(text, shouldAnnounce = () => true) {
   const liveRegion = ensureLiveRegion();
   clearTimeout(announcementTimer);
   liveRegion.textContent = '';
-  announcementTimer = setTimeout(() => {
+  const deliver = () => {
     if (!shouldAnnounce()) return;
+    syncAnnouncementHosts();
+    const settleDelay = getAnnouncementSettleDelay();
+    if (settleDelay > 0) {
+      announcementTimer = setTimeout(deliver, settleDelay);
+      return;
+    }
+    liveRegion.style.whiteSpace = text.includes('\n') ? 'pre' : 'nowrap';
     liveRegion.textContent = text;
     publishCompanionAnnouncement({
       source: 'status',
@@ -1754,7 +2078,8 @@ export function announce(text, shouldAnnounce = () => true) {
     announcementTimer = setTimeout(() => {
       liveRegion.textContent = '';
     }, 3000);
-  }, 0);
+  };
+  announcementTimer = setTimeout(deliver, 0);
 }
 
 export function announcePassiveMessages(messages, generation) {
@@ -2105,7 +2430,101 @@ export function getActiveModal(preferredTarget = document.activeElement) {
   return dialogs.at(-1) || null;
 }
 
-export function rememberFocusedRow(target, interactionType = 'focus') {
+function getChatListFocusScope() {
+  const chatList = document.querySelector(SELECTORS.chatListInSide);
+  if (!chatList) return null;
+  return chatList.closest?.(SELECTORS.chatListScroller) || chatList;
+}
+
+function resolveRememberedChatRow(rows) {
+  if (!lastFocusedChatTitle) return null;
+  if (rows.includes(lastFocusedChatRowNode) &&
+    getChatRowTitle(lastFocusedChatRowNode) === lastFocusedChatTitle) {
+    return lastFocusedChatRowNode;
+  }
+  return findChatRowByTitle(rows, lastFocusedChatTitle);
+}
+
+// True while WhatsApp moves focus to its own first chat after Tab or Shift+Tab re-entered
+// the list; that focus must not replace the remembered chat.
+function handleChatListReentry(target, previous) {
+  const now = Date.now();
+  const targetRow = target.closest?.('div[role="row"]') || null;
+  if (pendingChatListReentry) {
+    if (now > pendingChatListReentry.until) {
+      pendingChatListReentry = null;
+    } else if (targetRow === pendingChatListReentry.row) {
+      pendingChatListReentry = null;
+      return false;
+    } else if (getChatListFocusScope()?.contains?.(target)) {
+      return true;
+    } else {
+      pendingChatListReentry = null;
+    }
+  }
+
+  const scope = getChatListFocusScope();
+  if (!scope?.contains?.(target) || targetRow || !isChatsTabActive()) return false;
+  if (previous && scope.contains?.(previous)) return false;
+  const row = resolveRememberedChatRow(getChatListRows());
+  if (!row) return false;
+
+  const pending = { row, until: now + CHAT_LIST_REENTRY_WINDOW_MS };
+  pendingChatListReentry = pending;
+  const isCurrent = () => pendingChatListReentry === pending;
+  // WhatsApp moves focus to its first chat in the same task, so wait for that task to end.
+  // Moving on right away keeps NVDA from reading the first chat before the remembered one.
+  setTimeout(() => {
+    if (!isCurrent()) return;
+    const active = document.activeElement;
+    if (!getChatListFocusScope()?.contains?.(active) || getActiveModal()) {
+      pendingChatListReentry = null;
+      return;
+    }
+    if (active?.closest?.('div[role="row"]') === row) {
+      pendingChatListReentry = null;
+      rememberChatRowState(row);
+      return;
+    }
+    if (row.isConnected && syncNativeChatSelection(row)) {
+      if (isCurrent()) pendingChatListReentry = null;
+      rememberChatRowState(document.activeElement.closest('div[role="row"]'));
+      clearChatListShortcutArrowAnchor();
+      return;
+    }
+    const target = row.isConnected ? getChatRowActivator(row) : null;
+    if (target) {
+      applyChatRowNativeMask(row);
+      const chatList = row.closest?.(SELECTORS.chatListInSide);
+      if (chatList) normalizeChatListTabStops(chatList, row);
+      if (focusItem(target)) {
+        if (isCurrent()) pendingChatListReentry = null;
+        rememberChatRowState(row);
+        armChatListShortcutArrowAnchor(row);
+        return;
+      }
+    }
+    const clear = () => {
+      if (isCurrent()) pendingChatListReentry = null;
+    };
+    if (!focusChatRow(row, clear, isCurrent, clear)) clear();
+  }, 0);
+  return true;
+}
+
+export function clearPointerFocusPending() {
+  pointerFocusPending = false;
+}
+
+export function rememberFocusedRow(target, interactionType = 'focus', previous = null) {
+  if (interactionType === 'pointer') {
+    pointerFocusPending = true;
+    pendingChatListReentry = null;
+  } else if (interactionType === 'focus') {
+    const fromPointer = pointerFocusPending;
+    pointerFocusPending = false;
+    if (!fromPointer && target && handleChatListReentry(target, previous)) return;
+  }
   trackChatListShortcutArrowFocus(target, interactionType);
   if (interactionType === 'focus' && !lastFocusedChatRowNode?.contains?.(target)) {
     lastFocusedChatTarget = null;
@@ -2162,6 +2581,7 @@ export function getRememberedFocus() {
 }
 
 export function clearRememberedChatRow() {
+  pendingChatListReentry = null;
   lastFocusedChatTarget = null;
   lastFocusedChatContainer = null;
   lastFocusedChatRowNode = null;

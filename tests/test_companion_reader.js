@@ -156,4 +156,39 @@ function fixture() {
   assert.match(f.entries()[0].reader.message, /too large/);
   assert.equal(f.entries()[0].reader.runs.length, 0, 'oversized message is rejected, never cut short');
 }
+{
+  // A chat that is still rendering moves from a dom: key to its chat: key without clearing the bridge.
+  const bridgeCode = ['chat-context.js', 'companion-bridge.js'].map(name =>
+    fs.readFileSync(`src/${name}`, 'utf8')
+      .replace(/^import[\s\S]*?from '[^']+';\r?\n/gm, '')
+      .replace(/^export /gm, '')
+  ).join('\n') + '\nglobalThis.bridgeApi = { ensureCompanionBridge };';
+  let message = null;
+  const titleNode = { textContent: 'Chat A', getAttribute: () => 'Chat A' };
+  const header = { getAttribute: () => null };
+  const container = { querySelector: () => message };
+  // Like WhatsApp, the header's "Profile details" button precedes the title in document order.
+  const profileDetails = { textContent: '', getAttribute: () => 'Profile details' };
+  const main = { getAttribute: () => null,
+    querySelector: selector => selector === 'header' ? header
+      : selector === '[data-testid="conversation-panel-messages"]' ? container
+      : selector === 'header [data-testid="conversation-info-header-chat-title"]' ? titleNode
+      : profileDetails };
+  const context = { SELECTORS: { conversationMessages: '[data-testid="conversation-panel-messages"]' },
+    crypto: webcrypto, __whatsappWebPlusBundleHash: 'a'.repeat(64),
+    document: { querySelector: () => main, documentElement: { lang: 'en' } },
+    localStorage: { getItem: () => null }, navigator: { language: 'en' } };
+  vm.createContext(context);
+  vm.runInContext(bridgeCode, context);
+  const bridge = context.bridgeApi.ensureCompanionBridge();
+  bridge.publish({ text: 'Before the first message rendered', source: 'status' });
+  const before = bridge.snapshot();
+  message = { getAttribute: () => 'false_chat-a@c.us_first' };
+  const after = bridge.readSince(0, before.generation);
+  assert.equal(after.invalidated, false, 'rendering the same chat does not invalidate the bridge');
+  assert.equal(after.entries.length, 1);
+  titleNode.textContent = 'Chat B';
+  titleNode.getAttribute = () => 'Chat B';
+  assert.equal(bridge.readSince(0, before.generation).invalidated, true, 'a real chat change still invalidates');
+}
 console.log('Companion native message reader tests passed.');

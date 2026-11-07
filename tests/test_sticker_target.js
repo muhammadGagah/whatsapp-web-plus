@@ -39,7 +39,24 @@ function fixture(){
  roleButton.setAttribute('aria-haspopup','menu');assert.equal(lottie.context.resolveStickerTarget(lottie.focus(roleButton)),null);roleButton.removeAttribute('aria-haspopup');
  roleButton.setAttribute('aria-disabled','true');assert.equal(lottie.context.resolveStickerTarget(lottie.focus(roleButton)),null);
  const quoted=fixture();const quote=quoted.document.createElement('div');quote.setAttribute('data-testid','quoted-message');const sticker=quoted.button.parentElement;sticker.replaceWith(quote);quote.appendChild(sticker);assert.equal(quoted.context.resolveStickerTarget(quoted.focus(quoted.button)),null);
- const ambiguous=fixture();ambiguous.button.appendChild(ambiguous.img.cloneNode());assert.equal(ambiguous.context.resolveStickerTarget(ambiguous.focus(ambiguous.cell)),null);
+ const ambiguous=fixture();ambiguous.button.appendChild(ambiguous.img.cloneNode());assert.equal(ambiguous.context.resolveStickerTarget(ambiguous.focus(ambiguous.cell)).targets.length,1);
+ const multiple=fixture();const second=multiple.img.cloneNode();second.src='blob:https://web.whatsapp.com/second';second.setAttribute('alt','same alt');multiple.img.setAttribute('alt','same alt');Object.defineProperties(second,{complete:{value:true},naturalWidth:{value:128}});multiple.button.appendChild(second);
+ assert.equal(multiple.context.resolveStickerTarget(multiple.focus(multiple.cell)).targets.length,2,'same alt does not collapse distinct sources');
+ const repeated=fixture();
+ for(let i=0;i<3;i++)repeated.button.parentElement.appendChild(repeated.button.cloneNode(true));
+ const repeatedTarget=repeated.context.resolveStickerTarget(repeated.focus(repeated.cell));
+ assert.equal(repeatedTarget.targets.length,1);assert.equal(repeatedTarget.targets[0].count,4,'four separate controls count as four stickers');
+ assert.equal(ambiguous.context.resolveStickerTarget(ambiguous.focus(ambiguous.cell)).targets[0].count,1,'duplicate images inside one control count once');
+ for(const lang of ['en','id']){
+  const strings=vm.runInNewContext(fs.readFileSync(`src/locales/${lang}.js`,'utf8').replace('export default','(').replace(/;\s*$/, '')+')');
+  f.context.t=(key,args={})=>strings[key].replace(/\{(\w+)\}/g,(_,name)=>args[name]);
+  const label=lang==='en'?'Sticker':'Stiker';
+  assert.equal(f.context.formatStickerResult('Sticker: Cup.',{},[1]),`${label}: \nCup.`);
+  assert.throws(()=>f.context.formatStickerResult('Sticker:',{},[1]),/stickerResponseError/);
+  const countText=lang==='en'?'3 identical stickers. ':'3 stiker yang sama. ';
+  assert.equal(f.context.formatStickerResult('Sticker 1: Cup. Sticker 2: Cat.',{},[3,1]),`${label} 1: \n${countText}Cup.\n\n${label} 2: \nCat.`);
+  assert.throws(()=>f.context.formatStickerResult('Sticker 2: Cup. Sticker 1: Cat.',{},[1,1]),/stickerResponseError/);
+ }
  const picker=fixture();picker.document.body.appendChild(picker.button.parentElement);assert.equal(picker.context.resolveStickerTarget(picker.focus(picker.button)),null);
  const disabledImage=fixture();Object.defineProperty(disabledImage.img,'complete',{value:false});assert.equal(disabledImage.context.resolveStickerTarget(disabledImage.focus(disabledImage.cell)),null);
  for(const boundary of ['text','title','header','container','main']){

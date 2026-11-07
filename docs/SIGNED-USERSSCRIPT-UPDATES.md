@@ -41,11 +41,12 @@ Local paths are adjustable. Official download and manifest URLs are pinned by th
 
 ## How publication reaches users
 
-1. Publish the userscript source and generated `whatsapp_web_plus.user.js` on GitHub.
+1. Publish the userscript source and generated `whatsapp_web_plus.user.js` on GitHub `main`, keeping the previous manifest and signature. With a release branch, this happens when its pull request is merged.
 2. Wait for GreasyFork to provide that version. A configured import/webhook may perform this step, but Git push success does not confirm it.
 3. Download the public GreasyFork file, review it, then sign a manifest identifying those exact bytes.
 4. Publish the manifest and signature in the same second commit.
 5. Verify the publicly downloadable manifest, signature, and asset together.
+6. Bundle that verified public file in Companion with its `docs/update-bundled-userscript.md`.
 
 Tampermonkey uses the userscript's GreasyFork update/download metadata. It does not install the signed manifest. Companion retrieves signed metadata from the script repository on GitHub and verifies the matching GreasyFork asset independently.
 

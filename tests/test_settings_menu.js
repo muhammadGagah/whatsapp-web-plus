@@ -189,6 +189,7 @@ const output = buildSync({
     }
 }).outputFiles[0].text;
 
+const menuIntervals = new Set();
 const context = {
     Event,
     document,
@@ -221,8 +222,8 @@ const context = {
     clearTimeout(id) {
         if (id && scheduledTimers[id - 1]) scheduledTimers[id - 1].canceled = true;
     },
-    setInterval() { return 1; },
-    clearInterval() {},
+    setInterval(callback) { menuIntervals.add(callback); return callback; },
+    clearInterval(callback) { menuIntervals.delete(callback); },
     console
 };
 vm.runInNewContext(output, context);
@@ -368,6 +369,7 @@ assert.deepEqual(
         ['natural', 'menuitemradio', 'false'],
         ['clear', 'menuitemradio', 'false'],
         ['clear-plus', 'menuitemradio', 'false'],
+        ['loud', 'menuitemradio', 'false'],
         ['noise-filter', 'menuitemradio', 'false']
     ]
 );
@@ -407,9 +409,54 @@ assert.deepEqual(
         'Natural (no equalizer)',
         'Clear (balanced)',
         'Clear Plus (stronger and more even)',
+        'Loud (loudest, even voice)',
         'Noise filter (noisy rooms)'
     ]
 );
+const callRecordItem = rootMenu.children.find(item => item.dataset.action === 'call-recording');
+const callRecordMenu = document.getElementById('wa-plus-call-recording-menu');
+assert.equal(callRecordItem.getAttribute('aria-haspopup'), 'menu');
+assert.equal(callRecordMenu.getAttribute('aria-labelledby'), callRecordItem.id);
+document.activeElement = callRecordItem;
+keydown(keyboardEvent({ key: 'Enter' }));
+// Disabled items stay discoverable with the arrow keys, as in the ARIA menu pattern.
+assert.equal(document.activeElement.dataset.action, 'call-record-start');
+assert.deepEqual(callRecordMenu.children.map(item => [item.dataset.action, item.getAttribute('aria-disabled')]), [
+    ['call-record-start', 'true'], ['call-record-stop', 'true'], ['call-record-save', 'true'],
+    ['call-record-discard', 'true'], ['call-record-help', 'false']
+]);
+keydown(keyboardEvent({ key: 'ArrowDown' }));
+assert.equal(document.activeElement.dataset.action, 'call-record-stop');
+keydown(keyboardEvent({ key: 'End' }));
+assert.equal(document.activeElement.dataset.action, 'call-record-help');
+keydown(keyboardEvent({ key: 'Home' }));
+assert.equal(document.activeElement.dataset.action, 'call-record-start');
+const disabledStartTimers = scheduledTimers.length;
+keydown(keyboardEvent({ key: 'Enter' }));
+assert.equal(callRecordMenu.hidden, false, 'a disabled item does not close the menu');
+assert.equal(document.activeElement.dataset.action, 'call-record-start');
+scheduledTimers.slice(disabledStartTimers).find(timer => timer.delay === 0).callback();
+assert.equal(document.getElementById('wa-plus-live-region').textContent,
+    'No connected call was found in this tab. Open the call here and wait for it to connect.',
+    'activating disabled Start explains why');
+// Reconcile availability and keyboard focus while the recording submenu stays open.
+assert.equal(menuIntervals.size, 1);
+const originalQuerySelector = document.querySelector;
+let activeCallTimer = { isConnected: true, textContent: '0:27' };
+document.querySelector = function(selector) {
+    if (selector === '[data-testid="voip-call-timer"][role="timer"]') return activeCallTimer;
+    return originalQuerySelector.call(this, selector);
+};
+for (const tick of menuIntervals) tick();
+keydown(keyboardEvent({ key: 'Home' }));
+assert.equal(document.activeElement.dataset.action, 'call-record-start');
+activeCallTimer = null;
+for (const tick of menuIntervals) tick();
+assert.equal(document.activeElement.dataset.action, 'call-record-start', 'ending the call keeps focus on the now disabled Start');
+assert.equal(callRecordMenu.children[0].getAttribute('aria-disabled'), 'true');
+document.querySelector = originalQuerySelector;
+keydown(keyboardEvent({ key: 'Escape' }));
+assert.equal(document.activeElement, callRecordItem);
 document.activeElement = voiceRecordingItem;
 keydown(keyboardEvent({ key: 'Enter' }));
 assert.equal(voiceRecordingMenu.hidden, false);
@@ -423,7 +470,9 @@ assert.equal(storedValues.get('wa-plus-audio-experiment'), 'true');
 assert.equal(storedValues.get('wa-plus-audio-experiment-profile'), 'clear-plus');
 assert.equal(rootMenu.hidden, true);
 assert.equal(document.activeElement, invoker);
+assert.equal(menuIntervals.size, 0, 'closing the menu releases its availability poll');
 keydown(settingsShortcut());
+assert.equal(menuIntervals.size, 1, 'reopening creates exactly one poll');
 document.activeElement = voiceCallsItem;
 keydown(keyboardEvent({ key: 'Enter' }));
 keydown(keyboardEvent({ key: 'End' }));
@@ -779,18 +828,22 @@ submitShortcut();
 assert.equal(shortcutEditor.open, true);
 assert.equal(shortcutInput.getAttribute('aria-invalid'), 'true');
 assert.equal(document.activeElement.id, 'wa-plus-shortcut-error');
-shortcutInput.value = 'Ctrl+Shift+M';
+shortcutInput.value = 'Ctrl+Shift+Q';
 const saveShortcutStorage = context.localStorage.setItem;
 context.localStorage.setItem = () => { throw new Error('blocked'); };
 submitShortcut();
 assert.equal(shortcutEditor.open, true);
-assert.equal(shortcutInput.value, 'Ctrl+Shift+M');
-assert.equal(document.activeElement.textContent, 'The setting could not be saved.');
+assert.equal(shortcutInput.value, 'Ctrl+Shift+Q');
+assert.equal(document.getElementById('wa-plus-shortcut-error').textContent, 'The setting could not be saved.');
+assert.equal(document.activeElement, shortcutInput, 'a second error generates a fresh focus event with its associated description');
+assert.equal(shortcutInput.getAttribute('aria-describedby'), 'wa-plus-shortcut-error');
+submitShortcut();
+assert.equal(document.activeElement.id, 'wa-plus-shortcut-error', 'a repeated failure remains announced without a duplicate live region');
 context.localStorage.setItem = saveShortcutStorage;
 submitShortcut();
 assert.equal(shortcutEditor.open, false);
 assert.equal(document.activeElement, invoker);
-assert.equal(JSON.parse(storedValues.get('wa-plus-shortcut-bindings'))['voice-recording'], 'Ctrl+Shift+M');
+assert.equal(JSON.parse(storedValues.get('wa-plus-shortcut-bindings'))['voice-recording'], 'Ctrl+Shift+Q');
 keydown(settingsShortcut());
 keyboardShortcutsItem.focus();
 keydown(keyboardEvent({ key: 'Enter' }));
@@ -1154,6 +1207,7 @@ const companionUpdateItem = companionMenu.querySelectorAll('[role="menuitem"]')
     .find(item => item.dataset.action === 'open-update');
 assert.ok(companionUpdateItem);
 assert.equal(companionUpdateItem.hidden, true);
+assert.ok(!companionMenu.children.some(item => item.dataset.action === 'call-recording'));
 companionKeydown(keyboardEvent({ key: 'End' }));
 assert.notEqual(document.activeElement, companionUpdateItem);
 assert.equal(

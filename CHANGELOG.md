@@ -1,5 +1,85 @@
 # Changelog
 
+## 2026.11.07 - 2026-11-07
+
+Return to the chat you were on when Tab or Shift+Tab moves back into the chat list. WhatsApp now forgets the focused chat when focus leaves the list and goes back to the first chat, which also made Alt+1 return to the first chat afterwards. A click in the chat list still goes where you click.
+
+Keep WhatsApp's own arrow keys in step after the script moves focus to a chat with Tab, Shift+Tab or Alt+1. Arrow keys continue from that chat instead of from the chat WhatsApp last focused itself, and Right Arrow reaches "View status" again.
+
+Apply the selected voice-message profile when the microphone button is clicked with the mouse. While the pointer is over the button, WhatsApp shows a different microphone icon, and it asks for the microphone as soon as the mouse button is released, so the profile was skipped and the browser's own processing was used instead. Enter and Space on the button also select the profile.
+
+Add a **Loud** voice-message profile for the loudest even voice. It compresses the voice so quiet words come up and stays inside the 8 kHz band WhatsApp keeps. Browser noise suppression stays off, so use it in a quiet room or choose Noise filter where it is noisy. Every voice-message profile now ends in a limiter, so a loud voice no longer clips; a test recording with Natural reached 0 dBFS. In a test recording, Loud averaged -18 dBFS for speech, about 4 dB louder than Natural. Echo cancellation is off for voice messages unless WhatsApp asks for it. Clear Plus lifts presence at 3.5 kHz instead of 8 kHz, where WhatsApp's encoder removed it.
+
+Read each chat in the list once in browse mode. A preview with emoji, or with a phone number such as "+62 ... joined using this group's invite link", was read again after the chat name, and the phone number was an extra Tab stop inside the row. Name the chat filter tabs "Chat filters" instead of "chat-list-filters", and the logo heading "WhatsApp" instead of "wa-wordmark".
+
+On the Status, Channels, Communities and Calls tabs, stop reading the chat list that sits hidden behind the open panel. While a status is open full screen, the page behind it is no longer read either, and the button shown while a status video loads is named "Loading". Name the "+" next to My status "Add status", add the channel to each Follow button, such as "Follow WhatsApp", and the community to each Announcements group. Call the calls list "Calls list" instead of "Chat list", without the chat list's row count, and treat the Calls tab as a tab other than Chats.
+
+Clean Status reading works again for voice statuses. WhatsApp changed how a voice status is built, so the script no longer found it, and NVDA read icon names and "Your browser does not support audio playback" instead of the sender and time. In the Status list, moving to the first status under "Recent" or "Viewed" now says the header as a group name, so the sections can be told apart without the review cursor.
+
+## 2026.11.01 - 2026-11-01
+
+### New: record calls in WhatsApp Web
+
+Record a call that is open in this browser tab. Open **Shift+F8 > Record call** and read **Recording instructions** first. During a connected call, choose **Start recording**. Chrome or Edge asks you to share this WhatsApp tab's audio and to allow the microphone. Choose **Stop recording or cancel setup** when you are done, or recording stops by itself about 15 seconds after the call ends. Then choose **Save recording** to download the audio, or **Discard recording**. No extra extension is needed. In WhatsApp Companion this menu is hidden, because Companion records calls with its own recorder.
+
+### Other changes
+
+Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.
+
+Avoid jumping from older history when automatic reading is enabled in nested message lists. Prevent recursion and duplicate processing when audio hooks are reinstalled. Make repeated shortcut save errors readable, ignore hidden message popups during menu fitting, and route debug feedback through the shared announcement channel.
+
+Keep asynchronous announcements inside the active native dialog so sticker results and recording feedback remain accessible. Restore the shared announcement nodes after the dialog closes without moving keyboard focus or replaying old messages.
+
+Keep browser recording on the original microphone capture path even when audio enhancements are enabled. Cancel pending unread-message and input navigation after switching chats. Report sticker timeouts and allow retry even if image decoding stalls. Prevent stale download announcements after message nodes are reused. Preserve WhatsApp attribute values when script features change ownership, and restore author visibility when privacy masking no longer applies.
+
+Fix delayed recorder errors affecting a later recording, microphone loss during audio setup, and rejected audio cleanup promises. Correct navigation to the latest message in nested and reversed lists, and cancel pending navigation when switching chats. Reject conflicting shortcuts and resolve duplicate saved bindings. Restore accessible download progress after WhatsApp replaces its helper element, avoid redundant message-grid label updates, refresh privacy masking when author text is replaced, and exclude CSS-hidden controls from accessibility diagnostics. Bound native sticker requests, preserve pending requests, clear cancelled credentials, and handle malformed AI responses safely.
+
+Move delivery-status announcements to Chat activity monitor. Keep automatic reading of new messages independent, and preserve status announcements when typing activity updates.
+
+Help load older messages when Arrow Up stalls at the first available message. Scroll only after native navigation leaves focus unchanged, with bounded movement and no continuous polling.
+
+Announce how many times each identical sticker appears, including mixed messages with repeated and different stickers. Put each sticker description on a new line after its heading.
+
+Read up to six unique stickers in the focused message with one AI request and numbered descriptions. Filter duplicate images and keep the existing single-sticker reading behavior.
+
+Read existing sticker image descriptions in Focus Mode when WhatsApp leaves the message unnamed. Preserve the sender and time, avoid repeated descriptions, and update the label when the image description changes.
+
+Recognize the Indonesian message status Dikirim as Sent so delivery changes are announced in group chats as well.
+
+Restore Enter and Space voice-message playback for the new WhatsApp microphone icons while preserving support for the previous layout.
+
+### Release review fixes
+
+- Check the call again after the recording permissions are granted, so a call that ended or changed during setup does not start recording. Record only the current WhatsApp tab and the default microphone. Release capture on errors, and keep the recorded audio for another download attempt.
+- Keep Alt+2, Alt+3 and Alt+Shift+D working when pressed while a chat is still loading. A chat that gains its identity during rendering is no longer mistaken for a chat switch.
+- Move the announcement regions into a newly opened dialog as soon as focus enters it, follow a nested dialog opened on top, and wait briefly after moving them, so the first announcement inside a dialog is not lost. Passive messages that arrive meanwhile keep their order.
+- Help load older messages in nested and reversed message lists as well.
+- Accept multi-sticker answers formatted with bold labels, list markers or a short note in parentheses. Keep a description cut off by the provider's length limit and mark it with an ellipsis instead of reporting an error.
+- Keep Companion's sticker transport when its polling is briefly delayed, and report a sticker request that is still in progress instead of a network error.
+- Keep the masked sender in sticker labels when Privacy Mode hides a phone number, and rebuild sticker labels after Privacy Mode changes.
+- Keep unavailable Record call items reachable with the arrow keys, as in a standard menu. Activating Start recording without a connected call explains why.
+- Continue recording setup when WhatsApp redraws the call timer, report a source that ends during setup as cancelled, treat the size limit as a normal stop without a gap at the end, speak the stop reason together with the result, and keep a finished browser recording when the page enters the back/forward cache.
+- Keep hidden items inside the settings menu hidden.
+- Stop a browser call recording by itself about 15 seconds after the call disappears from the tab, and say that the call ended. The audio stays available to save.
+- Say that a message, unread message or message box is not ready when Alt+2, Alt+3 or Alt+Shift+D is cancelled by a chat change, instead of staying silent.
+- Include the delivery status, such as Read, in sticker message labels, and speak the whole label in WhatsApp's page language so it never mixes two languages.
+- Keep the stickers a cut-off reply did describe, and say which descriptions are missing. Do not read bold list numbers aloud, and keep real numbers at the end of a description.
+- Keep messages waiting for automatic reading when Chat activity monitor is turned on or off.
+- Use the real scroll viewport when Alt+3 restores the unread position in nested message lists.
+- Reduce layout work while a message menu is open by ignoring hover changes in the chat list and message history.
+- Reject custom shortcuts that would take over WhatsApp's own shortcuts, such as Alt+R for Reply. A saved binding that conflicts is ignored, so the WhatsApp shortcut works again.
+- List Read Sticker among the remappable shortcuts in the shortcut list, and use the menu's own names in the Indonesian recording instructions and Clean UI shortcut description.
+- Read the first message that arrives in an empty chat.
+- In Companion, shrink animated sticker samples until the request fits instead of reporting that the sticker is too large, and keep announcements queued while a chat is still loading.
+- Report a sticker that cannot be read or decoded as a media problem instead of a network problem, and speak a privacy placeholder for the sender in WhatsApp's page language.
+- Mask phone numbers in chat-list rows as soon as Privacy Mode is turned on, and in Meta AI reply labels.
+- When a chat opens at the first unread message, do not read older messages that load below it as new; announce new messages again once the view reaches the latest message. Keep pending announcements while the chat list is scrolled.
+- Also reserve text-editing and common browser combinations, such as Ctrl+Arrow keys, Ctrl+Shift+Arrow keys, Ctrl+D, Ctrl+E, Ctrl+G and Ctrl+J. Suggest Alt+V instead of a reserved example in the shortcut help.
+- Identify the open chat for Companion by its title instead of the header's Profile details button.
+- Refuse to sign a release sequence that Companion would reject or ignore.
+- Leave delivery status, such as Sent or Read, out of automatically read messages. Chat activity monitor now also announces the first status of a message you just sent, so status is heard only when that monitor is on.
+- Allow up to 2048 tokens for a sticker answer, so a model that reasons before answering still has room for the description. Ignore inline reasoning when checking the description length, and shorten an overlong description with an ellipsis instead of reporting an error.
+
 ## 2026.10.19 - 2026-10-19
 
 Clean UI now recognizes the Indonesian desktop promotion description, so the promotion is hidden without a custom title.
@@ -28,7 +108,7 @@ Clean UI now recognizes the Indonesian desktop promotion description, so the pro
 ### Maintenance and versioning
 
 - Consolidate regression tests under tests/ and update test commands. Refresh both project guides and remove outdated comments.
-- Adopt year.month.day versioning with 2026.10.19, matching Companion. This version compares higher than 2.6.91. Publishing and signing remain separate steps.
+- Adopt year.month.day versioning with 2026.10.19, using the same version format as Companion. This version compares higher than 2.6.91. Publishing and signing remain separate steps.
 
 ## 2.6.91 - 2026-10-04
 
