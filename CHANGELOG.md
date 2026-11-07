@@ -18,6 +18,12 @@ Clean Status reading works again for voice statuses. WhatsApp changed how a voic
 
 ## 2026.11.01 - 2026-11-01
 
+### New: record calls in WhatsApp Web
+
+Record a call that is open in this browser tab. Open **Shift+F8 > Record call** and read **Recording instructions** first. During a connected call, choose **Start recording**. Chrome or Edge asks you to share this WhatsApp tab's audio and to allow the microphone. Choose **Stop recording or cancel setup** when you are done, or recording stops by itself about 15 seconds after the call ends. Then choose **Save recording** to download the audio, or **Discard recording**. No extra extension is needed. In WhatsApp Companion this menu is hidden, because Companion records calls with its own recorder.
+
+### Other changes
+
 Release sticker image samples promptly after cancellation and suppress errors from obsolete provider settings. Restore privacy masks before forgetting detached nodes. Recover announcement regions removed from an open dialog and clear stale detached announcement text.
 
 Avoid jumping from older history when automatic reading is enabled in nested message lists. Prevent recursion and duplicate processing when audio hooks are reinstalled. Make repeated shortcut save errors readable, ignore hidden message popups during menu fitting, and route debug feedback through the shared announcement channel.
@@ -27,8 +33,6 @@ Keep asynchronous announcements inside the active native dialog so sticker resul
 Keep browser recording on the original microphone capture path even when audio enhancements are enabled. Cancel pending unread-message and input navigation after switching chats. Report sticker timeouts and allow retry even if image decoding stalls. Prevent stale download announcements after message nodes are reused. Preserve WhatsApp attribute values when script features change ownership, and restore author visibility when privacy masking no longer applies.
 
 Fix delayed recorder errors affecting a later recording, microphone loss during audio setup, and rejected audio cleanup promises. Correct navigation to the latest message in nested and reversed lists, and cancel pending navigation when switching chats. Reject conflicting shortcuts and resolve duplicate saved bindings. Restore accessible download progress after WhatsApp replaces its helper element, avoid redundant message-grid label updates, refresh privacy masking when author text is replaced, and exclude CSS-hidden controls from accessibility diagnostics. Bound native sticker requests, preserve pending requests, clear cancelled credentials, and handle malformed AI responses safely.
-
-Add manual browser call recording through the Record call menu. Enable Start only when the current tab shows a connected call. Recheck the call after capture permissions so a call that ended or changed during setup cannot start recording. Capture audio from the verified current WhatsApp tab and the default microphone without another extension. Provide cancellation, manual stop, audio download, and explicit discard. Release capture resources on errors and keep recorded audio available for download retries. The Companion continues to use its native recorder.
 
 Move delivery-status announcements to Chat activity monitor. Keep automatic reading of new messages independent, and preserve status announcements when typing activity updates.
 
@@ -46,6 +50,7 @@ Restore Enter and Space voice-message playback for the new WhatsApp microphone i
 
 ### Release review fixes
 
+- Check the call again after the recording permissions are granted, so a call that ended or changed during setup does not start recording. Record only the current WhatsApp tab and the default microphone. Release capture on errors, and keep the recorded audio for another download attempt.
 - Keep Alt+2, Alt+3 and Alt+Shift+D working when pressed while a chat is still loading. A chat that gains its identity during rendering is no longer mistaken for a chat switch.
 - Move the announcement regions into a newly opened dialog as soon as focus enters it, follow a nested dialog opened on top, and wait briefly after moving them, so the first announcement inside a dialog is not lost. Passive messages that arrive meanwhile keep their order.
 - Help load older messages in nested and reversed message lists as well.
